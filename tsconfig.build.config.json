@@ -1,0 +1,14 @@
+{
+  "//": "配置 facet 的类型产物：rootDir 指 config/，故 d.ts 落 dist/types/config/，不与 lib 那份（dist/types/）混层。",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist/types/config",
+    "rootDir": "config",
+    "types": ["node"]
+  },
+  "include": ["config/oxlint.base.ts", "config/vitest.base.ts"],
+  "exclude": ["test/**/*.ts", "lib/**/*.ts", "config/tsconfig*.json"]
+}

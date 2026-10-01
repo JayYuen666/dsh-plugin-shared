@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist/types",
+    "rootDir": "lib",
+    "rewriteRelativeImportExtensions": true,
+    "types": ["node"]
+  },
+  "include": [
+    "lib/http.ts",
+    "lib/tool-events.ts",
+    "lib/card-apply.ts",
+    "lib/project-key.ts",
+    "lib/locale.ts",
+    "lib/lesson-bus.ts",
+    "lib/text.ts",
+    "lib/record.ts",
+    "lib/errors.ts",
+    "lib/jsonl.ts",
+    "lib/trust.ts",
+    "lib/job-outcome.ts",
+    "lib/canonicalize-region-paths.ts"
+  ],
+  "exclude": ["test/**/*.ts", "lib/index.ts"]
+}

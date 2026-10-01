@@ -1,0 +1,8 @@
+// shared/tsconfig.json —— 编译选项全部继承 ./config/tsconfig.base.json，这里只留本包与基线不同的部分。
+// include 里有 `config/**`：那份基线模块是 13 包配置的 import 目标，也是它们唯一的 TS 源码入口，
+// 不给它程序面的话 oxlint 的类型引擎会退回默认 lib（实测：`import { createRequire } from "node:module"`
+// 判 TS2591，并级联出 4 条 no-unsafe-*），而单源里的类型错误就没人检查了。
+{
+  "extends": "./config/tsconfig.base.json",
+  "include": ["config/**/*.ts", "lib/**/*.ts", "test/**/*.ts"]
+}

@@ -1,0 +1,10 @@
+{
+  "//": "target 不覆盖：与官方一致（deepseek-harness/tsconfig.base.json 是 es2024，client 层只加 lib）。本仓的 client 产物由 rolldown 打，构建脚本里没有 target，也没有读 tsconfig ⇒ 这里的 target 只影响类型面，不影响产物语法。旧基线把它钉在 ES2020 是继承来的写法，实测无产物后果，只把 Promise.withResolvers 一类 ES2024 API 判成 TS2550，逼出包级 lint 例外。",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "ESNext.Disposable"],
+    "types": []
+  }
+}
