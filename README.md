@@ -1,230 +1,146 @@
 # @jayyuen66/dsh-plugin-shared
 
-[中文](#中文) · [English](#english)
+[English](./README.md) · [简体中文](./README.zh.md)
 
-## 中文
+## What this package is
 
-### 这个包是什么
+A **library package** shared by one author's dsh plugin family. It is only `import`ed, never enabled by users.
 
-- 同组 dsh 插件共用的**依赖库包**：只被 `import`，不由用户启用。
-  - `package.json` 里没有 `dsh` 字段，包目录下也没有 `cordis.patch.yml`，所以它躺在 `node_modules` 里不会被宿主登记成插件。
-  - 它没有设置卡、没有 client 半、没有 `/_dsh` 路由。
-- 收录判据：同一份样板在两处以上**逐字同构**地重复才收敛进来，领域判定留在各插件。
-- `lib/tool-events.ts` 只做「事件流 → 结构化记账」的纯函数部分。
-- `toolArgumentsBad` 只标记坏参，不替 quality-gate 与 danger-guard 统一「坏参是否记账」的策略。
-- 运行期第三方依赖只有一条：`dependencies` = `@deepseek-ai/dsh-output-retention: 0.2.0-rc.2`（**精确钉 = 宿主实装**，后来追加的那条政策）。
-  - 它是 `truncateEnd` 换装官方件时带进来的**值导入**，因此必须落 `dependencies`——见下面"打包外部化"那条。
-- `peerDependencies` 声明宿主本体 `@deepseek-ai/dsh`；其余官方包是纯 `import type`，留在 `devDependencies`（标了 optional，装上本包不会多出任何第三方包）。
-  - 例外是三枚由 `config/` 面真实消费的工具链包（`eslint-plugin-sonarjs` / `oxlint` / `vitest`）——它们同为 optional peer，不走上面那条"纯类型留 devDependencies"的纪律。
-  - 该栏当前共 **8** 枚官方包，其中 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-shell` 是后来为 `lib/job-outcome.ts` 的类型面添的 ⇒ 更早版本写的"其余 7 个"已作废。
-- `lib/**` 里唯一的文件系统访问是 `lib/project-key.ts` 的 `realpathSync`（同文件另用 `node:crypto` 与 `node:path`；`lib/http.ts` 只取 `node:http` 的类型）。
-- `lib/**` 里也没有任何一处写文件。
+- `package.json` carries no `dsh` field and the package directory has no `cordis.patch.yml`, so sitting in `node_modules` it is never registered as a plugin.
+- No settings card, no client half, no `/_dsh` route of its own.
+- Admission rule: a piece of boilerplate is only pulled in when it repeats **verbatim** in two or more places. Domain judgement (which tools count as edits, path filtering, budgets, gate logic) stays in the plugins — this layer marks, it does not decide.
 
-### 谁依赖它
+## Install
 
-- 11 个包在 `dependencies` 里声明 `"@jayyuen66/dsh-plugin-shared": "workspace:^"`：8 个发布 bundle 加 3 个仅本机包。
-  - 前者 = ctx-observe、danger-guard、dir-prep-organize、lesson-loop、ocr-review、quality-gate、session-rescue、zvec-grep；后者 = plugin-hot-reload、memory-tdai-card、wukil-dev-tools-card。
-  - 后三者是后来补上的：两张卡此前只在 `devDependencies` 里声明、`plugin-hot-reload` 此前两栏都没有（它是 cordis-only 的零依赖装载器）。
-  - 三条 `isRecord` 手抄副本随之回删，host 半产物现在保留裸说明符而不是内联副本。
-- 仍把本包放在 `devDependencies` 的是 `memory-insight-card`（client 半靠内联，跑动期不需要本包在场）与两个工具成员 `scripts/`、`publish-check/`（只消费本包的 `config/` 配置面）。
-  - 全仓 11 份 `build-client.mjs` 的 `external` 只列 `react`，`lib/card-apply.ts` 与 `lib/record.ts` 由 rolldown 打进 client 产物——浏览器侧解析不了裸说明符，这是结构性例外（`session-rescue/client.js` 里那份官方 `brandString` 内联同族）。
-- 根入口 `.`（`lib/index.ts` 的 barrel）当前没有任何消费方 import——全仓的值 import 一律带 `/lib/<模块>` 子路径。
-- `lib/canonicalize-region-paths.ts` 是**构建期**纯字符串工具：把 rolldown 写进产物的 `//#region <模块路径>` 折成与 `process.cwd()` 无关的形态（实测同一份源码在包根 / `plugins/` / DSH_HOME 三种 cwd 下是三份字节）。
-  - 它是 `./lib/canonicalize-region-paths` 出口（开发态指 `lib/canonicalize-region-paths.ts`，发布态指 `dist/canonicalize-region-paths.js` 与 `dist/types/canonicalize-region-paths.d.ts`），但仍不进 barrel、不进 `shared/build-host.mjs` 的 `facets`：builder 期的文本处理件放进根入口，等于让每个运行时消费方为它付一次导入。
-  - 全仓 23 份 `build-*.mjs` 都按这条子路径引它。此前写的是仓内相对说明符 `../shared/lib/...`，在聚合工作区里能解析，而单包仓没有 `../shared` 这一层——CI 的 `prepare` 档正是断在那里（`ERR_MODULE_NOT_FOUND`）。
-- **三处 host 侧例外已结案**：这三包各留一份本地 `isRecord`，理由是"它们没有本包的 `dependencies`，回删要么新增跨包依赖、要么把整份 `shared` 内联进产物"。
-  - 该栏位口径当时未定，而已有裁定只覆盖了 `@deepseek-ai/*` ⇒ 这条一直在等一次独立裁定——后来那次裁定拍板：**补 `dependencies`、回删副本**，三处指回注释随定义一起删除。
-  - `plugin-hot-reload` 从此不是零依赖包（它自己的 `build-host.test.ts` 里"产物只留 node: 内建说明符"那句同批改口，并新增一条"shared 外部化 + 不内联"的双向针）。
-- 仍**不**收敛的两族照旧：5 处 `test/` 下的副本刻意手抄（测试不引运行时依赖）。
-  - 另一族是 `ocr-review/build-client.mjs:22` 与 `ocr-review/scripts/get-cred.mjs:59` 两处 `.mjs` 构建脚本副本——**判据的收敛范围是 TS 运行时源码**，构建脚本读的是 `package.json`（同一族还有 21 份 `asRecord`），职责不同故不并入，列在这里免得以后把「漏删」当真缺陷。
-
-### 安装（作为依赖）
-
-- 插件作者：本组包发布在公共 npm（`registry.npmjs.org`），安装侧不需要任何凭据；发布侧要在 npm 站点建一枚 access token 交给 workflow 的 `NPM_TOKEN`。
+Published on the public npm registry, so installing needs no credentials.
 
 ```sh
+npm install @jayyuen66/dsh-plugin-shared
+# or
+pnpm add @jayyuen66/dsh-plugin-shared
 ```
 
-- 之后在包内按正常区间声明（当前库包是 `0.6.0`，即 `"^0.6.0"`）。
-- 在 `plugins/` 这个 pnpm workspace 里开发写 `workspace:^`，出仓时由 `publish-check/render-ci.mjs` 改写成 `^<库包版本>`（单包仓里没有 workspace 可解析）。
-- 库包只能走 registry：git 形态的库包依赖会被 pnpm 的 `blockExoticSubdeps` 拒掉（`ERR_PNPM_EXOTIC_SUBDEP`）。
-- 终端用户：**不需要**单独安装或启用它。装任一消费包时 pnpm 顺带把它落进 `node_modules`；它缺位时报 `ERR_MODULE_NOT_FOUND`（说明符指向 `@jayyuen66/dsh-plugin-shared/lib/...`），不会静默降级。
-- 发布顺序是先库包、后 8 个消费包：registry 上没有它，整组一起 `ERR_PNPM_FETCH_404`。
+Declare it as an ordinary dependency of your plugin package and import it by bare-package subpath:
 
-### 模块清单
-
-下表只列运行时切面；「子路径」是包内说明符，值 import 时要带裸包名前缀。`exports` 另含 `./package.json`（给读 manifest 的工具用）。
-
-| 子路径              | 提供什么                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 谁在用                                                                                                                                                                                                                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.`                 | `lib/index.ts`：十二个切面的 barrel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 无消费方 import，留作聚合面                                                                                                                                                                                                                                                          |
-| `./lib/http`        | `sendJson`（已发头/已结束即静默跳过 + `no-store`）、`isCrossOrigin`（按 `sec-fetch-site` 判同源）、`queryParam`、`checkCsrf`、`readBody` 与 `BodyRead`（按 UTF-8 字节计上限、先查 `content-length` 预检）、`guardBody`（跨域 403 / CSRF 403 / 超限 413 / 流中断 400）                                                                                                                                                                                                                                                                                                                                                                                             | session-rescue、lesson-loop、zvec-grep、ocr-review、dir-prep-organize 的 host 半                                                                                                                                                                                                     |
-| `./lib/tool-events` | `SessionEvent` 最小事件形状、`scanToolEvents` → `calls` / `results` 两张表（把 PTC 子调度 `tool/ptc-dispatch*` 归并进同一条链，配对键是 `subCallId`）；`toolEventRowsOf` 是它的**单事件**版（同一步实现），供投影折叠复用同一判据、`resultIsError`、`parseToolArguments`、`toolArgumentsBad`、`editPathOf`（`str_replace_editor` 的 `view` 算只读）                                                                                                                                                                                                                                                                                                               | danger-guard、quality-gate                                                                                                                                                                                                                                                           |
-| `./lib/card-apply`  | `claimApply` + `CardApplyCtx`：`globalThis` 标记位配 `ctx.effect` 卸载清理的 apply 幂等守卫（HMR / 重复加载防护），零 node 依赖                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 三张卡片的 `src/client-entry.ts`                                                                                                                                                                                                                                                     |
-| `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`：cwd → `尾目录名-<sha256(norm) 前 8 位 hex>` 项目桶键，归一阶段补 `path.resolve` 与 `realpath`，兜底桶名 `default`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | lesson-loop（`lib/lesson-store.ts`）、quality-gate（`lib/gateway-feedback.ts`）                                                                                                                                                                                                      |
-| `./lib/locale`      | `Locale`、`DEFAULT_LOCALE`、`resolveLocale`、`resolveLocalePreference`、`messagesFor`、`MessagesCatalog`，加 `LOCALE_SETTINGS_NAMESPACE` 与 `LOCALE_PREFERENCE_FIELD` 两枚抄自官方 client-locale 的常量                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 8 个发布包的 host 半；字典面以 `import type { MessagesCatalog }` 用（各包 `lib/messages.ts`，dir-prep-organize 是 `src/host-messages.ts`，卡片侧是 `src/ui-messages.ts`）                                                                                                            |
-| `./lib/lesson-bus`  | `settleLessonCall`：同步抛错与异步 rejection 归到同一个 `onFailure` 出口（`lesson-loop` 的 report / pass 落库改异步后，三处调用点的降级口径靠它对齐）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | danger-guard、quality-gate、session-rescue                                                                                                                                                                                                                                           |
-| `./lib/text`        | `truncateEnd`（前切）与 `truncateStart`（后切）：按 UTF-16 码元定长截断。**已换装一半**：`truncateEnd` 交 `@deepseek-ai/dsh-output-retention@0.2.0-rc.2` 的 `truncateWithoutSplittingSurrogatePair(text, maxChars)`，本模块只留一道 `Math.max(0, maxChars)` 守卫（官方把负预算交给 `slice(0, 负数)` 解释成"从尾部倒数"，实测 1090 组穷举里裸官方分歧 12 条、全在负预算，钳零后分歧 0）；`truncateStart` 仍为本仓自带——官方导出面（ItemRetainer/TextRetainer/describeOmitted/formatRetentionNotice/该函数）无任何后切形态                                                                                                                                     | 最初由 ocr-review 的入日志切点消费；分支级评审把同一条持久化路径上的 zvec-grep 三处（failureDetail 头尾两切、successNotes 的 stderr 尾切）一并收口，此后 zvec-grep 的 rebuild-status 尾窗（4000 码元）也从这里切——官方环按 UTF-8 字节裁，裸 slice 会在切点留孤立低代理项 |
-| `./lib/record`      | `isRecord`（`unknown` → `Record<string, unknown>` 的窄化判据）与 `fieldOf`（从 `unknown` 安全读单个字段，非记录 → `undefined`）。**按收录判据收进来的**：台架实测全仓 37 处 `isRecord`（31 处逐字同形 + 6 处仅 `&&` 操作数换序，三个子句都无副作用故同余）与 13 处逐字同形的 `fieldOf`                                                                 | host 半的 8 个发布包 + 6 处 `src/client-entry.ts`；`plugin-hot-reload`、`memory-tdai-card`、`wukil-dev-tools-card` 的三份手抄**已回删**（见下）                                                                                                                                |
-| `./lib/errors`      | `errorText`（unknown 错误 → 界面文本：Error 取 message，其余 String(error)）。**按收录判据收进来的**：台架实测 7 处逐字同形（messageOf 4 + errorText 3）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | zvec-grep、ocr-review、dir-prep-organize 的 host 半与 client 入口；三件异形件（quality-gate 的 messageOf、session-rescue 的 errorText、ctx-observe 的 describeError）刻意留在本包                                                                                                    |
-| `./lib/job-outcome` | `jobOutcomeOf(proc)`：把落定的子进程映射成官方作业注册表（`ctx.jobs`）的 `JobOutcome`——`killed` 给信号名、其余一律 `completed` 给退出码。口径抄的是宿主自己的 bash 工具（实测 installed `@deepseek-ai/dsh-tool-bash/lib/index.js` 的 `processOutcome`），于是同一个 `job_list` 里本包作业与宿主作业同形。**收进来的依据**：两个生产者逐字同构即收敛；刻意不带 kill reason（注册表在 killed 时会自己追加）、不拼沙箱事实（两包文案面不同，合并即改行为）                                                                                                                                                                                                                | zvec-grep 与 ocr-review 的 host 半（两枚后台作业的生产者）                                                                                                                                                                                                                           |
-| `./lib/trust`       | `requestTrust(req, opts)` / `guardTrust(req, res, opts)` / `trustRejectionText(verdict)`：`/_dsh/*` 端点的请求信任判据（Host 权威是不是本机 → `sec-fetch-site` 白名单 → Origin 逐字比对）。**新增的背景**：此前 6 个包的 22 条路由只看 `sec-fetch-site`，而 DNS 重绑定恰好让那一条与 Origin 同时**通过**（浏览器自认同源），只有 Host 腿拒得了；官方 `isTrustedApiRequest` 在发布件里不外销（`dsh-client-connection/lib/index.js:205` 有实体、`:850` 的导出名单没有它）⇒ 本包自建并引官方行号为语义参照。四处刻意分歧（缺 Host 只在非回环对端时拒、白名单而非黑名单、非回环面用本机网卡 IP 而非 `trustedHosts`、`guardTrust` 自带"头未发"检查）逐条写在文件头 | 6 个有 webServer 端点的包的 host 半（ctx-observe、dir-prep-organize、lesson-loop、ocr-review、session-rescue、zvec-grep）                                                                                                                                                            |
-| `./lib/jsonl`       | `shrinkJsonlTail(text, maxBytes)`：JSONL 尾部对半收缩的**纯决策件**（按 UTF-8 字节判、≤2 段即止手、去前导换行）。**按收录判据收进来的**：ctx-observe 与 lesson-loop 两份写盘实现实测逐字符同义、穷举 413 组磁盘内容分歧 0；**触发策略与错误出口刻意留在各包**（lesson-loop 出厂 maxBytes=0 = 永不截断是它 README 的承诺）                                                                                                                                                                                                                                                                                                                                              | ctx-observe 的 `trimMetricsFile`、lesson-loop 的 `trimJsonl`（两者各自保留 statSync 短路、写盘与异常口径）                                                                                                                                                                           |
-
-### 导入约定
-
-- 一律裸包名子路径 `@jayyuen66/dsh-plugin-shared/lib/<模块>`。
-- 不用 `../../shared/lib/http` 这类相对路径：包一旦被装进 `node_modules` 就不再与本包相邻，相对路径会让整片插件加载失败（`lib/index.ts` 头注写明）。
-- 值 import 落 `dependencies`，只被 client 半内联的落 `devDependencies`；devDependencies 不随安装落地，跑动期缺了就是 `ERR_MODULE_NOT_FOUND`。
-- 消费包的 `build-host.mjs` 按**包名段**判 external（`packageNameOf`）而不是枚举子路径。
-- `external` 的字符串项是精确匹配，子路径一旦被静默内联，本包的模块级状态就被复制成多份；各包 `test/build-host.test.ts` 把这条钉成回归测试。
-- 新增切面要同时改四处：`exports` 与 `publishConfig.exports`、`build-host.mjs` 的 `facets` 数组、`tsconfig.build.json` 的 `include`、`test/<模块>.test.ts`（覆盖率四阈值 100）。
-
-### 开发态与发布态
-
-- 开发态：`main` 与 `exports` 直指 `lib/index.ts` 和 `lib/*.ts`。
-- workspace 里 `link:` 装法的 realpath 不在 `node_modules` 内，Node 的类型剥离能用。
-- 把 `main` 定成产物会让「改了源码没重跑 build」变成静默执行旧代码，比报错难查。
-- 发布态：`publishConfig.main` = `dist/index.js`，各切面子路径的 `default` = `dist/<模块>.js`、`types` = `dist/types/<模块>.d.ts`。
-- `files` 只装 `dist`。
-- `build` = `node build-host.mjs && tsc -p tsconfig.build.json`（前者 rolldown 打 ESM，后者 `emitDeclarationOnly` 出声明），`prepare` 挂在 build 上。
-- 为什么必须有编译产物：Node 对 `node_modules` 里的 `.ts` 直接抛 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`，而发出去的包正是躺在 `node_modules` 里被载入的。
-- 源码里 `export * from "./http.ts"` 是类型剥离形态所需。
-- 原样进 `.d.ts` 会让消费方解析不到，故 barrel 的类型文件由 `build-host.mjs` 生成并重写成 `./types/http.js`。
-- 发布形态由 `publish-check/` 验（它是 workspace 工具成员，自己不发布）。
-- `inspect.mjs` 对库包断言 tarball 含 `dist/index.js`（其余 8 包断言 `host.js` 与 `cordis.patch.yml`），`verify.sh` 跑 pack / registry / tarball 三渠道。
-
-### 版本与兼容
-
-- 版本 `0.6.0`：新增公开导出口即升次版本号；消费侧的区间由 `publish-check/render-ci.mjs` 落成 `^0.6.0`。
-- `0.x` 下这个区间只放行 patch 位，所以动子路径或导出符号就是破坏性变更。
-- `lib/project-key.ts` 划了不可动的一面——哈希算法、8 位切片与尾段空白清洗，动一位等于把存量教训与记忆从原桶里搬走。
-- `engines.dsh` = `>=0.2.0-rc.2`，与 8 个消费包同一句（真源是 `peerDependencies` 里那条 optional 的 `@deepseek-ai/dsh`）；不声明 node 版本，装上本包不会带来任何额外运行期依赖。
-- 公共 npm 要求 scoped 包显式 `publishConfig.access` = `public`（scoped 默认 restricted），且作用域必须等于发布账号的用户名或它所属的 org —— 与 GitHub Packages「作用域即账号名、可见性跟随仓库」是两套规则，包也不再与仓库一一对应。
-- 质量门：`check` = typecheck → lint → build → test（`vitest run --coverage`，lines / statements / functions / branches 四阈值 100）→ fmt:check。
-- `oxlint.config.ts` 与消费包同档（pedantic 与 restriction 全 error、`maxWarnings: 0`）。
-- 许可 MIT，`LICENSE` 随包发布。
-
-### 常见问题
-
-- 要不要 `dsh plugin add` 它？不要。它没有配置层也没有 client 半，启用不了任何东西；正确姿势是把它声明成依赖。
-- `401`/`403` 多半是 npm token 没有发布权限、或没勾 2FA 绕过；`404` 才是包/版本还不存在。
-- `404` 通常是库包还没上 registry，或消费包先发了。
-- 跨仓读私有包用不了别的仓的内置 `GITHUB_TOKEN`，8 个消费包仓各需自己的 PAT secret，库包仓不需要。
-- 改了本包源码却「没生效」：本机开发态消费方载入的是 `lib/*.ts` 源，改动即时生效；看不到变化一般是消费方自己的 `host.js` 产物没重跑 `build`。
-- 想收新代码进来：先确认重复是**逐字同构**的。带领域判定的部分不收（哪些工具算编辑、路径过滤、预算与门禁逻辑都留在各插件），共享层只标记不决策。
-
-## English
-
-### What this package is
-
-- A **library package** shared by the dsh plugin family: it is only `import`ed, never enabled by users.
-  - `package.json` carries no `dsh` field and the package directory has no `cordis.patch.yml`, so sitting in `node_modules` it is never registered as a plugin.
-  - It has no settings card, no client half and no `/_dsh` route.
-- Admission rule: a piece of boilerplate is only pulled in when it repeats **verbatim** in two or more places; domain judgement stays with each plugin.
-- `lib/tool-events.ts` implements just the pure "event stream -> structured accounting" part.
-- `toolArgumentsBad` only flags bad arguments, without unifying quality-gate's and danger-guard's "do we still record a call with unparsable args" policies.
-- Exactly one third-party runtime dependency: `dependencies` = `@deepseek-ai/dsh-output-retention: 0.2.0-rc.2` (**exact pin = what the host ships**, the policy added later).
-  - It arrived when `truncateEnd` was swapped onto the official helper, and it has to live in `dependencies` because it is a **value** import (see the bundler note below).
-  - `peerDependencies` names the host itself, `@deepseek-ai/dsh`; every other official package is a pure `import type` and stays in `devDependencies`, marked optional, so installing this package pulls in no extra third-party code.
-    - The exception is the three toolchain packages really consumed on the `config/` face (`eslint-plugin-sonarjs` / `oxlint` / `vitest`) - all optional peers too, and they deliberately do not follow the "pure types stay in devDependencies" rule above.
-  - That slot currently holds **8** official packages, of which `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-shell` were added later for the type surface of `lib/job-outcome.ts` ⇒ the "other 7" wording in earlier versions is obsolete.
-- The only filesystem access in `lib/**` is `realpathSync` in `lib/project-key.ts` (that file also uses `node:crypto` and `node:path`; `lib/http.ts` takes types from `node:http` only).
-- Nothing in `lib/**` ever writes a file.
-
-### Who depends on it
-
-- Eleven packages declare `"@jayyuen66/dsh-plugin-shared": "workspace:^"` under `dependencies`: the 8 published bundles plus 3 local-only packages.
-  - Bundles: ctx-observe, danger-guard, dir-prep-organize, lesson-loop, ocr-review, quality-gate, session-rescue, zvec-grep. Local-only: plugin-hot-reload, memory-tdai-card, wukil-dev-tools-card.
-  - Those three came in later: the two cards previously declared this package only under `devDependencies`, and `plugin-hot-reload` had neither slot (it was a cordis-only loader with no dependencies at all).
-  - Their three hand-copied `isRecord` definitions were deleted in the same step, and the host artifact now keeps the bare specifier instead of an inlined copy.
-- The only consumers still keeping it under `devDependencies` are `memory-insight-card` (client half inlines it, nothing needed at run time) and the two tool members `scripts/` and `publish-check/` (they only touch this package's `config/` surfaces).
-  - All 11 `build-client.mjs` files list only `react` as `external`, so rolldown inlines `lib/card-apply.ts` and `lib/record.ts` into the client artifact: a browser cannot resolve a bare specifier (structural exception - the inlined official `brandString` in `session-rescue/client.js` is the same family).
-- The root entry `.` (the `lib/index.ts` barrel) is imported by nobody today - every value import in the repository carries a `/lib/<module>` subpath.
-- `lib/canonicalize-region-paths.ts` is a **build-time** pure string helper: it folds the `//#region <module path>` markers rolldown writes into a shape independent of `process.cwd()`.
-  - Measured: one source tree yields three different artifacts depending on cwd (package root / `plugins/` / DSH_HOME).
-  - It ships as the `./lib/canonicalize-region-paths` subpath (dev: `lib/canonicalize-region-paths.ts`; published: `dist/canonicalize-region-paths.js` plus `dist/types/canonicalize-region-paths.d.ts`), while still staying out of the barrel and out of `shared/build-host.mjs`'s `facets`: putting a build-time string helper on the root entry makes every runtime consumer pay an import for it.
-  - All 23 `build-*.mjs` files in the repository import it through that subpath. They used to import it as `../shared/lib/...`, which resolves inside the aggregate workspace but not in a single-package repo - there is no `../shared` layer there, which is exactly where the CI `prepare` step broke (`ERR_MODULE_NOT_FOUND`).
-- **The three host-side exceptions have since been closed**: their standing reason was that none of those three packages had this one under `dependencies`.
-  - Sweeping them would therefore have meant either a new cross-package dependency or inlining all of `shared`.
-  - That slot question was still undecided when they were written, which is why it outlived the earlier ruling.
-  - The earlier ruling only covered `@deepseek-ai/*` slots, so this item waited for its own decision - that decision has since been made: add the dependency, delete the copies, and drop the three pointer comments together with the definitions.
-  - `plugin-hot-reload` therefore stopped being a zero-dependency package; the line in its own `build-host.test.ts` claiming "the artifact keeps only `node:` built-in specifiers" was reworded in the same commit, and a two-way pin "shared externalised + not inlined" was added.
-- Two families are still deliberately not merged: five copies under `test/` stay hand-copied on purpose (tests take no runtime dependency).
-  - The other family is the two `.mjs` build-script copies at `ocr-review/build-client.mjs:22` and `ocr-review/scripts/get-cred.mjs:59` - the sweep's scope is TypeScript runtime source, while build scripts read `package.json` (that family also holds 21 `asRecord` helpers), so they are out of scope by design rather than missed. They are listed here so a later pass does not report a deliberate choice as a defect.
-
-### Install (as a dependency)
-
-- Plugin authors first: these packages now live on the public npm registry (`registry.npmjs.org`), so installs need no credentials; publishing needs an npm access token stored as the workflow `NPM_TOKEN`.
-
-```sh
+```ts
+import { readBody, sendJson } from "@jayyuen66/dsh-plugin-shared/lib/http";
 ```
 
-- Then declare an ordinary range in your package (the library is at `0.6.0` now, i.e. `"^0.6.0"`).
-- Inside the `plugins/` pnpm workspace you write `workspace:^`, and `publish-check/render-ci.mjs` rewrites it to `^<library version>` when a single-package repository is staged (a lone repo has no workspace to resolve against).
-- A library package can only go through a registry: a git-form library dependency is rejected by pnpm's `blockExoticSubdeps` (`ERR_PNPM_EXOTIC_SUBDEP`).
-- End users: you do **not** install or enable it separately. Any consumer package pulls it into `node_modules` for you; when it is missing the failure is `ERR_MODULE_NOT_FOUND` on a `@jayyuen66/dsh-plugin-shared/lib/...` specifier, never a silent downgrade.
-- Publish order is library first, then the eight consumers: without it on the registry the whole group fails with `ERR_PNPM_FETCH_404`.
+End users do not install or enable it separately: any consumer package pulls it in. When it is missing the failure is `ERR_MODULE_NOT_FOUND` on a `@jayyuen66/dsh-plugin-shared/...` specifier, never a silent downgrade.
 
-### Module inventory
+## Requirements
 
-The table lists runtime facets only; the subpath column is the in-package specifier - value imports must prefix it with the bare package name. `exports` also carries `./package.json` (for tooling that reads the manifest).
+| | |
+| --- | --- |
+| Node.js | `^22.19.0 \|\| >=24.0.0`, the same clause as the harness root |
+| dsh | `>=0.2.0-rc.2`, declared as an **optional** peer (this package needs no host at import time) |
+| Module format | ESM only. `require()` works only where Node supports `require(esm)` |
+| Tree shaking | `"sideEffects": false` |
 
-| Subpath             | What it provides                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Used by                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.`                 | `lib/index.ts`: barrel over the twelve facets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | imported by nobody, kept as the aggregate entry                                                                                                                                                                                                                                                                                                                                      |
-| `./lib/http`        | `sendJson` (silently skips once headers are sent or the response ended, plus `no-store`), `isCrossOrigin` (judged from `sec-fetch-site`), `queryParam`, `checkCsrf`, `readBody` with `BodyRead` (limit counted in UTF-8 **bytes**, `content-length` pre-checked), `guardBody` (cross-origin 403 / CSRF 403 / oversize 413 / broken stream 400)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | host halves of session-rescue, lesson-loop, zvec-grep, ocr-review, dir-prep-organize                                                                                                                                                                                                                                                                                                 |
-| `./lib/tool-events` | `SessionEvent` minimal event shape, `scanToolEvents` -> the `calls` / `results` tables (PTC sub-dispatch `tool/ptc-dispatch*` folded into the same chain, paired by `subCallId`); `toolEventRowsOf` is its **single-event** step, so a projection fold accounts for the same rows by the same code, `resultIsError`, `parseToolArguments`, `toolArgumentsBad`, `editPathOf` (`str_replace_editor` `view` counts as read-only)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | danger-guard, quality-gate                                                                                                                                                                                                                                                                                                                                                           |
-| `./lib/card-apply`  | `claimApply` + `CardApplyCtx`: the apply idempotency guard (a `globalThis` flag plus `ctx.effect` cleanup, protecting against HMR and double loads), zero node dependencies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `src/client-entry.ts` of the three cards                                                                                                                                                                                                                                                                                                                                             |
-| `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`: cwd -> `last-segment-<first 8 hex of sha256(norm)>` project bucket key, normalization extended with `path.resolve` and `realpath`, fallback bucket `default`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | lesson-loop (`lib/lesson-store.ts`), quality-gate (`lib/gateway-feedback.ts`)                                                                                                                                                                                                                                                                                                        |
-| `./lib/locale`      | `Locale`, `DEFAULT_LOCALE`, `resolveLocale`, `resolveLocalePreference`, `messagesFor`, `MessagesCatalog`, plus the two constants copied from the official client-locale package: `LOCALE_SETTINGS_NAMESPACE` and `LOCALE_PREFERENCE_FIELD`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | host halves of all eight published packages; the catalog side uses `import type { MessagesCatalog }` (each package's `lib/messages.ts`, dir-prep-organize's `src/host-messages.ts`, the cards' `src/ui-messages.ts`)                                                                                                                                                                 |
-| `./lib/lesson-bus`  | `settleLessonCall`: routes synchronous throws and asynchronous rejections into one `onFailure` exit (after lesson-loop's report / pass became async, three call sites share one degradation policy)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | danger-guard, quality-gate, session-rescue                                                                                                                                                                                                                                                                                                                                           |
-| `./lib/text`        | `truncateEnd` (front cut) and `truncateStart` (back cut): fixed-length cuts counted in UTF-16 code units. **Only half of it was swapped**: `truncateEnd` now delegates to `@deepseek-ai/dsh-output-retention@0.2.0-rc.2`'s `truncateWithoutSplittingSurrogatePair(text, maxChars)` and keeps a local `Math.max(0, maxChars)` guard (the official helper hands negative budgets to `slice(0, n)`, which counts back from the end — measured: 12 divergences across 1090 exhaustive combinations, all of them negative budgets; 0 divergences once clamped). `truncateStart` still ships here: the measured export surface (ItemRetainer/TextRetainer/describeOmitted/formatRetentionNotice/that function) has no back-cut form at all                                                                                                                                                                                                                                                                                                                       | ocr-review's log-facing cut points were the first consumers; the branch-level review added zvec-grep's three sites on the same persistence path (failureDetail's two cuts, successNotes' stderr tail), and the rebuild-status tail window (4000 code units) cuts through here too - the official ring trims by UTF-8 bytes, so a bare slice there can leave a lone low surrogate |
-| `./lib/record`      | `isRecord` (narrowing predicate `unknown` -> `Record<string, unknown>`) and `fieldOf` (read one field out of an `unknown`; a non-record yields `undefined`). **Pulled in under the admission rule**: the harness measured 37 `isRecord` definitions - 31 byte-identical plus 6 that merely reorder the `&&` operands (all three clauses are side-effect-free, so the reorder is congruent) - and 13 byte-identical `fieldOf` copies, which is exactly what this README's own "two or more verbatim-isomorphic copies" rule asks for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | host halves of the eight published packages plus six `src/client-entry.ts`; the three hand-copied `host.ts` versions in `plugin-hot-reload`, `memory-tdai-card` and `wukil-dev-tools-card` were **since removed** (see below)                                                                                                                                                        |
-| `./lib/errors`      | `errorText` (unknown error -> display text: Error gives message, everything else goes through String(error)). **Pulled in under the admission rule**: 7 byte-identical copies measured (4 messageOf + 3 errorText)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | host halves and client entries of zvec-grep, ocr-review, dir-prep-organize; the three divergent helpers (quality-gate messageOf, session-rescue errorText, ctx-observe describeError) deliberately stay local                                                                                                                                                                        |
-| `./lib/job-outcome` | `jobOutcomeOf(proc)`: maps a settled subprocess onto the official job registry's `JobOutcome` - `killed` reports the signal name, everything else is `completed` with the exit code. The mapping is copied from the host's own bash tool (measured: installed `@deepseek-ai/dsh-tool-bash/lib/index.js`, `processOutcome`) so that jobs produced here and by the host look the same inside one `job_list`. **Why it was added**: two byte-identical producers, so it collapses; deliberately no kill reason (the registry appends it on `killed`) and no sandbox facts (the two packages render those differently - merging would change behaviour)                                                                                                                                                                                                                                                                                                                                                                                                              | the host halves of zvec-grep and ocr-review (the two background-job producers)                                                                                                                                                                                                                                                                                                       |
-| `./lib/trust`       | `requestTrust(req, opts)` / `guardTrust(req, res, opts)` / `trustRejectionText(verdict)`: the request-trust predicate for `/_dsh/*` endpoints (is the Host authority really ours -> `sec-fetch-site` allow-list -> byte-exact Origin comparison). **Why it was added**: the 22 routes across 6 packages previously looked only at `sec-fetch-site`, and DNS rebinding makes that leg _and_ the Origin leg pass together (the browser genuinely believes it is same-origin) - only the Host leg denies it. The official `isTrustedApiRequest` is not exported from the published package (`dsh-client-connection/lib/index.js:205` has the body, the export list at `:850` does not), so this is built here with the official line numbers cited as the semantic reference. Four deliberate divergences (missing Host passes only for a loopback peer; allow-list not deny-list; non-loopback serving uses this machine's own interface IPs rather than `trustedHosts`; `guardTrust` checks headers-not-yet-sent) are argued in the file header | the host half of every package that serves webServer endpoints (ctx-observe, dir-prep-organize, lesson-loop, ocr-review, session-rescue, zvec-grep)                                                                                                                                                                                                                                  |
-| `./lib/jsonl`       | `shrinkJsonlTail(text, maxBytes)`: the **pure** decision half of JSONL tail halving (budget counted in UTF-8 bytes, stop at <=2 segments, strip a leading newline). **Pulled in under the admission rule**: ctx-observe and lesson-loop shipped byte-identical algorithms (413 exhaustive cases, 0 disk-content divergences); the **trigger policy and the error exit deliberately stay per package** (lesson-loop ships maxBytes=0 = never truncate, a promise in its own README)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | ctx-observe `trimMetricsFile` and lesson-loop `trimJsonl`, each keeping its own statSync short-circuit, write and catch behaviour                                                                                                                                                                                                                                                    |
+### What it touches at run time
 
-### Import conventions
+| Behaviour | Where | Scope |
+| --- | --- | --- |
+| Reads a directory entry through `realpathSync` | `lib/project-key.ts` | Only the path handed to `deriveProjectKey`; a failure (ENOENT/EACCES) falls back to `path.resolve` and never throws |
+| Enumerates this machine's network interfaces via `os.networkInterfaces()` | `lib/trust.ts` | **Only** when the caller passes `servingNonLoopback: true`; used to check whether the request's `Host` is really an address this machine holds. Nothing leaves the process |
+| Reads nothing else | — | No other file access in `lib/**`, no writes at all, no environment variables read, no outbound network requests, no `eval`/`new Function`/dynamic import |
 
-- Always the bare-package subpath `@jayyuen66/dsh-plugin-shared/lib/<module>`.
-- Never a relative path like `../../shared/lib/http`: once the package is installed into `node_modules` it is no longer next to this one, and relative specifiers break whole plugins (stated in the `lib/index.ts` header).
-- Value imports belong to `dependencies`; anything only inlined by a client half belongs to `devDependencies`. devDependencies never land on install, so a runtime miss is `ERR_MODULE_NOT_FOUND`.
-- Consumer `build-host.mjs` files decide externality by **package-name segment** (`packageNameOf`) rather than enumerating subpaths.
-- `external` string entries match exactly, so an inlined subpath would duplicate this package's module-level state; every package pins this in `test/build-host.test.ts`.
-- Adding a facet means touching four places at once: `exports` and `publishConfig.exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, and `test/<module>.test.ts` (coverage thresholds at 100).
+`lib/card-apply.ts` reads and writes one `globalThis` key by design — that is what survives a duplicated module instance under HMR.
 
-### Development form versus published form
+## Modules
 
-- Development: `main` and `exports` point straight at `lib/index.ts` and `lib/*.ts`.
-- With a workspace `link:` install the realpath is not inside `node_modules`, so Node's type stripping works.
-- Pointing `main` at the artifact would turn "edited the source, forgot to build" into silently running stale code, which is harder to diagnose than an error.
-- Published: `publishConfig.main` = `dist/index.js`, each facet subpath's `default` = `dist/<module>.js` with `types` = `dist/types/<module>.d.ts`.
-- `files` ships `dist` only.
-- `build` = `node build-host.mjs && tsc -p tsconfig.build.json` (rolldown emits ESM, tsc emits declarations with `emitDeclarationOnly`), and `prepare` hooks onto build.
-- Why an artifact is mandatory: Node throws `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` for `.ts` inside `node_modules`, and a published package is precisely loaded from there.
-- The source form `export * from "./http.ts"` exists for type stripping.
-- Kept verbatim in a `.d.ts` consumers could not resolve it, so the barrel's declaration file is generated by `build-host.mjs` and rewritten to `./types/http.js`.
-- The published shape is verified by `publish-check/` (it is a workspace tool member and is never published itself).
-- `inspect.mjs` asserts the library tarball contains `dist/index.js` (the other eight must contain `host.js` and `cordis.patch.yml`), and `verify.sh` exercises the pack / registry / tarball channels.
+The subpath column is the in-package specifier; value imports must prefix it with the bare package name. `exports` also carries `./package.json`, which the host reads for display metadata.
 
-### Versioning and compatibility
+| Subpath | Provides |
+| --- | --- |
+| `.` | Barrel over the twelve runtime facets (30 exports). `canonicalize-region-paths` deliberately stays out |
+| `./lib/http` | `sendJson` (no-op once headers are sent or the response ended, plus `no-store`; it **serializes before writing headers**, so a payload that fails `JSON.stringify` leaves the response still writable), `CROSS_ORIGIN_TEXT`, `isCrossOrigin` / `queryParam` / `checkCsrf` (take `HttpRequest`, the header-reading face), `readBody` with `BodyRead` (limit counted in UTF-8 **bytes**, `content-length` pre-checked; takes `IncomingMessage`), `guardBody` |
+| `./lib/tool-events` | `scanToolEvents` → the `calls`/`results` tables, `toolEventRowsOf` (its single-event step, same code), `parseToolArguments`, `toolArgumentsBad` (the pair a self-folding consumer needs, so it never re-reads the arguments fields), `editPathOf` and `EditTarget` (discriminated on `kind`, only `write` / `read-view`; `path` is `undefined` when no path could be read); every field of the three ledger interfaces is `readonly`; re-exports the official `SessionEvent` and the two PTC event types |
+| `./lib/card-apply` | `claimApply` + `CardApplyCtx`: apply idempotency guard (`globalThis` flag plus `ctx.effect` cleanup) |
+| `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`: cwd → `last-segment-<first 8 hex of sha256(norm)>`, fallback bucket `default` |
+| `./lib/locale` | `Locale` (an alias of the official `BuiltInLocaleId`), `DEFAULT_LOCALE`, `resolveLocale`, `resolveLocalePreference`, `messagesFor`, `MessagesCatalog`, plus `LOCALE_SETTINGS_NAMESPACE` / `LOCALE_PREFERENCE_FIELD` |
+| `./lib/lesson-bus` | `settleLessonCall`: routes synchronous throws and asynchronous rejections into one `onFailure` exit; function-thenables count as awaitable (missing them leaves a rejection unhandled); an `onFailure` that itself throws is contained, so it never forks into "thrown at the caller" or "unhandled rejection" |
+| `./lib/text` | `truncateEnd` (delegates to the official `truncateWithoutSplittingSurrogatePair`) and `truncateStart` (back cut; the official surface has no back-cut form) |
+| `./lib/record` | `isRecord`, `fieldOf` |
+| `./lib/errors` | `errorText`: semantics aligned with the official `@deepseek-ai/dsh-llm` `errorChain` (cause chain, `AggregateError` members, empty message falling back to `name`, cross-realm `message` read off the value itself, hostile getters degraded), implemented locally with zero dependencies |
+| `./lib/jsonl` | `shrinkJsonlTail`: the pure decision half of JSONL tail halving; trigger policy and error exit stay with the caller |
+| `./lib/trust` | `requestTrust` / `guardTrust` / `trustRejectionText`: request-trust predicate for `/_dsh/*` endpoints (Host authority → `sec-fetch-site` allow-list → byte-exact Origin) |
+| `./lib/job-outcome` | `jobOutcomeOf` + `SettledProcess` + `JobOutcome`: maps a settled subprocess onto the official job registry's outcome |
+| `./lib/canonicalize-region-paths` | Build-time string helper that folds rolldown's `//#region <path>` markers into a `process.cwd()`-independent form. Exported as a subpath precisely because runtime consumers should not pay an import for it |
 
-- Version `0.6.0`: a new public export bumps the minor; consumer ranges are turned into `^0.6.0` by `publish-check/render-ci.mjs`.
-- While the major is 0 such a range admits patches only - touching a subpath or an exported symbol is a breaking change.
-- `lib/project-key.ts` marks the untouchable part: the hash algorithm, the 8-hex slice and the trailing-segment whitespace cleaning; changing one digit moves existing lessons and memories out of their buckets.
-- `engines.dsh` = `>=0.2.0-rc.2`, the same clause as in the eight consumers; no node engine is declared and `peerDependencies` is unused, so installing this package adds no runtime dependency of its own.
-- The public registry requires scoped packages to set `publishConfig.access` = `public` explicitly (scoped defaults to restricted), and the scope must equal the publishing account username or one of its orgs — unlike GitHub Packages, where the scope is the account name and visibility follows the repository, so packages no longer map one repo to one package.
-- Quality gate: `check` = typecheck, lint, build, test (`vitest run --coverage`, thresholds 100 for lines / statements / functions / branches), fmt:check.
-- `oxlint.config.ts` is at the same strictness as the consumers (pedantic and restriction as errors, `maxWarnings: 0`).
-- MIT licensed, `LICENSE` ships with the package.
+### Security notes worth knowing
 
-### FAQ
+`requestTrust` exists because `sec-fetch-site` alone does not survive DNS rebinding: a hostile page that resolves its own hostname to `127.0.0.1` genuinely *is* same-origin as far as the browser is concerned, so both the `sec-fetch-site` leg and the Origin leg pass together. Only the Host leg can deny it. Four deliberate choices:
 
-- Should I `dsh plugin add` it? No. It has neither a config layer nor a client half, so there is nothing to enable; declare it as a dependency instead.
-- `401`/`403` usually means the npm token lacks publish rights or 2FA bypass; `404` means the package or version is not there yet.
-- `404` usually means the library is not on the registry yet, or a consumer was published first.
-- Reading a private package across repositories cannot use another repository's built-in `GITHUB_TOKEN`, so each of the eight consumer repositories needs its own PAT secret; the library repository does not.
-- "I changed this package and nothing happened": in local development consumers load the `lib/*.ts` sources, so edits apply immediately; when nothing appears to change it is usually the consumer's own `host.js` artifact that was not rebuilt.
-- Want something shared here? First confirm the duplication really is verbatim. Anything carrying domain judgement (which tools count as edits, path filtering, budgets and gate logic) stays in the plugins - the shared layer marks, it does not decide.
+1. A missing `Host` passes only for a loopback peer — HTTP/1.1 forces `Host`, so reaching this branch means HTTP/1.0 or a raw socket, i.e. a local caller.
+2. `sec-fetch-site` is an allow-list (`same-origin`, `none`, absent), not a deny-list, so a same-site-but-different-port request is not waved through.
+3. A non-loopback serving surface is accepted only if the address really belongs to one of this machine's interfaces. `.local`/`.lan` suffixes are never trusted, because an mDNS name can be claimed by any local process.
+4. `guardTrust` refuses to no-op: `sendJson` silently skips once headers are sent, so if someone moves the gate after `await readBody()` it would silently become a pass. It logs instead.
+
+`readBody` counts UTF-8 **bytes**, pre-checks `content-length`, and accumulates `Buffer`s before decoding — cutting per chunk would turn a multi-byte character straddling a chunk boundary into U+FFFD while still being valid JSON. A budget that is not a finite non-negative number is refused as `bad-budget` (HTTP 500) rather than silently becoming unlimited: every comparison against `NaN` is false, so an unclamped `NaN` budget disables the limit entirely.
+
+## The `config/` facets
+
+These are lint/test baselines for plugin authors, not runtime code. They pull in tooling your package must provide itself:
+
+| Subpath | Needs installed |
+| --- | --- |
+| `./config/oxlint` | `oxlint`, and `eslint-plugin-sonarjs` if you want the sonarjs rule set mounted |
+| `./config/vitest.base` | `vitest`, plus `@vitest/coverage-v8` because the baseline sets `coverage.provider: "v8"` |
+| `./config/tsconfig.base.json`, `./config/tsconfig.client.base.json` | Nothing — plain JSON for `extends` |
+
+Those three tools are **not** declared as `peerDependencies`. npm 7+ tries to satisfy optional peers too, and `oxlint`'s own `peerOptional vite-plus` pins `vitest` to a version disjoint from `>=5.0.2`, which made a plain `npm install` of this package fail with `ERESOLVE`. The requirement is therefore stated here instead of in the manifest.
+
+The sonarjs entry point is resolved lazily, inside `definePluginConfig()`. Importing `./config/oxlint` without sonarjs installed succeeds; calling `definePluginConfig()` throws a message naming both specifiers it tried and the `jsPlugins` escape hatch.
+
+`definePackageConfig` imposes 100% coverage thresholds on four metrics and a 20-second test timeout. It will not relax them for you: an exception belongs in the package that needs it, with a reason.
+
+## Dependencies
+
+Seven declared dependencies, all `@deepseek-ai/*`:
+
+- `@deepseek-ai/dsh-output-retention` is a **value** import (`truncateEnd`), so it must ship as a dependency.
+- The other six are referenced only by the published `.d.ts`. They are declared because an undeclared type import does not fail loudly — it silently degrades. `lib/job-outcome` used to take `ShellProcess` and `JobOutcome` from packages no consumer tree was required to contain, so with `skipLibCheck: true` a wrong `status` or `exitCode` produced no error at all and `jobOutcomeOf`'s return type collapsed to `any`. Under pnpm's isolated layout none of them resolve at all.
+- Versions follow the host: exact pins inside the `dsh-*` family, `~` for `cordis`, matching what the host bundle itself declares so the same copy is reused rather than duplicated.
+
+Known upstream limitation: `@deepseek-ai/dsh-llm`'s own declarations import `@deepseek-ai/dsh-attachment`, which it does not declare. It is reached transitively through `dsh-session`, so a consumer running with `skipLibCheck: false` sees `TS2307` from *that* package, not from this one.
+
+## Published form
+
+`main` and `exports` point at `dist/` only. There is no second, source-shaped manifest.
+
+- `publishConfig` carries `access` and `registry` and nothing else. Putting `main`/`exports` there was wrong: pnpm merges those onto the top level when publishing and npm does not, so publishing with npm shipped a package whose fourteen entry points named files that were not in the tarball.
+- `files` is `icon.svg`, `dist`, `config/*.json`, `README.zh.md`. npm always adds `package.json`, `LICENSE` and `README.md`; `README.zh.md` is listed explicitly so the Chinese copy ships too.
+- `build` starts by deleting `dist/`, because `files` takes the whole directory and a renamed facet would otherwise keep publishing its orphan artifact.
+- `prepare` runs `build`. It does not run when a consumer installs from the registry; it exists so packing, publishing and workspace links always ship a fresh `dist/`.
+- Node throws `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` for `.ts` inside `node_modules`, which is exactly where a published package is loaded from, so an artifact is mandatory. The barrel's declaration file is generated by `build-host.mjs` because source-form `export * from "./http.ts"` specifiers are not resolvable by consumers.
+- Adding a facet means touching three places: `exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, plus `test/<module>.test.ts`.
+
+## Versioning and compatibility
+
+- Semantic versioning applies to the public surface: subpaths, exported value symbols, exported types, and error/reason enums. `0.x` ranges admit patches only, so touching any of those is already breaking under the ranges consumers wrote.
+- `deriveProjectKey`'s hash algorithm, the 8-hex slice and the trailing-segment whitespace cleaning are the untouchable part: changing one digit moves existing lessons and memories out of their buckets.
+- Windows path normalization changed the bucket key shape. On Windows the same directory now yields `last-segment-<hash>` regardless of whether it is spelled with `\` or `/`, and a drive root falls into `default`. **Windows buckets written before normalization no longer match**; POSIX buckets are byte-for-byte unchanged and are pinned by literal assertions in `test/project-key.test.ts`.
+- `BodyRead`'s `reason` gained `"bad-budget"`. A consumer switching exhaustively over it will get a compile error, which is the point.
+- `Locale` is now an alias of the official `BuiltInLocaleId` instead of a hand-written union, so it tracks the host's `LOCALE_IDS`.
+- **`errorText` now returns more text** (same name and signature). It went from a single `message` layer to the official `errorChain` semantics: a cause chain renders as `outer: inner`, an `AggregateError` appends `[e1; e2]`, an empty message falls back to `Error.name`, and a cross-realm `Error` yields its own `message` instead of `String()`'s `"Error: ..."`. **Callers that regex the old text must re-check** (a `exec` that pulls a number out of parentheses, for example).
+- `editPathOf` returns a `kind`-discriminated `EditTarget` with only `write` / `read-view`: `"skip"` was never produced, and leaving it in the type only pushed consumers into writing unreachable branches. When no path can be read it still returns the matching arm with `path` set to `undefined`.
+- `isCrossOrigin` / `queryParam` / `checkCsrf` / `requestTrust` / `guardTrust` widened their first parameter from `IncomingMessage` to `HttpRequest`. `readBody` / `guardBody` still take `IncomingMessage` because they consume the request body and `PartialRequest` does not guarantee async iteration.
+
+## Quality gates
+
+- `npm run check` = typecheck → lint → build → test (coverage thresholds 100 for lines, statements, functions and branches) → format check.
+- `test/publish-manifest.test.ts` is the release-shape gate: every `exports` target must be inside what `files` actually ships, entries must point at build output rather than source, and `publishConfig` must not carry entry fields. One set of "internal reference" patterns scans **both planes**: **artifacts** must contain no absolute paths, home-directory references, dates, or sibling-package identifiers; **source and docs** must contain no dates and no "this round / next round" wording that only made sense during collaboration. The artifact pass cannot see comments, so the source pass is what keeps that cleanup from being a one-off.
+- `test/build-host.test.ts` compares the bytes on disk against an in-memory build, so editing `lib/*.ts` without rebuilding goes red.
+- `.github/workflows/ci.yml` runs the gate on push and pull request across a Node matrix and on Windows; the install matrix there additionally packs, installs into a clean directory with no flags, imports every subpath and type-checks a consumer probe.
+
+## FAQ
+
+- **Should I `dsh plugin add` it?** No. It has neither a config layer nor a client half, so there is nothing to enable; declare it as a dependency.
+- **`401`/`403` when publishing** usually means the npm token lacks publish rights. `404` means the package or version is not there yet.
+- **I changed this package and nothing happened.** In local development through a workspace link, consumers load `dist/`, so rebuild first (`npm run build`); a stale artifact is what the freshness gate catches.
+- **Want something shared here?** First confirm the duplication really is verbatim. Anything carrying domain judgement stays in the plugins.
+
+## License
+
+MIT. `LICENSE` ships with the package.

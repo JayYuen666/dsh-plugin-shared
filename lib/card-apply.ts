@@ -44,6 +44,10 @@ export function claimApply(ctx: CardApplyCtx, flag: string, label: string): bool
   marker[flag] = true;
   ctx.effect(
     () => () => {
+      // 置 undefined 而非 delete：删动态键会被本仓 lint 基线的 typescript/no-dynamic-delete
+      // 判红，它援引的正是「频繁 delete 会把对象推进 V8 字典模式、内联缓存失效」那一条。
+      // 语义上两者等价——判据是 `=== true`，残留的 undefined 键不影响守卫；真要字面意义上的
+      // "从未 claim 过"，该换个键名，而不是在这里删键。
       marker[flag] = undefined;
     },
     label,

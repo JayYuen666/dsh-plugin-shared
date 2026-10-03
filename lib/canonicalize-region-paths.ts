@@ -34,6 +34,12 @@
 /** rolldown 模块标记的前缀。`//#endregion` 与代码里的任何其它行都不在本函数的射程内。 */
 const REGION_MARK = "//#region ";
 
+/**
+ * 整份产物里所有 `//#region ` 行的匹配：`^` 加 `m` 把判据钉在行首，只取标记本身到行尾。
+ * 与逐行 `startsWith` + `slice` 等价，但一趟扫完，不为整份产物造中间数组。
+ */
+const REGION_LINE = /^\/\/#region .*$/gmu;
+
 /** 路径行首的相对段（`./` 与 `../` 的任意串），收掉后跨包依赖在两处 cwd 下才同形。 */
 const LEADING_RELATIVE_SEGMENTS = /^(?:\.\.?\/)+/u;
 
@@ -77,18 +83,16 @@ function stripLeadingAnchor(path: string, anchors: string[]): string {
 }
 
 /**
- * 折单行：命中 `//#region ` 前缀才动刀，且只动该行之后的那段路径文本。
- * 代码中间的字符串（哪怕原样写着 `//#region foo/`）不在射程内——判据是整行行首。
- * @param line - 产物里的一行
+ * 折单行。调用方已用 {@link REGION_LINE} 预筛出行首前缀，所以这里**只**动标记之后的那段
+ * 路径文本，不再重复判前缀——代码中间的字符串（哪怕原样写着 `//#region foo/`）由那条正则
+ * 的行首锚点挡在射程外。
+ * @param line - 已确认以 `//#region ` 开头的一行
  * @param anchors - 见 {@link leadingAnchors}
  * @returns canonical 形态的那一行
  */
 function canonicalizeLine(line: string, anchors: string[]): string {
-  if (line.startsWith(REGION_MARK)) {
-    const folded = line.slice(REGION_MARK.length).replace(LEADING_RELATIVE_SEGMENTS, "");
-    return `${REGION_MARK}${stripLeadingAnchor(folded, anchors)}`;
-  }
-  return line;
+  const folded = line.slice(REGION_MARK.length).replace(LEADING_RELATIVE_SEGMENTS, "");
+  return `${REGION_MARK}${stripLeadingAnchor(folded, anchors)}`;
 }
 
 /**
@@ -102,8 +106,7 @@ export function canonicalizeRegionPaths(code: string, pkgDir: string): string {
   if (anchors.length === 0) {
     return code;
   }
-  return code
-    .split("\n")
-    .map((line) => canonicalizeLine(line, anchors))
-    .join("\n");
+  // 单趟 replace：split/map/join 会为整份产物各造一份中间数组，而每行只可能命中一次
+  // `//#region ` 前缀。`^` 加 `m` 把判据钉在行首，代码中段的字面量不会被误伤。
+  return code.replace(REGION_LINE, (line) => canonicalizeLine(line, anchors));
 }

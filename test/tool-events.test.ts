@@ -11,7 +11,7 @@ import {
   scanToolEvents,
   parseToolArguments,
   editPathOf,
-  resultIsError,
+  toolEventRowsOf,
 } from "../lib/tool-events.ts";
 import type { SessionEvent, ToolCallRecord } from "../lib/tool-events.ts";
 import {
@@ -27,6 +27,11 @@ import {
 /** 坏事件构造点要显式写出的事件类型（畸形只出在 data 上，type 保持合法以证明是 data 的锅）。 */
 const PTC_DISPATCH_TYPE = "tool/ptc-dispatch";
 const RESULT_TYPE = "tool/result";
+
+/** 结算事件 → 该事件的 isError；不产出结算行时返回 undefined。 */
+function isErrorOf(event: SessionEvent): boolean | undefined {
+  return toolEventRowsOf(event, 0).result?.isError;
+}
 
 describe("parseToolArguments", () => {
   it("string JSON 解析；非法字符串回空对象", () => {
@@ -152,31 +157,31 @@ describe("scanToolEvents", () => {
   });
 });
 
-describe("resultIsError", () => {
+describe("成败位读取（经 toolEventRowsOf 这条公开面）", () => {
   it("message.isError===true 判失败；false/缺失按成功（v4 message 级）", () => {
     resetSeq();
-    expect(resultIsError(result("r1", true))).toBe(true);
-    expect(resultIsError(result("r2", false))).toBe(false);
-    expect(resultIsError(badEvent({ type: RESULT_TYPE, data: { message: {} } }))).toBe(false);
+    expect(isErrorOf(result("r1", true))).toBe(true);
+    expect(isErrorOf(result("r2", false))).toBe(false);
+    expect(isErrorOf(badEvent({ type: RESULT_TYPE, data: { message: {} } }))).toBe(false);
   });
 
-  it("非 tool/result 事件一律按成功（PTC 的成败位在 data 顶层，不从这儿读）", () => {
+  it("非 tool/result 事件不产出结算行（PTC 的成败位在 data 顶层，由它自己的分支读）", () => {
     resetSeq();
-    expect(resultIsError(badEvent({ type: PTC_DISPATCH_TYPE, data: { isError: true } }))).toBe(
-      false,
-    );
+    expect(
+      isErrorOf(badEvent({ type: PTC_DISPATCH_TYPE, data: { isError: true } })),
+    ).toBeUndefined();
   });
 
   it("retired 形状（块级 content[0].isError）不再被读：按成功计", () => {
     resetSeq();
-    // 0.1.6 把成败位放在 message.content[0]，0.1.7（v4）上移到 message 级。
+    // 成败位曾放在 message.content[0]，v4 上移到 message 级。
     // 本模块只认 v4 位置、不做 content[] 兜底——若宿主仍发旧形状，这里就是
     // fail-open 的显式指纹：isError:true 也判成功。改回兜底会让本断言变红。
     const retired = badEvent({
       type: RESULT_TYPE,
       data: { message: { content: [{ isError: true }] } },
     });
-    expect(resultIsError(retired)).toBe(false);
+    expect(isErrorOf(retired)).toBe(false);
   });
 });
 

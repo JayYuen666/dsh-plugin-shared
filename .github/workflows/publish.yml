@@ -1,11 +1,16 @@
 name: publish
 on:
   workflow_dispatch: {}
+# 两次手动 dispatch 撞上同一版本时，后一个只是拿版本冲突收尾；真正的浪费是两个 runner 并行
+# 跑同一份 check + publish，而且日志顺序会分不清哪一次落到了 registry。
+concurrency:
+  group: publish
+  cancel-in-progress: false
 permissions:
   contents: read
-  # npm trusted publishing（OIDC）：官方文档里 id-token: write 是必需项，缺了报
-  # ENEEDAUTH。runner 上没配过 trusted publisher 时这行无害——npm 探测不到 OIDC
-  # 环境就回落到下面的 token，两条路并存，所以不必等 npmjs.com 配好才合。
+  # npm trusted publishing（OIDC）要求 id-token: write，缺了报 ENEEDAUTH。
+  # npmjs 侧本包的 trusted publisher 已配好，配套地发布命令带 --provenance（见下面那步）——
+  # 两者缺一，落到 registry 上的就只有 npm 自己的签名，而不是可查的来源链。
   id-token: write
 jobs:
   publish:
@@ -32,7 +37,7 @@ jobs:
             *) echo "注意：前缀不是 npm_，请确认它确实是 npm 的 access token";;
           esac
           junk=$(printf %s "$TOKEN_TIDY" | tr -d "A-Za-z0-9_-" | wc -c | tr -d " ")
-          echo "token 度量：长度=${#TOKEN_TIDY}；非法字符数=$junk"
+          # 只报「有没有杂质」，不报长度：凭据的字符数是关于凭据本身的信息，CI 日志会长期留存。
           if [ "$junk" != "0" ]; then
             echo "凭据里混进了非 token 字符（引号、说明文字之类）——请只贴 npm_ 开头那一串，不要带引号"
             exit 1
@@ -53,6 +58,14 @@ jobs:
       # 凭据走 NODE_AUTH_TOKEN：setup-node 配了 registry-url 之后会设
       # NPM_CONFIG_USERCONFIG 指向它自己生成的那份 .npmrc，npm 只读那一份，
       # $HOME/.npmrc 会被完全忽略——所以 token 必须以环境变量注入，不能写文件。
-      - run: pnpm publish --no-git-checks --access public
+      # 但注入的必须是**与上面预检同款清洗过的值**：预检用 TOKEN_TIDY（剔 \r\n 与空白），
+      # 这里若直接给裸 secret，则 secret 尾部一个换行就让「whoami 通过、publish 401」，
+      # 而第 33 行那句「已剔除后使用」对这一步是假的。实测口径同预检那步，一处清洗两处用。
+      # --provenance：npmjs 侧已配好 trusted publisher，认证仍走上面的 token，
+      # 但产物会额外带一条 OIDC 签发的 attestation（registry 页面显示 "Provenance:
+      # Pending"→已发布后为可查的来源链）。不带这个 flag，id-token 权限就是空转。
+      - run: |
+          export NODE_AUTH_TOKEN="$(printf '%s' "$TOKEN" | tr -d '\r\n[:space:]')"
+          pnpm publish --no-git-checks --access public --provenance
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TOKEN: ${{ secrets.NPM_TOKEN }}

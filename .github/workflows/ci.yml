@@ -1,0 +1,161 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+# 同一分支上后到的提交取消前一个，省 runner，也避免两个并行的 check 互相盖结果。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Windows 那一档是给 lib/project-key.ts 的分隔符归一兜底的：本机跑不到 win32 的
+      # path.sep，注入 sep 只能测到纯字符串那半边，真实平台行为要在这台 runner 上才成立。
+      - run: pnpm run check
+
+  install-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: 两个发布器各打一次包
+        run: |
+          mkdir -p /tmp/pkg/npm /tmp/pkg/pnpm
+          npm pack --pack-destination /tmp/pkg/npm --ignore-scripts
+          pnpm pack --pack-destination /tmp/pkg/pnpm
+      # 这道门验的是「装出去之后」：入口可解析、普通 npm install 不需要 --legacy-peer-deps、
+      # 每个子路径都能 import、公共类型没有因为未声明的依赖而退化成 any。
+      - name: 干净目录安装 npm tarball（不带任何 flag）
+        run: |
+          set -euo pipefail
+          tarball="$(ls /tmp/pkg/npm/*.tgz | head -1)"
+          mkdir -p /tmp/probe && cd /tmp/probe
+          npm init -y >/dev/null
+          npm install "$tarball" --no-audit --no-fund
+      - name: 逐子路径 import
+        run: |
+          set -euo pipefail
+          cd /tmp/probe
+          # 两个 config facet 的产物顶层分别 import `oxlint` / `vitest/config`——它们是消费方
+          # 自备的工具链（本包不再声明为 peer，见 README 的 config 段），探针侧必须先装，
+          # 否则缺包报的是 execNotFound 那种形状，会把「清单漏了入口」伪装成别的故障。
+          npm install -D oxlint vitest --no-audit --no-fund
+          node --input-type=module -e '
+          const NAME = "@jayyuen66/dsh-plugin-shared";
+          const subs = ["./lib/http", "./lib/tool-events", "./lib/card-apply", "./lib/project-key",
+            "./lib/locale", "./lib/lesson-bus", "./lib/text", "./lib/record", "./lib/errors",
+            "./lib/jsonl", "./lib/trust", "./lib/job-outcome", "./lib/canonicalize-region-paths",
+            "./config/oxlint", "./config/vitest.base"];
+          for (const s of subs) {
+            const mod = await import(NAME + s.slice(1));
+            if (Object.keys(mod).length === 0) throw new Error(`${s} 没有任何导出`);
+          }
+          const root = await import(NAME);
+          // 根入口与其它子路径同级断言：dist/index.d.ts 由 build-host.mjs 依据自己的 facets
+          // 数组生成，facets 与 package.json 的 exports 漂一处，只有这条断言能报出来。
+          if (Object.keys(root).length === 0) throw new Error("根入口没有任何导出");
+          console.log("根入口导出数:", Object.keys(root).length);
+          '
+      - name: 消费方类型检查（两种 skipLibCheck 档位）
+        run: |
+          set -euo pipefail
+          cd /tmp/probe
+          npm install -D typescript@7.0.2 @types/node@26.6.3 --no-audit --no-fund
+          cat > consumer.ts <<'TS'
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          import type { JobOutcome, SettledProcess } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          import type { SessionEvent, ToolCallRecord } from "@jayyuen66/dsh-plugin-shared/lib/tool-events";
+          import type { Locale } from "@jayyuen66/dsh-plugin-shared/lib/locale";
+          export const ok: JobOutcome = jobOutcomeOf({ status: "completed", exitCode: 0, signal: null });
+          export type Probe = [SessionEvent, ToolCallRecord, SettledProcess, Locale];
+          TS
+          cat > degrade.ts <<'TS'
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          // 这条必须报错：类型一旦因为未声明的依赖退化成 any，编译器就拦不住非法入参。
+          const wrong: string = jobOutcomeOf({ status: "not-a-status", exitCode: {}, signal: undefined });
+          console.log(wrong);
+          TS
+          cat > tsconfig.json <<'JSON'
+          {"compilerOptions":{"target":"ES2024","module":"NodeNext","moduleResolution":"NodeNext","strict":true,"noEmit":true,"types":["node"]},"include":["consumer.ts"]}
+          JSON
+          # 必须是 bash **数组**：写成带引号的字符串再未加引号展开，IFS 会按空格切开，
+          # 第一个 token 变成 `(--noEmit`、最后一个变成 `--ignoreConfig)`，tsc 立刻 TS5023
+          # 中止、**一个文件都没编译**。那样两道判定同时失真：上面那道 grep 必然无命中而空过，
+          # 下面那道因拿不到 TS2322 而恒真 → job 必红，且报的是「类型退化成 any」这种
+          # 指向错误方向的诊断。数组 + "${base[@]}" 才是逐槽位传参。
+          base=(--noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2024 --types node --ignoreConfig)
+          # 两道判定都**先捕获输出再匹配**，不写成 `tsc … | grep`：
+          # `grep -q` 命中第一行即退出并关掉管道，tsc 还在写就收 SIGPIPE(141)，而本步开着
+          # `set -o pipefail` 会把管道状态取成那个非零值 —— 于是「探针确实报出了 TS2322」
+          # 这一支在管道里表现为**失败**（实测：去掉 pipefail 干扰后仍判红）。`|| true` 是
+          # 因为 tsc 发现错误本就该非零退出，判据在输出内容上而不在退出码上。
+          #
+          # ① 本包自己的声明文件不得再有 TS2307（未声明的类型依赖）。这里必须 skipLibCheck=false：
+          #    只有关掉它，tsc 才会走进去看本包 .d.ts 内部那条 import。
+          consumer_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck false consumer.ts 2>&1) || true
+          if printf '%s\n' "$consumer_out" | grep -q 'dsh-plugin-shared'; then
+            echo "本包声明文件仍有未解析的类型依赖"; exit 1
+          fi
+          # ② 退化探针：公共类型若因未声明的依赖退化成 any，非法入参就拦不住了。
+          #    这道是 skipLibCheck **true**（布尔开关不带值即 true）——与 ① **不同档**，
+          #    故注释不写「同一档」：这里只求入参被判死，不需要看 .d.ts 内部。
+          degrade_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck degrade.ts 2>&1) || true
+          if ! printf '%s\n' "$degrade_out" | grep -q 'TS2322'; then
+            echo "退化探针没有报错：公共类型又变成 any 了"; exit 1
+          fi
+      - name: pnpm 侧安装
+        run: |
+          set -euo pipefail
+          tarball="$(ls /tmp/pkg/pnpm/*.tgz | head -1)"
+          mkdir -p /tmp/probe-pn && cd /tmp/probe-pn
+          npm init -y >/dev/null
+          pnpm add "$tarball"
+          # 不能只停在「装上了」：publish.yml 真正用的发布器是 pnpm，npm 侧那套逐子路径
+          # import 与消费方类型探针在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
+          node --input-type=module -e '
+          const NAME = "@jayyuen66/dsh-plugin-shared";
+          for (const s of ["./lib/http", "./lib/tool-events", "./lib/project-key", "./lib/locale", "./lib/job-outcome"]) {
+            const mod = await import(NAME + s.slice(1));
+            if (Object.keys(mod).length === 0) throw new Error(`${s} 没有任何导出`);
+          }
+          console.log("pnpm 布局下子路径解析正常");
+          '
+          # 这个目录是 pnpm 管的（上面刚 `pnpm add` 过），装 devDep 也得用 pnpm：
+          # 实测在 pnpm 布局的项目里跑 `npm install -D` 会以
+          # "Cannot read properties of null (reading 'matches')" 崩掉——那是 npm 读不懂
+          # pnpm 留下的 node_modules 树，与本包无关，但足以让这一档假红。
+          pnpm add -D typescript@7.0.2 @types/node@26.6.3
+          cat > probe.ts <<'TS'
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          import type { JobOutcome } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          export const ok: JobOutcome = jobOutcomeOf({ status: "completed", exitCode: 0, signal: null });
+          TS
+          ./node_modules/.bin/tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext \
+            --target ES2024 --types node --ignoreConfig --skipLibCheck probe.ts

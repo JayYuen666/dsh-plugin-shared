@@ -27,32 +27,48 @@ import { isRecord } from "./record.ts";
 export type { SessionEvent } from "@deepseek-ai/dsh-session";
 export type { PtcDispatchEventData, PtcDispatchStartEventData } from "@deepseek-ai/dsh-tools/types";
 
-/** 一条 tool/call 的记账记录。 */
+/**
+ * 一条 tool/call 的记账记录。
+ *
+ * 字段一律 `readonly`：台账一旦入表就只作证据读，账目被就地改写会让证据链失去意义。
+ */
 export interface ToolCallRecord {
-  /** 调用名（edit/write/str_replace_editor/read/grep/…）。 */
-  name: string | undefined;
+  /**
+   * 调用名（edit/write/str_replace_editor/read/grep/…）。
+   *
+   * 不带 `| undefined`：官方两个来源分支都把它声明成必选 `string`（`tool/call` 见
+   * packages/core/session/src/types.ts:361，`PtcDispatchStartEventData.name` 见
+   * packages/core/tools/src/types.ts:15），而 callRecordOf 的两处赋值都是原样搬运、没过任何
+   * 运行时校验——所以 undefined 在这里不可表示。
+   *
+   * 与下面 callId 的不对称是有理由的：callId 官方虽是品牌必选串，本模块**主动放宽**它，
+   * 因为 usableCallId 要对重放/跨边界送来的坏值做运行时校验、空串也归 undefined。name 没有
+   * 这一层校验，就该跟着官方保持必选——放宽一个没校验过的字段，等于凭空造出一个让消费方
+   * 必须处理的假状态，消费包里那几处判空点就是这么长出来的。
+   */
+  readonly name: string;
   /** callId：tool/result 串联键；缺失时由调用方按 seq 造 `nc:` 键。 */
-  callId: string | undefined;
+  readonly callId: string | undefined;
   /** 解析后的参数对象（解析失败/非对象时为空对象，配合 badArguments 使用）。 */
-  arguments: Record<string, unknown>;
+  readonly arguments: Record<string, unknown>;
   /**
    * arguments 原始值无法解析为对象（JSON 字符串非法、或非字符串非对象）。
-   * 调用方据此保留各自语义：quality-gate 判 EDIT_SKIP、danger-guard 跳过记账——
-   * 共享层只标记不决策，避免把两插件的"坏参是否记账"策略悄悄统一。
+   * 调用方据此保留各自语义——有的把坏参判成"这次编辑不记账"，有的仍记账但路径留空。
+   * 共享层只标记不决策：把两档策略统一掉，等于在其中一侧悄悄改掉门禁的松紧。
    */
-  badArguments: boolean;
+  readonly badArguments: boolean;
   /**
    * 在**入参数组**中的下标（归因/游标用），不是官方事件自带的 `SessionSeq`：消费方按
    * 窗口切片读取事件流，切片下标才是它们游标语义里的那个「序」。
    */
-  seq: number;
+  readonly seq: number;
 }
 
-/** 一条 tool/result 的成败。 */
+/** 一条 tool/result 的成败。同样只读。 */
 export interface ToolResultRecord {
-  callId: string | undefined;
-  isError: boolean;
-  seq: number;
+  readonly callId: string | undefined;
+  readonly isError: boolean;
+  readonly seq: number;
 }
 
 /** 从 message 面读 v4 的成败位；非对象/缺位一律按成功。 */
@@ -83,16 +99,11 @@ function usableCallId(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/**
- * tool/result 的 isError 判定（官方 v4：成败位在 message 级、类型为 `?: boolean`；
- * 字段缺失按成功）。非 tool/result 事件一律按成功——PTC 子调度的成败位在 data 顶层，
- * 由 `resultRecordOf` 的对应分支处理，不从这儿走。
- */
-export function resultIsError(event: SessionEvent): boolean {
-  return event.type === "tool/result" && readIsError(event.data.message);
-}
-
-/** 解析 tool/call 的 arguments：string JSON 文本或已解析对象；非法/缺失 → 空对象。 */
+/** 解析 tool/call 的 arguments：string JSON 文本或已解析对象；非法/缺失 → 空对象。
+ *
+ *  **这一对原语是公开面，不是残留。** 自建折叠单元的消费方（`toolEventRowsOf` 的使用者）
+ *  必须自己再读一遍 arguments 字段；若它们只能走 `callRecordOf` 的成片结果，就无法在
+ *  "自己那一层"复现同一套判据——而本模块存在的理由正是让字段读取只有一份。 */
 export function parseToolArguments(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
     try {
@@ -107,9 +118,9 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> {
 
 /**
  * arguments 是否「无法参与记账」：仅当字符串 JSON **语法非法**（JSON.parse 抛错）。
- * 合法 JSON 非对象（"42"）、undefined/数字/对象等一律不标——quality-gate 原实现
- * 对 JSON.parse 抛错判 EDIT_SKIP，但对"解析成功却非对象"仍记账（path=undefined），
- * 本标记必须精确复用那一个语义点，不能把"非对象"也划进坏参。
+ * 合法 JSON 非对象（`"42"`）、undefined/数字/对象等一律不标——既有消费方对 JSON.parse
+ * 抛错判"不记账"，但对"解析成功却非对象"仍记账（路径留空）。本标记必须精确复用那一个
+ * 语义点，不能把"非对象"也划进坏参：多划一刀就等于替消费方改了门禁的松紧。
  */
 export function toolArgumentsBad(raw: unknown): boolean {
   if (typeof raw === "string") {
@@ -125,6 +136,8 @@ export function toolArgumentsBad(raw: unknown): boolean {
 
 /** 调用类事件（tool/call 与 PTC 子调用开始）→ 记账记录；其余返回 undefined。 */
 function callRecordOf(event: SessionEvent, index: number): ToolCallRecord | undefined {
+  // `let record` + 末尾单点 return 不是啰嗦：本仓 oxlint 开了 consistent-return 且
+  // treatUndefinedAsUnspecified，`return undefined` 与带值 return 混写即判红。
   let record: ToolCallRecord | undefined;
   if (!hasObjectData(event)) {
     return record;
@@ -184,17 +197,17 @@ function resultRecordOf(event: SessionEvent, index: number): ToolResultRecord | 
 
 /** 一条事件产出的记账行（call 与 result 互斥；非记账事件两位都是 undefined）。 */
 export interface ToolEventRows {
-  call: ToolCallRecord | undefined;
-  result: ToolResultRecord | undefined;
+  readonly call: ToolCallRecord | undefined;
+  readonly result: ToolResultRecord | undefined;
 }
 
 /**
  * **单条事件**的记账行（`scanToolEvents` 的一步，也是它唯一的实现处）。
  *
- * 之所以导出：danger-guard 把同一套台账折成 `sessionProjections` 投影单元（增量折叠）后，
- * 折叠与"注册表缺席时的全量扫描"必须逐字同源——两处各写一遍字段读取，就会在两行上给出
- * 不同的证据链（那是安全门禁的 fail-open）。折叠侧传 `event.seq`，扫描侧传数组下标，
- * 两者在官方 `seq = log.length` 的连号契约下同一个值。
+ * 之所以导出：有的消费方要把同一套台账折成投影单元（增量折叠），折叠与"注册表缺席时的全量
+ * 扫描"必须逐字同源——两处各写一遍字段读取，就会在两行上给出不同的证据链（那是安全门禁的
+ * fail-open）。折叠侧传 `event.seq`，扫描侧传数组下标，两者在官方 `seq = log.length` 的连号
+ * 契约下是同一个值。
  */
 export function toolEventRowsOf(event: SessionEvent, index: number): ToolEventRows {
   return { call: callRecordOf(event, index), result: resultRecordOf(event, index) };
@@ -204,7 +217,7 @@ export function toolEventRowsOf(event: SessionEvent, index: number): ToolEventRo
  * 扫描事件流 → tool/call 与 tool/result 两张表。
  * 只收集形状可用的事件，其余静默跳过——调用方（门禁/证据链）以空表安全降级，不因零星
  * 坏事件抛错。数组空洞（类型面不可表示、重放数据里却可能出现）同样跳过。
- * seq 取事件在入参数组里的下标（与 danger-guard scanToolCalls 的归因语义一致）。
+ * seq 取事件在入参数组里的下标（与折叠侧按 seq 归因的语义同一个值）。
  */
 export function scanToolEvents(events: readonly SessionEvent[]): {
   calls: ToolCallRecord[];
@@ -212,11 +225,11 @@ export function scanToolEvents(events: readonly SessionEvent[]): {
 } {
   const calls: ToolCallRecord[] = [];
   const results: ToolResultRecord[] = [];
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index];
-    // 空洞与类型面不可表示的非对象元素（重放数据里的 null 等）整条跳过：官方把数组元素
-    // 记为非可空，所以 `!== undefined` 挡不住 null，而下面按字段读取会直接 TypeError。
-    if (event !== undefined && isRecord(event)) {
+  // entries() 同时给出下标与元素，省掉手工游标；下标就是记账用的 seq。
+  for (const [index, event] of events.entries()) {
+    // 空洞与类型面不可表示的元素（重放数据里的 null、`undefined` 等）整条跳过。
+    // `isRecord` 一道就够：它对 `undefined` 与 `null` 都返回 false，按字段读取不会 TypeError。
+    if (isRecord(event)) {
       const { call, result } = toolEventRowsOf(event, index);
       if (call !== undefined) {
         calls.push(call);
@@ -235,14 +248,21 @@ function pathOf(args: Record<string, unknown>, key: string): string | undefined 
 }
 
 /**
- * 由 tool/call 记录推导被编辑的文件路径；str_replace_editor 的 view 只读不算写。
- * @returns { kind: "write", path } 写操作；{ kind: "read-view", path } 只读视图；
- *          { kind: "skip" } 无路径或参数形状不可用（调用方忽略）。
+ * {@link editPathOf} 的返回值。按 `kind` 判别联合。
+ *
+ * 只有两支：**`write` / `read-view`**。取不到路径时仍返回所属那一支、只把 `path` 置为
+ * `undefined`——判据是工具名与 `command`，与路径取不取得到无关；再多一枚 `skip` 只会逼
+ * 调用方写出永不执行的分支。路径有没有由 `path === undefined` 表达。
  */
-export function editPathOf(call: ToolCallRecord): {
-  kind: "write" | "read-view" | "skip";
-  path: string | undefined;
-} {
+export type EditTarget =
+  | { readonly kind: "write"; readonly path: string | undefined }
+  | { readonly kind: "read-view"; readonly path: string | undefined };
+
+/**
+ * 由 tool/call 记录推导被编辑的文件路径；str_replace_editor 的 view 只读不算写。
+ * @returns `write` = 写操作；`read-view` = 只读视图。取不到路径时 `path` 为 `undefined`。
+ */
+export function editPathOf(call: ToolCallRecord): EditTarget {
   const args = call.arguments;
   if (call.name === "str_replace_editor") {
     return args["command"] === "view"

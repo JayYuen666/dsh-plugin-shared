@@ -8,24 +8,41 @@
 // （lesson-loop `:632`、dir-prep `:1274`、ocr-review `:923`、session-rescue `:1728`、
 // zvec-grep `:857`），读到 token 就能接着发写请求。
 //
-// 语义参照官方 `packages/client/connection/src/api-request-trust.ts:91-118` 与
-// `src/loopback-hostname.ts:12-19`（dev 仓路径；发布件里 `isTrustedApiRequest` 在
-// `dsh-client-connection/lib/index.js:205` 有实体但**不在 `:850` 的导出名单**，插件侧 import 不到）。
+// 语义参照官方 `packages/client/connection/src/api-request-trust.ts` 的 `isTrustedApiRequest`
+// 与同目录 `loopback-hostname.ts` 的 `isLoopbackHostname`。不能直接引它的真正原因只有一条：
+//
+//   **谓词本身没有出口。** `@deepseek-ai/dsh-client-connection` 的根入口只转出
+//   HostConnectionHandle / OperatorPeer / 那几件 schema，没有转出 isTrustedApiRequest、
+//   assertTrustedAuthority、isLoopbackHostname——它们是该包的模块私有件。它的 exports 虽写着
+//   `"./src/*"`，files 却只带 lib/index.js、lib/client.js、lib/types/**，src/ 不随包发布，
+//   子路径同样取不到。
+//
+//   （"它住在 client 包里、host 半插件不引 client 包"**不是**理由。那个包的 index.ts 是个
+//   host 插件——apply(ctx) 的 JSDoc 写着 "Host plugin context"，它把服务 provide 进宿主 ctx；
+//   出货插件 packages/host/open-in-app/src/index.ts:184-191 就是用
+//   Reflect.get(ctx, 'connection').requestRejection(req) 当每条路由 handler 的第一句。
+//   官方那条路径在本包是**可用**的，见下一段为什么仍不能顶替。）
+//
+//   真正可达的是 handle 上的 requestRejection() / admit()，但它们把浏览器认证一并叠上：
+//   未认证返 401（packages/client/connection/src/rpc-host.ts:104-107）。本模块刻意只管
+//   "信任"、不要求"已认证"（本地 CLI 是既有信任面，见下面分歧 1），所以那条 API 也不能
+//   直接顶替。trustedHosts 同理存成 private 字段、插件侧读不到；本模块唯一可用的信号是
+//   webServer.host === "0.0.0.0"。
 // 四处刻意分歧，每条都有理由：
 //   1. 缺 `Host` 只在**回环对端**放行（官方一律拒）：那层还有 browser-auth，我们没有，
-//      而本地 CLI 是既有信任面（`lib/http.ts:32-34` 已把"空头不拦"写成口径）。
-//      可达性本机实测（`/tmp/f1probe.mjs`，node v26）：HTTP/1.1 无 Host 由 **node:http 自己
-//      回 400**，根本到不了 handler；能带着"无 Host"走到这里的只有 **HTTP/1.0 或裸 socket**
-//      （实测 `GET /a HTTP/1.0` 到 handler）。所以这一支不是"浏览器可能不发 Host"的兜底，
-//      而是本地面的通路；绑 `0.0.0.0` 时同网段的裸 socket 也能走到 —— README 明写残余风险。
+//      而本地 CLI 是既有信任面（`lib/http.ts` 的 `isCrossOrigin` 已把"空头不拦"写成口径）。
+//      可达性本机实测：HTTP/1.1 无 Host 由 **node:http 自己回 400**，根本到不了 handler；
+//      能带着"无 Host"走到这里的只有 **HTTP/1.0 或裸 socket**（实测 `GET /a HTTP/1.0` 到
+//      handler）。所以这一支不是"浏览器可能不发 Host"的兜底，而是本地面的通路；绑
+//      `0.0.0.0` 时同网段的裸 socket 也能走到 —— README 明写残余风险。
 //      另一处实测：重复 Host 头被 Node 折成**首项字符串**（数组形态在生产上不可达，
 //      那条判据是给未来/其它运行时留的 fail-closed，不是当前攻击面）。
 //   2. `sec-fetch-site` 用**白名单**（只放 `same-origin`/`none`/缺失），不照抄官方的"只拒
 //      `cross-site`"：官方那套把本机异端口标成 `same-site` 并放行，本仓不放过（沿用既有语义）。
-//   3. 非回环服务面用**本机网卡实际持有的 IP**，不用官方的 `trustedHosts` 配置：插件侧读不到
-//      那个配置（`HostConnectionService` 把它存成 private 字段），唯一可用信号是
-//      `webServer.host === "0.0.0.0"`。**不放 `.local`/`.lan` 之类后缀名**——mDNS 名可被本机任意
-//      进程或同网段主机声称并应答 127.0.0.1，那样 Host 与 Origin 两条腿会同时被骗过。
+//   3. 非回环服务面用**本机网卡实际持有的 IP**，不用官方的 `trustedHosts` 配置。
+//      **不放 `.local`/`.lan` 之类后缀名**——mDNS 名可被本机任意进程或同网段主机声称并应答
+//      127.0.0.1，那样 Host 与 Origin 两条腿会同时被骗过。官方那份 `isLoopbackHost` 也不能拿来
+//      替代：它额外接受 `::`、`0.0.0.0` 与 `.localhost` 后缀，用在权威判定上是放宽而非收紧。
 //   4. `guardTrust` 自带"头未发"检查：`sendJson` 在头已发时静默 no-op，若有人把闸门挪到
 //      `await readBody()` 之后，它会静默失败为放行。
 //
@@ -34,8 +51,8 @@
 // 与带值 return 混用即判红；`null` 与 `queryParam` 的既有口径也一致。
 
 import os from "node:os";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { sendJson } from "./http.ts";
+import type { ServerResponse } from "node:http";
+import { sendJson, CROSS_ORIGIN_TEXT } from "./http.ts";
 import type { HttpRequest } from "./http.ts";
 
 /** 信任判据的结论。除 `trusted` 外都该被拒。 */
@@ -54,9 +71,6 @@ const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "[::1]"]);
 
 /** 唯一允许通过的 `sec-fetch-site` 取值（缺失=非浏览器，走第 1 条分歧的本地面）。 */
 const SAME_SITE_ALLOW: ReadonlySet<string> = new Set(["same-origin", "none"]);
-
-/** 站点级拒绝的响应文案（沿用 `lib/http.ts` 既有那句，统一口径时就少改一处断言）。 */
-const CROSS_ORIGIN_TEXT = "cross-origin request rejected";
 
 /** Host 权威不是本机可信地址时的响应文案。 */
 const UNTRUSTED_HOST_TEXT = "untrusted host authority";
@@ -133,7 +147,7 @@ function isAcceptedAuthority(hostname: string, opts: TrustOptions): boolean {
 }
 
 /** `sec-fetch-site` 白名单（缺失等于非浏览器面，交 Host/Origin 两条腿判）。 */
-function siteIsSameOrigin(req: IncomingMessage): boolean {
+function siteIsSameOrigin(req: HttpRequest): boolean {
   const site = singleHeader(req, "sec-fetch-site");
   return site === null || SAME_SITE_ALLOW.has(site);
 }
@@ -180,7 +194,7 @@ function authorityOfFrom(req: HttpRequest, opts: TrustOptions): URL | null | "re
  * 一次判据：Host 权威 → sec-fetch-site（白名单）→ Origin 逐字比对。
  * 纯函数、不写响应；写响应的样板在 `guardTrust`。
  */
-export function requestTrust(req: IncomingMessage, opts: TrustOptions = {}): TrustVerdict {
+export function requestTrust(req: HttpRequest, opts: TrustOptions = {}): TrustVerdict {
   const hostUrl = authorityOfFrom(req, opts);
   if (hostUrl === "rejected") {
     return "untrusted-host";
@@ -213,7 +227,7 @@ export function trustRejectionText(verdict: TrustVerdict): string {
  * 返回 false 时调用方必须立即 return，不得继续读 body 或产生副作用。
  */
 export function guardTrust(
-  req: IncomingMessage,
+  req: HttpRequest,
   res: ServerResponse,
   opts: TrustOptions = {},
 ): boolean {

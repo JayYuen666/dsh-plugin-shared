@@ -87,6 +87,23 @@ describe("sendJson", () => {
     sendJson(res, 200, { ok: true });
     expect(res.status).toBe(0);
   });
+
+  it("payload 序列化失败时**不写头**：头已发而 end() 永不执行会把响应永久挂住", () => {
+    const res = fakeRes();
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    // 异常必须冒出来（调用方据此改走自己的降级），但此时响应仍是可写的
+    expect(() => {
+      sendJson(res, 200, circular);
+    }).toThrow(TypeError);
+    expect(res.headersSent, "写头发生在序列化之前就会挂死连接").toBe(false);
+    expect(res.status).toBe(0);
+    // BigInt 同理
+    expect(() => {
+      sendJson(res, 200, { big: 1n });
+    }).toThrow(TypeError);
+    expect(res.headersSent).toBe(false);
+  });
 });
 
 describe("isCrossOrigin", () => {
@@ -218,6 +235,38 @@ describe("readBody", () => {
     }) as unknown as IncomingMessage;
     await expect(readBody(errStream, 100)).resolves.toStrictEqual({ ok: false, reason: "aborted" });
   });
+
+  it("坏预算一律拒读，不退化成不限额", async () => {
+    // 任何数与 NaN 比较都是 false，`bytes > NaN` 永不成立——不拦就等于整条限额形同不存在，
+    // 而本模块存在的理由正是那条限额。
+    const budgets = [Number.NaN, Number.POSITIVE_INFINITY, -1];
+    const results = await Promise.all(
+      budgets.map(async (budget) => readBody(bodyStream("hello"), budget)),
+    );
+    for (const result of results) {
+      expect(result).toStrictEqual({ ok: false, reason: "bad-budget" });
+    }
+  });
+
+  it("预算为 0 是合法配置（只收空 body），不算坏预算", async () => {
+    await expect(readBody(bodyStream(""), 0)).resolves.toStrictEqual({ ok: true, text: "" });
+    await expect(readBody(bodyStream("x"), 0)).resolves.toStrictEqual({
+      ok: false,
+      reason: "too-large",
+    });
+  });
+
+  it("坏预算不碰流：限额配置坏了就没有必要把请求体读进内存", async () => {
+    let pulled = 0;
+    const counting = new Readable({
+      read(): void {
+        pulled += 1;
+        this.push("data");
+      },
+    }) as unknown as IncomingMessage;
+    await readBody(counting, Number.NaN);
+    expect(pulled).toBe(0);
+  });
 });
 
 describe("guardBody", () => {
@@ -264,5 +313,15 @@ describe("guardBody", () => {
     await expect(guardBody(errStream, res, { maxBytes: 100 })).resolves.toBeNull();
     expect(res.status).toBe(400);
     expect(JSON.parse(res.body)).toStrictEqual({ ok: false, error: "request body unreadable" });
+  });
+
+  it("坏预算报 500：那是本端点的配置缺陷，不该冒充客户端的错", async () => {
+    const res = fakeRes();
+    await expect(guardBody(bodyStream("12345"), res, { maxBytes: Number.NaN })).resolves.toBeNull();
+    expect(res.status).toBe(500);
+    expect(JSON.parse(res.body)).toStrictEqual({
+      ok: false,
+      error: "request body limit misconfigured",
+    });
   });
 });

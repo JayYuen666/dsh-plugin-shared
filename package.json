@@ -1,7 +1,19 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + webServer HTTP 样板（sendJson/CORS/CSRF/body 限制）+ 卡片 apply 骨架 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
+  "keywords": [
+    "cordis",
+    "csrf",
+    "dsh",
+    "plugin",
+    "tool-events",
+    "webserver"
+  ],
+  "homepage": "https://github.com/JayYuen666/dsh-plugin-shared#readme",
+  "bugs": {
+    "url": "https://github.com/JayYuen666/dsh-plugin-shared/issues"
+  },
   "license": "MIT",
   "author": "JayYuen",
   "repository": {
@@ -12,124 +24,109 @@
     "icon.svg",
     "dist",
     "config/*.json",
-    "config/*.ts"
+    "README.zh.md"
   ],
   "type": "module",
-  "main": "./lib/index.ts",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./lib/index.ts",
-    "./lib/http": "./lib/http.ts",
-    "./lib/tool-events": "./lib/tool-events.ts",
-    "./lib/card-apply": "./lib/card-apply.ts",
-    "./lib/project-key": "./lib/project-key.ts",
-    "./lib/locale": "./lib/locale.ts",
-    "./lib/lesson-bus": "./lib/lesson-bus.ts",
-    "./lib/text": "./lib/text.ts",
-    "./lib/record": "./lib/record.ts",
-    "./lib/errors": "./lib/errors.ts",
-    "./lib/jsonl": "./lib/jsonl.ts",
-    "./lib/trust": "./lib/trust.ts",
-    "./lib/job-outcome": "./lib/job-outcome.ts",
-    "./lib/canonicalize-region-paths": "./lib/canonicalize-region-paths.ts",
-    "./config/oxlint": "./config/oxlint.base.ts",
-    "./config/vitest.base": "./config/vitest.base.ts",
-    "./config/*": "./config/*",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./lib/http": {
+      "types": "./dist/types/http.d.ts",
+      "default": "./dist/http.js"
+    },
+    "./lib/tool-events": {
+      "types": "./dist/types/tool-events.d.ts",
+      "default": "./dist/tool-events.js"
+    },
+    "./lib/card-apply": {
+      "types": "./dist/types/card-apply.d.ts",
+      "default": "./dist/card-apply.js"
+    },
+    "./lib/project-key": {
+      "types": "./dist/types/project-key.d.ts",
+      "default": "./dist/project-key.js"
+    },
+    "./lib/locale": {
+      "types": "./dist/types/locale.d.ts",
+      "default": "./dist/locale.js"
+    },
+    "./lib/lesson-bus": {
+      "types": "./dist/types/lesson-bus.d.ts",
+      "default": "./dist/lesson-bus.js"
+    },
+    "./lib/text": {
+      "types": "./dist/types/text.d.ts",
+      "default": "./dist/text.js"
+    },
+    "./lib/record": {
+      "types": "./dist/types/record.d.ts",
+      "default": "./dist/record.js"
+    },
+    "./lib/errors": {
+      "types": "./dist/types/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./lib/jsonl": {
+      "types": "./dist/types/jsonl.d.ts",
+      "default": "./dist/jsonl.js"
+    },
+    "./lib/trust": {
+      "types": "./dist/types/trust.d.ts",
+      "default": "./dist/trust.js"
+    },
+    "./lib/job-outcome": {
+      "types": "./dist/types/job-outcome.d.ts",
+      "default": "./dist/job-outcome.js"
+    },
+    "./lib/canonicalize-region-paths": {
+      "types": "./dist/types/canonicalize-region-paths.d.ts",
+      "default": "./dist/canonicalize-region-paths.js"
+    },
+    "./config/oxlint": {
+      "types": "./dist/types/config/oxlint.base.d.ts",
+      "default": "./dist/config/oxlint.base.js"
+    },
+    "./config/vitest.base": {
+      "types": "./dist/types/config/vitest.base.d.ts",
+      "default": "./dist/config/vitest.base.js"
+    },
+    "./config/tsconfig.base.json": "./config/tsconfig.base.json",
+    "./config/tsconfig.client.base.json": "./config/tsconfig.client.base.json",
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "main": "dist/index.js",
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      },
-      "./lib/http": {
-        "types": "./dist/types/http.d.ts",
-        "default": "./dist/http.js"
-      },
-      "./lib/tool-events": {
-        "types": "./dist/types/tool-events.d.ts",
-        "default": "./dist/tool-events.js"
-      },
-      "./lib/card-apply": {
-        "types": "./dist/types/card-apply.d.ts",
-        "default": "./dist/card-apply.js"
-      },
-      "./lib/project-key": {
-        "types": "./dist/types/project-key.d.ts",
-        "default": "./dist/project-key.js"
-      },
-      "./package.json": "./package.json",
-      "./lib/locale": {
-        "types": "./dist/types/locale.d.ts",
-        "default": "./dist/locale.js"
-      },
-      "./lib/lesson-bus": {
-        "types": "./dist/types/lesson-bus.d.ts",
-        "default": "./dist/lesson-bus.js"
-      },
-      "./lib/text": {
-        "types": "./dist/types/text.d.ts",
-        "default": "./dist/text.js"
-      },
-      "./lib/record": {
-        "types": "./dist/types/record.d.ts",
-        "default": "./dist/record.js"
-      },
-      "./lib/errors": {
-        "types": "./dist/types/errors.d.ts",
-        "default": "./dist/errors.js"
-      },
-      "./lib/jsonl": {
-        "types": "./dist/types/jsonl.d.ts",
-        "default": "./dist/jsonl.js"
-      },
-      "./lib/trust": {
-        "types": "./dist/types/trust.d.ts",
-        "default": "./dist/trust.js"
-      },
-      "./lib/job-outcome": {
-        "types": "./dist/types/job-outcome.d.ts",
-        "default": "./dist/job-outcome.js"
-      },
-      "./lib/canonicalize-region-paths": {
-        "types": "./dist/types/canonicalize-region-paths.d.ts",
-        "default": "./dist/canonicalize-region-paths.js"
-      },
-      "./config/oxlint": {
-        "types": "./dist/types/config/oxlint.base.d.ts",
-        "default": "./dist/config/oxlint.base.js"
-      },
-      "./config/vitest.base": {
-        "types": "./dist/types/config/vitest.base.d.ts",
-        "default": "./dist/config/vitest.base.js"
-      },
-      "./config/*": "./config/*"
-    },
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
+    "prebuild": "node build-clean.mjs",
     "build": "node build-host.mjs && node build-config.mjs && tsc -p tsconfig.build.json && tsc -p tsconfig.build.config.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint .",
     "test": "vitest run --coverage",
     "check": "npm run --loglevel=warn typecheck && npm run --loglevel=warn lint && npm run --loglevel=warn build && npm run --loglevel=warn test && npm run --loglevel=warn fmt:check",
     "fmt:check": "oxfmt --check .",
+    "fmt": "oxfmt .",
     "prepare": "npm run --loglevel=warn build"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-output-retention": "0.2.0-rc.2"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2",
     "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-output-retention": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-shell": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
@@ -142,27 +139,16 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": "^0.2.0-rc.2",
-    "eslint-plugin-sonarjs": ">=4.2.2",
-    "oxlint": ">=1.86.0",
-    "vitest": ">=5.0.2"
+    "@deepseek-ai/dsh": "^0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
-    "eslint-plugin-sonarjs": {
-      "optional": true
-    },
-    "oxlint": {
-      "optional": true
-    },
-    "vitest": {
-      "optional": true
-    },
     "@deepseek-ai/dsh": {
       "optional": true
     }
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": ">=0.2.0-rc.2"
+    "dsh": ">=0.2.0-rc.2",
+    "node": "^22.19.0 || >=24.0.0"
   }
 }

@@ -9,6 +9,7 @@ import {
   VITEST_ASSERTION_DEFAULTS,
   definePluginConfig,
   makeTestFileOverrides,
+  resolveJsPlugins,
 } from "../config/oxlint.base.ts";
 import type { OffReason, RuleTable } from "../config/oxlint.base.ts";
 
@@ -33,7 +34,42 @@ const KINDS: OffReason[] = [
   "零代价作废",
 ];
 
+/** 注桩用的两条入口路径与「解析不到」的文案：提为模块级常量（用例里重复出现同一字面量会被
+ *  no-duplicate-string 记成账），解析器替身也提到模块级（consistent-function-scoping）。 */
+const BUNDLED_ENTRY = "/bundled.js";
+const OWN_ENTRY = "/own.js";
+const SONARJS_MISSING = "解析不到 sonarjs";
+const SONARJS_MISSING_PATTERN = /解析不到 sonarjs/u;
+
+/** 「本仓解析不到 sonarjs」的注桩解析器。生产路径永远成功，那两个分支只能靠注桩走到。 */
+function boomSonarjs(): string {
+  throw new Error(SONARJS_MISSING);
+}
+
 describe("definePluginConfig：关规则必须留依据", () => {
+  it("jsPlugins：默认解析到本包的 sonarjs 入口", () => {
+    const cfg = definePluginConfig();
+    expect(cfg.jsPlugins ?? []).toHaveLength(1);
+  });
+
+  it("jsPlugins：解析成功时自带入口接在后面，重复的那个不追加第二遍", () => {
+    // 本仓装得上 sonarjs，所以「解析成功」这一支是真实路径；去重靠传同一个入口验：
+    // 原写法无脑拼接，调用方传的正是本包解析到的那个入口时会挂两遍。
+    expect(resolveJsPlugins([OWN_ENTRY], () => BUNDLED_ENTRY)).toStrictEqual([
+      BUNDLED_ENTRY,
+      OWN_ENTRY,
+    ]);
+    expect(resolveJsPlugins([BUNDLED_ENTRY], () => BUNDLED_ENTRY)).toStrictEqual([BUNDLED_ENTRY]);
+  });
+
+  it("jsPlugins：解析失败时自带入口即逃生口，不带入口才抛", () => {
+    // 两个方向缺一不可：原写法无条件先解析，报错信息给的补救办法（经 jsPlugins 传自己的
+    // 入口）照做必然再报同一条——那正是「逃生口兑现不了」的形态。
+    expect(resolveJsPlugins([OWN_ENTRY], boomSonarjs)).toStrictEqual([OWN_ENTRY]);
+    expect(() => resolveJsPlugins(undefined, boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
+    expect(() => resolveJsPlugins([], boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
+  });
+
   it("出厂基线本身装载得动（每条 off 都在 OFF_JUSTIFICATIONS 里查到）", () => {
     expect(() => definePluginConfig()).not.toThrow();
   });

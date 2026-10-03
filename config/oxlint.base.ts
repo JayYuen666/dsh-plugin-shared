@@ -95,12 +95,12 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "vitest/prefer-lowercase-title": {
     kind: "上游不推荐",
     measured: 171,
-    note: "只在用例文件里生效：它带 autofix，实测一轮 oxlint --fix 静默小写化了 260 条标题（含 nO_VERIFY 这种坏名）。包级 titlePrefixes 按 owner 2026-09-28 的口径只留真正的技术名（GET/CSRF/组件名…）：规格 ticket 号已从标题里删掉，中文开头的标题天然满足判据（无大小写）⇒ 免检面能收多小收多小。实测 oxlint 前缀一命中就把整条标题免检，所以陈旧条目由 scripts/assert-config-baseline.mjs 的 LINT_TITLE_PREFIX_UNUSED 点名，不靠人工巡检",
+    note: "只在用例文件里生效：它带 autofix，实测一轮 oxlint --fix 静默小写化了 260 条标题（含 nO_VERIFY 这种坏名）。包级 titlePrefixes 只留真正的技术名（GET/CSRF/组件名…）：非技术名（工单号一类）不该借这条豁免留在标题里，而中文开头的标题天然满足判据（无大小写）⇒ 免检面能收多小收多小。实测 oxlint 前缀一命中就把整条标题免检，所以陈旧条目由配置基线自检按『免检面未被使用』点名，不靠人工巡检",
   },
   "vitest/prefer-called-times": {
     kind: "对侧互斥",
     measured: 0,
-    note: "探针实测（同文件四种写法各跑一次）：toHaveBeenCalledTimes(1) 被 prefer-called-once 判死、toHaveBeenCalledOnce() 被本条判死、expect(spy.mock.calls).toHaveLength(1) 被 prefer-to-have-been-called-times 判死，只有 n>=2 能同时满足三条 ⇒ 三条同开等于「单次调用」这条断言无法书写（实测逼得 plugin-hot-reload 改用 assert.equal(spy.mock.calls.length, 1) 绕行）。留 prefer-called-once 与 prefer-to-have-been-called-times 两条方向一致的组合，关本条",
+    note: "探针实测（同文件四种写法各跑一次）：toHaveBeenCalledTimes(1) 被 prefer-called-once 判死、toHaveBeenCalledOnce() 被本条判死、expect(spy.mock.calls).toHaveLength(1) 被 prefer-to-have-been-called-times 判死，只有 n>=2 能同时满足三条 ⇒ 三条同开等于「单次调用」这条断言无法书写（实测逼得消费方改用 assert.equal(spy.mock.calls.length, 1) 绕行）。留 prefer-called-once 与 prefer-to-have-been-called-times 两条方向一致的组合，关本条",
   },
   "vitest/prefer-describe-function-title": {
     kind: "对侧互斥",
@@ -397,13 +397,12 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
 };
 
 /**
- * 旧 `.oxlintrc.json` 里继承来、此次**取消豁免**且确实零代价的规则。
+ * 基线里**不设豁免**的规则清单：这些规则必须保持开启，谁要关掉就得先给出依据。
  *
- * 这里原来记着三条。"零代价"那句话是用 `oxlint --deny=<rule>` 量的，而 `--deny` 盖不住
- * override 层的 off（本文件头注释里有这条实测口径）——重测之后：`eslint/no-continue` 在
- * `scripts/` 有 53 条、`eslint/no-await-in-loop` 有 2 条，于是这两条按文体收窄回
- * `SCRIPTS_OVERRIDES`（TS 侧仍 0 条、仍生效），从这份"已作废"名单里撤掉。留在这儿的
- * 才是真正确认过零代价的。
+ * 判据是「按文体分别核命中数」。`oxlint --deny=<rule>` 量的是整体，而 `--deny` 盖不住
+ * override 层的 off（这条口径见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
+ * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 与
+ * `eslint/no-await-in-loop` 正是这一类，它们的收窄在 SCRIPTS_OVERRIDES 里，不在这里。
  */
 export const RETIRED_OFFS: string[] = ["typescript/no-empty-object-type"];
 
@@ -436,11 +435,74 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
  * oxlint 的 **JS plugin** 面（`jsPlugins`，官方标注 alpha、不受 semver 保护）挂
  * `eslint-plugin-sonarjs`，补上"同形/重复"这一类 oxlint 内建没有的判据。
  *
- * 入口必须是**能解析到文件的路径**：实测裸包名 `eslint-plugin-sonarjs` 在 pnpm 布局里
- * 从包目录报 `Cannot find module`（它装在 workspace 根的 node_modules 下），配置就整份加载失败。
- * 所以这里在装载期用 `createRequire` 从本模块解析，绝对路径不落进任何配置文件。
+ * 入口必须是**能解析到文件的路径**：裸包名在 pnpm 布局里从包目录报 `Cannot find module`，
+ * 配置就整份加载失败。所以这里用 `createRequire` 从本模块解析，绝对路径不落进任何配置文件。
+ *
+ * 惰性求值而不是模块顶层常量：本包把 sonarjs 声明成消费方自备的工具链（不进
+ * peerDependencies——npm 7+ 会去满足 optional peer，而 oxlint 的 peerOptional `vite-plus`
+ * 把 vitest 钉成 5.0.1，与 `vitest >= 5.0.2` 无交集，结果是消费方装本包直接 ERESOLVE）。
+ * 顶层求值会让**不用配置面**的消费者也在 `import` 那一刻撞 MODULE_NOT_FOUND；挪进来之后
+ * 缺包只影响真正调用 `definePluginConfig()` 的那一侧，且报的是能照着做的话。
  */
-const SONARJS_ENTRY = createRequire(import.meta.url).resolve("eslint-plugin-sonarjs/cjs/plugin.js");
+const SONARJS_CANDIDATES = ["eslint-plugin-sonarjs", "eslint-plugin-sonarjs/cjs/plugin.js"];
+
+/**
+ * 解析 sonarjs 的 JS plugin 入口。
+ * @returns 能解析到文件的绝对路径
+ * @throws 两个候选字形都解析不到时，点名该装什么、以及自备入口时的替代接法
+ */
+function resolveSonarjsEntry(): string {
+  const fromModule = createRequire(import.meta.url);
+  const tried: string[] = [];
+  for (const candidate of SONARJS_CANDIDATES) {
+    try {
+      return fromModule.resolve(candidate);
+    } catch {
+      tried.push(candidate);
+    }
+  }
+  throw new Error(
+    `oxlint 基线要挂 eslint-plugin-sonarjs，但从本包解析不到它（试过 ${tried.join("、")}）。` +
+      "要么在本包 devDependencies 里装 eslint-plugin-sonarjs，" +
+      "要么把自己解析到的入口经 definePluginConfig({ jsPlugins: [...] }) 传进来——" +
+      "带了入口就不会再解析（那条提示才真正兑现）。",
+  );
+}
+
+/**
+ * 组装 `jsPlugins`：本包解析到的 sonarjs 入口在前，调用方自带的在后并去重。
+ *
+ * 为什么要有这一层而不是直接 `[resolveSonarjsEntry(), ...(jsPlugins ?? [])]`：
+ * 那写法无条件先求值，于是「调用方自带入口」这条官方逃生口在缺 sonarjs 时**用不了**——
+ * 抛错发生在调用方的入口被用上之前，报错信息给的补救办法照做必然再报同一条。
+ * 分支口径：
+ *  - 调用方带了入口 → 解析失败就跳过（它显然自备了），成功则去重后前置；
+ *  - 调用方没带 → 解析失败照旧抛那条可操作的信息（缺包是真故障，不该被静默）。
+ *
+ * 导出且把解析器做成入参，是为了「解析失败」那一支在**本仓**可测：本仓 devDependencies
+ * 装着 sonarjs，真实的解析路径永远成功，那两个分支就只能靠注桩走到（与 `LauncherLocator`、
+ * `ProjectKeyOptions.realpath` 同一套可注入面的取舍）。生产侧的 consumer 是
+ * `definePluginConfig`，故这不是「只被测试养着的导出」。
+ *
+ * @param callerPlugins - 调用方经 `jsPlugins` 传入的入口；undefined / 空数组均可
+ * @param resolve - sonarjs 入口解析器（生产用真实实现，测试注桩）
+ * @returns 交给 oxlint 的 jsPlugins 数组
+ */
+export function resolveJsPlugins(
+  callerPlugins: NonNullable<OxlintConfig["jsPlugins"]> | undefined,
+  resolve: () => string = resolveSonarjsEntry,
+): NonNullable<OxlintConfig["jsPlugins"]> {
+  const caller = callerPlugins ?? [];
+  let bundled: string | null = null;
+  try {
+    bundled = resolve();
+  } catch (error) {
+    if (caller.length === 0) {
+      throw error;
+    }
+  }
+  return bundled === null ? [...caller] : [bundled, ...caller.filter((entry) => entry !== bundled)];
+}
 
 /**
  * 逐条点名而不是通配：JS plugin 的 alpha 面里，一条规则改名或新增就可能整份配置解析失败
@@ -498,12 +560,11 @@ const BASE_OPTIONS: NonNullable<OxlintConfig["options"]> = {
  * 排除面只留"生成物与非源码树"：`client.js`/`host.js` 是 build 产物，`coverage/`、`dist/`、
  * `.toolchain/`、`node_modules/` 同理。
  *
- * 这里原本还排着 `*.config.mjs`、`*.config.ts`、`build-client.mjs`、`build-host.mjs`，此次删掉：
- * 那四类是**人写的源码**，排掉就等于给它们开了盲区——实测因此攒过 5 条指向根本不会被 lint 的
- * 规则的僵尸 `oxlint-disable`（quality-gate/build-client.mjs，删除后无任何判据报出），
- * 而且和 `scripts/*.mjs` 的处理自相矛盾（同为 node 直跑的 .mjs，那边全量在 lint）。
- * 配置文件与 bundler 脚本现在和各包源码走同一套规则，`*.mjs` 仍由 SCRIPTS_OVERRIDES
- * 按文体收窄（类型信息类规则对无类型 .mjs 无从计算）。
+ * 判据是"**人写的源码一律在 lint 射程内**"：配置文件与 bundler 脚本（`*.config.ts`、
+ * `*.config.mjs`、`build-*.mjs`）都属人写的，排掉就等于开盲区——实测把这类文件排掉后，
+ * 会攒出指向根本不会被 lint 的规则名的僵尸 `oxlint-disable`（删除后没有任何判据报出）。
+ * `*.mjs` 由 SCRIPTS_OVERRIDES 按文体收窄（类型信息类规则对无类型 .mjs 无从计算），
+ * 而不是整片豁免。
  */
 const BASE_IGNORE_PATTERNS: string[] = [
   "**/node_modules/**",
@@ -1005,7 +1066,7 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
 
   return defineConfig({
     plugins: BASE_PLUGINS,
-    // 刻意不开 `env.vitest`：13 份 vitest 配置都没启用 `globals: true`，测试里裸用
+    // 刻意不开 `env.vitest`：各包的 vitest 配置都没启用 `globals: true`，测试里裸用
     // describe/it/expect 属于未声明标识符，应由 no-undef 与 TS2593 报出来（实测确实报）。
     env: { node: true, es2024: true, browser: true },
     options: BASE_OPTIONS,
@@ -1013,7 +1074,12 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     ignorePatterns: [...BASE_IGNORE_PATTERNS, ...extraIgnorePatterns],
     // sonarjs 这条 JS plugin 是常挂的（`SONARJS_RULES` 在 rules 里，缺入口就是整份配置加载失败，
     // 实测报 `Plugin 'sonarjs' not found`）；包内自带的入口追加在后面。
-    jsPlugins: [SONARJS_ENTRY, ...(jsPlugins ?? [])],
+    //
+    // 组装交给 resolveJsPlugins：调用方自带入口时**不再无条件求值** resolveSonarjsEntry。
+    // 原写法无条件先解析，缺包就抛，于是本文件那条「要么经 definePluginConfig({ jsPlugins })
+    // 传进来」的提示**兑现不了**——调用方传的入口根本轮不到被用上（实测：sonarjs 缺席时
+    // 传了自己的入口，仍抛同一条错）。
+    jsPlugins: resolveJsPlugins(jsPlugins),
     rules,
     overrides,
   });

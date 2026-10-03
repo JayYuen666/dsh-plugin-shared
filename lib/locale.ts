@@ -14,27 +14,48 @@
 //
 // 默认取中文：这些插件的拒绝理由与注入段长期以中文写作，英文是补齐而非替换。
 
+import type { BuiltInLocaleId } from "@deepseek-ai/dsh-client-locale";
 import { isRecord } from "./record.ts";
 
-/** 支持的界面/模型侧文案语言。 */
-export type Locale = "zh" | "en";
+/**
+ * 支持的界面/模型侧文案语言。官方件是唯一定义源：`@deepseek-ai/dsh-client-locale` 的
+ * `BuiltInLocaleId` 由它自己的 `LOCALE_IDS` 取下标得出，宿主哪天添一门语言时本包跟着走，
+ * 不需要有人记得回来改这里的字面量联合。
+ */
+export type Locale = BuiltInLocaleId;
 
 /** 缺省语言。设置项未设或值不合语法时落到这里。 */
 export const DEFAULT_LOCALE: Locale = "zh";
 
 /**
- * 官方 `@deepseek-ai/dsh-client-locale` 在 Host settings 文档里拥有的命名空间与字段名
- * （其 `lib/index.js:5-7`）。这里是**抄常量不是引依赖**：那是宿主内部实现，没进公开
- * 依赖面，而两侧必须同名才能读到同一份偏好。
+ * 官方 `@deepseek-ai/dsh-client-locale` 拥有的 settings 命名空间与字段名。那两枚常量官方
+ * 也外销（同包的根入口），这里**不引它而是抄字面量**：引它就得把 client 包变成 host 半的运行期
+ * 依赖，而这两个值是纯字符串常量、不参与任何 client 行为。两侧必须逐字同名才读得到同一份偏好，
+ * 所以这条耦合是本包 README 的登记项：官方那两枚常量一旦改名，本包必须同步改。
  */
 export const LOCALE_SETTINGS_NAMESPACE = "locale";
 export const LOCALE_PREFERENCE_FIELD = "preference";
 
-/** 一个包的全部消息键值表（键名即语义，值是人读文案）。 */
-export interface MessagesCatalog<Messages> {
-  readonly zh: Messages;
-  readonly en: Messages;
-}
+/**
+ * 一个包的全部消息键值表（键名即语义，值是人读文案）。
+ *
+ * 键集绑 `Locale` 而不是手写 `{ zh; en }`：本文件的 `Locale` 已改成官方 `BuiltInLocaleId`
+ * 的别名，宿主哪天加一门语言，这两处必须**一起**响——只改 `Locale` 而把键集钉死成
+ * `{ zh; en }`，新增那门语言会静默取不到文案（`messagesFor` 的 else 分支落回 zh）。
+ * `Record` 与原 interface 在当前 `Locale`（恰为 `"zh"｜"en"`）下结构等价，消费方字面量
+ * 无需改动；差别只在宿主扩宽那一刻，从「静默回落」变成「编译报错」。
+ *
+ * 值域收在 string 上，用**同构映射类型**而不是 `Record<string, string>`：实测（tsc）消费方
+ * 全部用 `interface Messages { readonly xxx: string }` 声明，而 interface **拿不到**隐式索引
+ * 签名——写成 `Messages extends Record<string, string>` 会让全部消费方 TS2322，那是外溢到
+ * 9 个包的破坏性变更。映射类型对 interface 与 type 都成立（test/type-guards.test.ts 钉住）。
+ * 收窄前实测到的缺口：`messagesFor({ zh: { g: 1 }, en: { g: "x" } }, "zh")` 零错误通过，即文件头
+ * 「值不是字符串都在 tsc 阶段就红」原本只在消费方自己声明 `Messages` 时才成立。
+ */
+export type MessagesCatalog<Messages> = Record<
+  Locale,
+  { readonly [Key in keyof Messages]: string }
+>;
 
 /**
  * 把设置里的原始值归一成受支持的 locale：按**主语言子标签**判定（`en-US`、`zh-Hans-CN`
@@ -63,13 +84,21 @@ export function resolveLocalePreference(described: unknown): Locale {
 
 /**
  * 取某个语言下的消息表。
- * @param catalog - 两语齐全的消息表。
+ *
+ * 按 `locale` 直接索引而不是 `locale === "en" ? … : …` 的二元分派：后者的 else 分支
+ * 把「非 en 即 zh」这个假设写死在运行期，`Locale` 扩宽时它**照样编译通过**，新增那门
+ * 语言静默拿不到文案。与 `MessagesCatalog` 的 `Record<Locale, …>` 合起来，
+ * 扩宽会在 `catalog[locale]` 这一处落成 TS2322。
+ * @param catalog - 各语言齐全的消息表。
  * @param locale - 已归一的语言。
  * @returns 对应语言的消息表（引用返回，不做拷贝）。
  */
 export function messagesFor<Messages>(
   catalog: MessagesCatalog<Messages>,
   locale: Locale,
-): Messages {
-  return locale === "en" ? catalog.en : catalog.zh;
+): { readonly [Key in keyof Messages]: string } {
+  // 返回值跟着 catalog 的值域走，而不是回到 Messages：TS 不能把同构映射类型反推回它的
+  // 原泛型（实测会在这里报 TS2322）。两者结构等价，消费方 messagesFor(...).xxx 与把它
+  // 赋给 Messages 类型的变量都不受影响，而值域仍然钉在 string 上。
+  return catalog[locale];
 }

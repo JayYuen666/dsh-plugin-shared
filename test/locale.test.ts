@@ -12,6 +12,13 @@ import {
   resolveLocalePreference,
 } from "../lib/locale.ts";
 import type { MessagesCatalog } from "../lib/locale.ts";
+// 官方常量在**测试期**值导入。lib/locale.ts:31-35 拒绝在运行期引它（会把 schemastery+zod
+// 拖进 host 半），但那条顾虑只对运行期成立：测试期引一次不产生任何产物字节，却把文件头自认的
+// "官方改名本包必须同步改"从口头承诺变成会红的那道门。值已实测一致（'locale' / 'preference'）。
+import {
+  LOCALE_PREFERENCE_FIELD as OFFICIAL_PREFERENCE_FIELD,
+  LOCALE_SETTINGS_NAMESPACE as OFFICIAL_SETTINGS_NAMESPACE,
+} from "@deepseek-ai/dsh-client-locale";
 
 interface TestMessages {
   readonly greeting: string;
@@ -77,9 +84,11 @@ describe("resolveLocalePreference", () => {
     assert.equal(resolveLocalePreference("en"), DEFAULT_LOCALE);
   });
 
+  // 断言对象是**官方导出的常量本身**，不是本包抄下来的字面量。写成后者时，用例名说的是
+  // "与官方一致"，实际断言的却是本包自己——官方改名它照样绿，等于把要守的耦合排除在门外。
   it("命名空间与字段名与 dsh-client-locale 的常量一致", () => {
-    assert.equal(LOCALE_SETTINGS_NAMESPACE, "locale");
-    assert.equal(LOCALE_PREFERENCE_FIELD, "preference");
+    assert.equal(LOCALE_SETTINGS_NAMESPACE, OFFICIAL_SETTINGS_NAMESPACE);
+    assert.equal(LOCALE_PREFERENCE_FIELD, OFFICIAL_PREFERENCE_FIELD);
   });
 });
 

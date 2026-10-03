@@ -1,6 +1,6 @@
 // lib/jsonl.ts —— JSONL 尾部收缩的**纯**决策件：给定整份文本与字节上限，返回该留什么。
 //
-// 为什么只收内核不收写盘：SP-D 台架实测本仓两份实现（ctx-observe 的 shrinkMetricsFileSync
+// 为什么只收内核不收写盘：本仓两份实现（ctx-observe 的 shrinkMetricsFileSync
 // 与 lesson-loop 的 trimJsonl）算法逐字符同义、穷举 413 组磁盘内容分歧 0，但两件事刻意不同、
 // 统一即改变行为——**触发策略**（ctx-observe 每次追加前固定 5 MiB；lesson-loop 只在
 // maxBytes > 0 时收缩，出厂默认 0 = 永不截断，那是写进它 README 的承诺）与**错误出口**

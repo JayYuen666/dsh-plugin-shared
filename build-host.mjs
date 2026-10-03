@@ -10,69 +10,18 @@
 // d.ts 会让消费方解析不到（.ts 不是可解析的类型说明符），故重写成 ./types/x.js。
 // 顶部 node reference：oxlint 类型检查对 .mjs 不自动加载 @types/node，需显式声明
 // 才能解析 node:fs/promises、process、import.meta（否则整文件按 error 类型误报 unsafe）。
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { rolldown } from "rolldown";
 import { canonicalizeRegionPaths } from "./lib/canonicalize-region-paths.ts";
+import { createIsExternal } from "./build-shared.mjs";
 
 const root = import.meta.dirname;
 const outDir = path.join(root, "dist");
-/** @type {unknown} */
-const pkgJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
-/**
- * 从 JSON.parse 的 unknown 投影为 Record（非对象 → 空对象兜底），避免 any 索引。
- * @param {unknown} raw
- * @returns {Record<string, unknown>}
- */
-function asRecord(raw) {
-  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-    return raw;
-  }
-  return {};
-}
-
-/**
- * 取依赖表里的包名清单（值即外部化说明符）。
- * @param {string} field
- * @returns {string[]}
- */
-function dependencyNames(field) {
-  const table = asRecord(asRecord(pkgJson)[field]);
-  return Object.keys(table).filter((name) => typeof table[name] === "string");
-}
-
-// 与全部兄弟包同一条口径：dependencies/peerDependencies 一律外部化，
-// 产物里保留裸说明符。shared 曾是**唯一**没有 external 选项的 build-host.mjs，理由是
-// "本机运行面走源码不走 dist"——那句只对了一半：本包是**发布件**，消费方装的是躺在
-// node_modules 里的 dist/，那边没有源码可走。不外部化就把官方
-// `truncateWithoutSplittingSurrogatePair` 的函数体复制进 shared 的 chunk，于是同一进程里
-// 官方截断件有两份身份（宿主一份 + shared dist 一份），而 shared 自己还要为它的行为负责。
-// external 的字符串项是精确匹配，子路径说明符会漏 ⇒ 按「包名段」判定而不是枚举名字。
-const externalNames = new Set([
-  ...dependencyNames("dependencies"),
-  ...dependencyNames("peerDependencies"),
-]);
-
-/**
- * 说明符的包名段：`@scope/pkg/sub` → `@scope/pkg`，`pkg/sub` → `pkg`。
- * @param {string} id
- * @returns {string}
- */
-function packageNameOf(id) {
-  const segments = id.split("/");
-  if (id.startsWith("@")) {
-    return segments.slice(0, 2).join("/");
-  }
-  return segments[0] ?? id;
-}
-
-/**
- * rolldown 外部化判据。
- * @param {string} id
- * @returns {boolean}
- */
-const isExternal = (id) => externalNames.has(packageNameOf(id));
+// 四件机械件（asRecord / dependencyNames / packageNameOf / isExternal）与外部化口径都收在
+// build-shared.mjs——此前这里与 build-config.mjs 各有一份逐字节相同的副本。
+const isExternal = await createIsExternal(root);
 
 /** 各切面（消费方按子路径取，谁也不必为别人的依赖买单）。 */
 const facets = [
@@ -134,6 +83,12 @@ export async function buildHost() {
     format: "esm",
     entryFileNames: "[name].js",
     chunkFileNames: "[name]-[hash].js",
+    // 压缩：实测同一批 14 个入口 35,020 B -> 10,345 B（省 70.5%）。本包的 dist 就是发布形态，
+    // 消费方把它当 external 直接 import（不再二次打包），所以这些字节是真实装载成本。
+    // 官方根 tsdown.config.ts 同样没开 minify，但那是 monorepo 内消费，与这里的处境不同。
+    // 唯一变大的入口是 barrel（1,300 -> 1,523 B）：oxc 会把 re-export 的具名清单展开。
+    // +223 B 换 24 KB 缩减，划算。
+    minify: true,
   });
   const chunks = output.filter((item) => item.type === "chunk");
   if (chunks.length === 0) {
@@ -142,6 +97,11 @@ export async function buildHost() {
   // `//#region` 行的路径由 rolldown 按 process.cwd() 算出 ⇒ 同一份源码有两种字节。折 canonical
   // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两侧），写盘那一侧不再是
   // 唯一的正典化点。
+  //
+  // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测 14 个 chunk 里
+  // 仍含 "//#region" 字样的那一个只是 canonicalize-region-paths.js 里正则的字面量，不是标记。
+  // 保留调用是因为它无成本、且 9 个兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
+  // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。
   const files = chunks.map((chunk) =>
     artifact(path.join(outDir, chunk.fileName), canonicalizeRegionPaths(chunk.code, root)),
   );

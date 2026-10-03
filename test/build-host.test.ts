@@ -35,13 +35,21 @@ describe("shared buildHost()", () => {
 
   it("产物：@deepseek-ai/dsh-output-retention 保持裸说明符（未内联）", async () => {
     const out = await chunkText();
+    // 说明符匹配必须容得下 minify：压缩产物里是 from"..."（from 后无空格），写死
+    // `from "..."` 会在开压缩那天假报红。同一个文件下面那条判据本来就用 /from\s+/u，
+    // 这里按同口径写成 \s*（星号：压缩后一个空格都不剩）。
     assert.ok(
-      out.includes('from "@deepseek-ai/dsh-output-retention"'),
+      /from\s*["']@deepseek-ai\/dsh-output-retention["']/u.test(out),
       "官方截断件必须以裸说明符留在 dist 里（口径 A：值导入的官方件一律外部化）",
     );
-    assert.ok(
-      !/^function truncateWithoutSplittingSurrogatePair\(/mu.test(out),
-      "dist 不得内联官方 truncateWithoutSplittingSurrogatePair 的函数体",
+    // 「没有被内联」由上面那条完整表达：一旦内联，这条 import 就不复存在。
+    // 原先那条 /^function truncateWithoutSplittingSurrogatePair\(/mu 在压缩后恒不成立
+    //（标识符被改名），是一条永远不会红的空判据——换成对「同一份身份只有一条导入」的正面计数，
+    // 也就是本用例开头要防的那件事。
+    assert.equal(
+      [...out.matchAll(/from\s*["']@deepseek-ai\/dsh-output-retention["']/gu)].length,
+      1,
+      "官方截断件在 dist 里只应有一条导入（text 切面）；出现多条说明符意味着实现被复制",
     );
   });
 

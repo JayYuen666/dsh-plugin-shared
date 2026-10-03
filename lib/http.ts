@@ -8,10 +8,12 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 
 /**
- * 下面的 header 读取 helper 不只被真 `IncomingMessage` 调用：`test/trust*.test.ts` 手搓合成
- * 请求、以及非 node:http 的适配层都会传只带部分字段的对象。Node 的类型把 `headers` /
- * `socket` 都标成必存在，照抄那个形状会让类型面比现实更乐观 —— 运行时不得不写 `?.` 自卫，
- * 而那条自卫又会被类型感知规则判成冗余。所以这里如实声明可缺字段的入参类型。
+ * header 读取 helper 接受的请求形状：真 `IncomingMessage` 或只带部分字段的合成片段。
+ *
+ * Node 把 `headers` / `socket` 都标成必存在，照抄那个形状会让类型面比现实更乐观——运行时
+ * 不得不写 `?.` 自卫，而那条自卫又会被类型感知规则判成冗余。所以这里如实声明可缺字段。
+ * 仅覆盖**读头**所需的面：要消费请求体的函数（`readBody` / `guardBody`）仍收
+ * `IncomingMessage`，因为 `PartialRequest` 不保证可异步迭代。
  */
 export interface PartialRequest {
   readonly headers?: IncomingHttpHeaders;
@@ -19,21 +21,26 @@ export interface PartialRequest {
   readonly url?: string | undefined;
 }
 
-/** helper 接受的请求：真 `IncomingMessage` 或合成片段。 */
+/** 只读头的 helper 接受的请求：真 `IncomingMessage` 或合成片段。 */
 export type HttpRequest = IncomingMessage | PartialRequest;
 
 /** 写 JSON 响应（no-store：端点都是运行时状态，禁缓存防陈旧）。
  * 已发头/已结束则静默跳过：同一响应被写两次会抛 ERR_HTTP_HEADERS_SENT，
- * 而端点多在 async 回调里，抛错变成 unhandled rejection 拖垮共享的 web host。 */
+ * 而端点多在 async 回调里，抛错变成 unhandled rejection 拖垮共享的 web host。
+ *
+ * **序列化先于写头**：循环引用与 BigInt 会让 JSON.stringify 抛错。若把它排在 writeHead
+ * 之后，头已发出而 end() 永不执行——响应就此挂住，客户端一直等到超时，调用方也再也
+ * 改不了状态码。先算出 body 就把这一支变回一个普通的同步异常。 */
 export function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   if (res.headersSent || res.writableEnded) {
     return;
   }
+  const body = JSON.stringify(payload);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  res.end(JSON.stringify(payload));
+  res.end(body);
 }
 
 /** 读单值请求头：重复头取首项，非字符串/无 headers 面（部分 mock）归空串。 */
@@ -47,13 +54,13 @@ function headerValue(req: HttpRequest, name: string): string {
  * CORS 同源纵深防御：浏览器请求带 sec-fetch-site，非 same-origin/none 即拒绝。
  * 空头（curl/CLI）不拦——浏览器侧伪造不了同源判定，CLI 是本地可信调用面。
  */
-export function isCrossOrigin(req: IncomingMessage): boolean {
+export function isCrossOrigin(req: HttpRequest): boolean {
   const site = headerValue(req, "sec-fetch-site");
   return site !== "" && site !== "same-origin" && site !== "none";
 }
 
 /** 从 req.url 读 query 参数（URLSearchParams 语义：+ 解码空格、尊重 ; 分隔等）。 */
-export function queryParam(req: IncomingMessage, name: string): string | null {
+export function queryParam(req: HttpRequest, name: string): string | null {
   try {
     return new URL(req.url ?? "", "http://localhost").searchParams.get(name);
   } catch {
@@ -62,15 +69,34 @@ export function queryParam(req: IncomingMessage, name: string): string | null {
 }
 
 /** CSRF 校验：header 值非空且等于下发 token（sec-fetch-site 只防浏览器，可伪造）。 */
-export function checkCsrf(req: IncomingMessage, token: string, headerName: string): boolean {
+export function checkCsrf(req: HttpRequest, token: string, headerName: string): boolean {
   const headerVal = headerValue(req, headerName);
   return headerVal !== "" && headerVal === token;
 }
 
-/** readBody 的失败原因：`too-large` 超限（413），`aborted` 流读取中断/坏流（400）。 */
+/**
+ * readBody 的失败原因：`too-large` 超限（413），`aborted` 流读取中断/坏流（400），
+ * `bad-budget` 是**调用方传错了 maxBytes**（负数、`NaN`、`Infinity`）——它不是请求的错，
+ * 而是端点自己的限额配置坏了，故单列一档而不是伪装成 413。
+ */
 export type BodyRead =
   | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly reason: "too-large" | "aborted" };
+  | { readonly ok: false; readonly reason: "too-large" | "aborted" | "bad-budget" };
+
+/** 读失败的那三支原因（判别联合的负分支，用来把响应档位表钉成穷尽的）。 */
+type BodyRejectReason = Extract<BodyRead, { ok: false }>["reason"];
+
+/**
+ * 原因 → 响应。表驱动而不是 if 链：新增一档时漏配会在 tsc 阶段就红，而 if 链只会静默
+ * 落到兜底那一档——限额配错被当成"请求过大"报出去，就是这种静默错位。
+ */
+const BODY_REJECTIONS: Readonly<
+  Record<BodyRejectReason, { readonly status: number; readonly error: string }>
+> = {
+  "too-large": { status: 413, error: "request body too large" },
+  aborted: { status: 400, error: "request body unreadable" },
+  "bad-budget": { status: 500, error: "request body limit misconfigured" },
+};
 
 /** 请求块 → Buffer（流通常给 Buffer，被 `setEncoding` 改成 string 时按 UTF-8 编码回来）。 */
 function chunkToBuffer(chunk: unknown): Buffer {
@@ -86,8 +112,16 @@ function chunkToBuffer(chunk: unknown): Buffer {
  *   2. 只按解码后字符数设限，恶意 body 可在触顶前已占满内存；content-length
  *      预检让明显超限的请求根本不开始累积。
  * 超限/坏流都立即停止读取（for-await 提前 return 会 release 迭代器并销毁流）。
+ *
+ * `maxBytes` 必须是有限非负数。负数、`NaN`、`Infinity` 一律拒读而不是"当作没有限额"：
+ * 任何数与 `NaN` 比较都是 false，所以 `bytes > NaN` 永不成立——一条坏预算会退化成
+ * 完全不设限，把本模块存在的理由（防超长输出占满内存）整个绕掉。
+ * 上限为 `0` 是合法配置，语义是"只收空 body"。
  */
 export async function readBody(req: IncomingMessage, maxBytes: number): Promise<BodyRead> {
+  if (!Number.isFinite(maxBytes) || maxBytes < 0) {
+    return { ok: false, reason: "bad-budget" };
+  }
   // 缺失/分块传输时 headerValue 给空串 → Number('')===0 → 预检不触发，照常流式判定。
   const declared = Number(headerValue(req, "content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -111,9 +145,16 @@ export async function readBody(req: IncomingMessage, maxBytes: number): Promise<
 }
 
 /**
+ * 浏览器来源不合法时的统一文案。导出是因为 `trust.ts` 的浏览器腿要给同一句话：
+ * 两处各写一份字面量，改一边就会出现"同一拒绝、两种文案"，而消费方会照文案做断言。
+ */
+export const CROSS_ORIGIN_TEXT = "cross-origin request rejected";
+
+/**
  * 一次性校验组合（通用 POST 端点样板）：跨域拒绝 → CSRF 拒绝 → 读 body →
- * 413（超限）/400（流中断）。全过返回 body 字符串。缺 CSRF 规范（如 GET 或
- * 自持 token 端点）时传 skipCsrf=true。
+ * 413（超限）/400（流中断）/500（限额配置坏了）。全过返回 body 字符串。
+ * 缺 CSRF 规范的端点（GET、或自持 token 的端点）**省略 `csrf` 字段**即可——本函数没有
+ * `skipCsrf` 参数，旧注释写过，那是在描述一个并不存在的开关。
  */
 export async function guardBody(
   req: IncomingMessage,
@@ -124,7 +165,7 @@ export async function guardBody(
   },
 ): Promise<string | null> {
   if (isCrossOrigin(req)) {
-    sendJson(res, 403, { ok: false, error: "cross-origin request rejected" });
+    sendJson(res, 403, { ok: false, error: CROSS_ORIGIN_TEXT });
     return null;
   }
   if (opts.csrf !== undefined && !checkCsrf(req, opts.csrf.token, opts.csrf.headerName)) {
@@ -132,13 +173,12 @@ export async function guardBody(
     return null;
   }
   const read = await readBody(req, opts.maxBytes);
-  if (!read.ok) {
-    if (read.reason === "too-large") {
-      sendJson(res, 413, { ok: false, error: "request body too large" });
-      return null;
-    }
-    sendJson(res, 400, { ok: false, error: "request body unreadable" });
-    return null;
+  if (read.ok) {
+    return read.text;
   }
-  return read.text;
+  // bad-budget 回 500 而不是 400：那是本端点的配置缺陷，叫客户端重发没有意义，
+  // 而把它报成"请求体过大"会把排查方向从"自己传错了 maxBytes"整个带走。
+  const rejection = BODY_REJECTIONS[read.reason];
+  sendJson(res, rejection.status, { ok: false, error: rejection.error });
+  return null;
 }
