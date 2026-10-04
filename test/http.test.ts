@@ -106,6 +106,9 @@ describe("sendJson", () => {
   });
 });
 
+/** sec-fetch-site 的拒绝取值之一（"cross-site" 字面量在标题里也出现过，别散着写）。 */
+const CROSS_SITE = "cross-site";
+
 describe("isCrossOrigin", () => {
   it("空头放行（CLI/curl 本地调用面）", () => {
     expect(isCrossOrigin(fakeReq())).toBe(false);
@@ -117,7 +120,7 @@ describe("isCrossOrigin", () => {
   });
 
   it("cross-site 拒绝", () => {
-    expect(isCrossOrigin(fakeReq({ headers: { "sec-fetch-site": "cross-site" } }))).toBe(true);
+    expect(isCrossOrigin(fakeReq({ headers: { "sec-fetch-site": CROSS_SITE } }))).toBe(true);
     expect(isCrossOrigin(fakeReq({ headers: { "sec-fetch-site": "https://evil.example" } }))).toBe(
       true,
     );
@@ -323,5 +326,71 @@ describe("guardBody", () => {
       ok: false,
       error: "request body limit misconfigured",
     });
+  });
+
+  // 下面三条：样板被 6 个包照抄，任何一处口径漂移都是全网一起漂，故钉在公共面而非各包。
+
+  it("省略 csrf 字段 ⇒ 整条 CSRF 检查不执行（GET / 自持 token 端点的既定通路）", async () => {
+    // 这是**设计上的放行**，不是漏检：opts.csrf 缺席即不查（模块没有 skipCsrf 开关，
+    // 「不查」的唯一写法就是不给这个字段）。所以它必须被钉住——哪天有人把默认改成
+    // 「没给 csrf 就拒绝」，等于把所有 GET 端点一起打死；反过来放宽则不会有这种事故，
+    // 因为收紧只会让更多请求被拒、不会让本该拒的通过。
+    const res = fakeRes();
+    await expect(guardBody(bodyStream("payload"), res, { maxBytes: 100 })).resolves.toBe("payload");
+    expect(res.status).toBe(0);
+    expect(res.body).toBe("");
+    // 对照：给了 csrf 但头缺失 ⇒ 403。两条并置才看得出「省略」与「给了但没过」是两回事。
+    const guarded = fakeRes();
+    await expect(
+      guardBody(bodyStream("payload"), guarded, {
+        maxBytes: 100,
+        csrf: { token: "t", headerName: "x-csrf" },
+      }),
+    ).resolves.toBeNull();
+    expect(guarded.status).toBe(403);
+  });
+
+  it("isCrossOrigin：same-site（本机异端口）同样判跨域，不只 cross-site", () => {
+    // 白名单只有 same-origin / none；same-site 是本机另一个端口开的页面，能读本机端口的
+    // 响应就能发写请求。它必须落进拒绝面，否则 DNS/端口这一维的纵深防御是漏的。
+    for (const site of ["same-site", CROSS_SITE, "sandbox", "none-of-these"]) {
+      expect(isCrossOrigin(fakeReq({ headers: { "sec-fetch-site": site } }))).toBe(true);
+    }
+    for (const site of ["same-origin", "none"]) {
+      expect(isCrossOrigin(fakeReq({ headers: { "sec-fetch-site": site } }))).toBe(false);
+    }
+  });
+
+  it("checkCsrf：传入的头名大小写不敏感（Node 的头键一律小写）", () => {
+    const token = "t-abc";
+    // 头名由调用方传入，而各插件的历史头名各不相同（本包刻意不统一）。调用方照 HTTP
+    // 规范写成 X-Csrf-Token 时，直查永远落空——端点从此 100% 403，且看不出跟 CSRF 有关。
+    const req = fakeReq({ headers: { "x-csrf-token": token } });
+    for (const name of ["x-csrf-token", "X-Csrf-Token", "X-CSRF-TOKEN"]) {
+      expect(checkCsrf(req, token, name)).toBe(true);
+    }
+    // 只折**取键**，不折比对：值仍逐字相等，大小写不同的 token 依旧拒。
+    expect(checkCsrf(req, "T-ABC", "X-Csrf-Token")).toBe(false);
+  });
+
+  it("readBody：恰好等于限额的一律收下，超出一字节才拒（边界在 ≤ 一侧）", async () => {
+    // 判据是 `bytes > maxBytes`。这条把等号那侧钉死：改成 >= 会让正好用满限额的请求
+    // 被拒，而限额在文档里的语义是「上限」而不是「独占值」。
+    const exact = "x".repeat(64);
+    await expect(readBody(bodyStream(exact), 64)).resolves.toStrictEqual({ ok: true, text: exact });
+    await expect(readBody(bodyStream(exact), 63)).resolves.toStrictEqual({
+      ok: false,
+      reason: "too-large",
+    });
+    // 字节口径（不是字符口径）：4 个汉字 12 字节，限额 11 即拒、限额 12 即收。
+    const han = "汉汉汉汉";
+    await expect(readBody(bodyStream(han), 12)).resolves.toStrictEqual({ ok: true, text: han });
+    await expect(readBody(bodyStream(han), 11)).resolves.toStrictEqual({
+      ok: false,
+      reason: "too-large",
+    });
+    // content-length 预检走同一判据，等号那侧同样不拦。
+    const declared = fakeReqWithBody(exact, { "content-length": "64" });
+    await expect(readBody(declared, 64)).resolves.toStrictEqual({ ok: true, text: exact });
   });
 });

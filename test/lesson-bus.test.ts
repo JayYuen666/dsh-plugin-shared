@@ -1,8 +1,10 @@
 // lib/lesson-bus.ts 单测：两条失败面（同步抛错 / 异步拒绝）都要落到同一个出口，
 // 而「成功」「返回非对象」「返回没有 then 的对象」都不该被当成失败。
 import { setImmediate as yieldToMacrotask } from "node:timers/promises";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { settleLessonCall } from "../lib/lesson-bus.ts";
+import { logged } from "./setup-logs.ts";
 
 interface Sink {
   readonly reasons: unknown[];
@@ -117,5 +119,47 @@ describe("settleLessonCall", () => {
       settleLessonCall(() => Promise.reject(new Error(ASYNC_DOWN)), explodingSink);
     }).not.toThrow();
     await flushMicrotasks();
+    // 两条失败面都必须**出声**：收口自己抛错若被静默吞掉，排查时连"它炸过"都看不到。
+    // 账本（test/setup-logs.ts）把 console 接管成记录，所以这里既断言得到、又不会把栈
+    // 喷进测试报告——那正是这条用例当初留下的噪点。
+    const records = logged();
+    expect(records).toHaveLength(2);
+    for (const record of records) {
+      expect(record.level).toBe("error");
+      expect(record.text).toContain("onFailure threw:");
+      // 实参里带着收口自己抛的那个 Error（它不在拼平的首参里）。
+      expect((record.extra[0] as Error).message).toBe("onFailure 自己炸了");
+    }
+  });
+
+  it("then 是敌意 getter（读它就抛）⇒ 这次探测本身算一次失败，落进同一个出口", async () => {
+    // isThenable 用 Reflect.get 读 then，而那次读就发生在 settleLessonCall 的 try 里，
+    // 于是"探测 thenable"失败被同步那条路接住。方向是安全的：宁可报一次失败，
+    // 也不能因为读不到 then 就判定"不是可等待对象"放过去——放过去等于不挂 rejection 出口。
+    const sink = collector();
+    const hostile: object = {
+      get then(): never {
+        throw new Error("then getter 炸了");
+      },
+    };
+    expect(() => {
+      settleLessonCall(() => hostile, sink.take);
+    }).not.toThrow();
+    expect(sink.reasons).toHaveLength(1);
+    expect(String(sink.reasons[0])).toContain("then getter 炸了");
+    await flushMicrotasks();
+    // 排空微任务后仍是那一条：不得二次投递。
+    expect(sink.reasons).toHaveLength(1);
+  });
+
+  it("另一份 realm 的 Promise 拒绝也接得住（判据认 then，不认 instanceof）", async () => {
+    // 模块注释点名的成因：宿主给的 Promise 可能来自 iframe / worker / vm 上下文，
+    // 那时 instanceof Promise 恒为 false，isThenable 若靠它判就会漏挂出口。
+    const sink = collector();
+    const foreign: unknown = runInNewContext("Promise.reject(new Error(1))");
+    settleLessonCall(() => foreign, sink.take);
+    await flushMicrotasks();
+    expect(sink.reasons).toHaveLength(1);
+    expect((sink.reasons[0] as Error).message).toBe("1");
   });
 });

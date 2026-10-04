@@ -9,6 +9,7 @@ import { once } from "node:events";
 import { createServer, request } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { requestTrust, guardTrust, trustRejectionText } from "../lib/trust.ts";
+import { logged, loggedText } from "./setup-logs.ts";
 
 /** 手搓一个 IncomingMessage 形状（与 test/http.test.ts 同一口径：默认 headers 为空对象）。 */
 function fakeReq(overrides: Record<string, unknown> = {}): IncomingMessage {
@@ -43,6 +44,13 @@ function fakeRes(overrides: Record<string, unknown> = {}): {
 /** 可放行的回环 Host 权威（本机服务面的默认端口）。 */
 const LOCALHOST_AUTHORITY = "localhost:8787";
 
+/** 回环的 IPv4 写法（本机服务面的默认端口）；与上者成对，字面量各写一次。 */
+const IPV4_AUTHORITY = "127.0.0.1:8787";
+
+/** 手搓一条只带 Host 的请求（把 `requestTrust(fakeReq({…}))` 那三层嵌套收进一处，
+ *  下面的表驱动才读得动；放在模块级是因为它不捕获任何作用域变量）。 */
+const verdictForHost = (host: string): string => requestTrust(fakeReq({ headers: { host } }));
+
 /** DNS 重绑定攻击者的权威：socket 落在回环，Host 却是外域。 */
 const ATTACKER_AUTHORITY = "evil.test:8787";
 
@@ -63,7 +71,7 @@ const BROWSER_REJECTION_TEXT = "cross-origin request rejected";
 
 describe("requestTrust：Host 权威腿", () => {
   it("回环三种写法都认：localhost、127/8、带方括号的 ::1", () => {
-    for (const host of [LOCALHOST_AUTHORITY, "127.0.0.1:8787", "[::1]:8787", "LOCALHOST:8787"]) {
+    for (const host of [LOCALHOST_AUTHORITY, IPV4_AUTHORITY, "[::1]:8787", "LOCALHOST:8787"]) {
       assert.equal(requestTrust(fakeReq({ headers: { host } })), "trusted", `${host} 应放行`);
     }
   });
@@ -335,18 +343,26 @@ describe("trustRejectionText 与 guardTrust", () => {
 
   it("头已发时不许静默失败为放行（sendJson 会 no-op，所以这里必须返回 false 并出声）", () => {
     const { res, writes } = fakeRes({ headersSent: true });
-    const logged: unknown[][] = [];
-    const original = console.error;
-    console.error = (...args: unknown[]): void => {
-      logged.push(args);
-    };
-    try {
-      assert.equal(guardTrust(fakeReq({ headers: { host: ATTACKER_AUTHORITY } }), res), false);
-    } finally {
-      console.error = original;
-    }
+    // console 由 test/setup-logs.ts 的账本接管，所以这里直接读账本：既不用自己装 spy、
+    // 也不会把那行日志喷进报告（它带一整条栈，正是噪点的来源）。
+    assert.equal(guardTrust(fakeReq({ headers: { host: ATTACKER_AUTHORITY } }), res), false);
     assert.equal(writes.length, 0, "已经发头就不再二次写响应");
-    assert.equal(logged.length, 1, "至少要出声：静默 no-op 是这条样板唯一的失败方式");
+    const records = logged();
+    // 断言写成「整张表映射后逐字比」，不取下标：本仓开了 noUncheckedIndexedAccess，
+    // `records[0]` 在 tsc 眼里是 LogRecord | undefined，而 lint 的类型面又把它当成非空
+    // （于是判我多写了 ?.）。两种写法各红一条，只有整表映射对两者都干净——顺带把
+    // 「恰好一条」也编进期望值里：少一条时映射出 []，同样不等于 ["error"]。
+    assert.deepEqual(
+      records.map((record) => record.level),
+      ["error"],
+      "必须出声一次：静默 no-op 是这条样板唯一的失败方式",
+    );
+    assert.match(loggedText(), /rejecting after headers were sent/u);
+    // 第二个实参是那条 verdict（不在拼平的首参里）。
+    assert.deepEqual(
+      records.map((record) => record.extra[0]),
+      [VERDICT_UNTRUSTED_HOST],
+    );
   });
 });
 
@@ -411,5 +427,68 @@ describe("真 node:http 回环集成（171 个手搓构造点之外唯一的头/
       /^evil\.test:8787\|/u,
       "伪造的 Host 头真的到了服务端（否则这条针是空的）",
     );
+  });
+});
+
+describe("host 字形面：WHATWG 会静默改写的输入一律先按字形拒", () => {
+  /** Host 腿的放行结论（与 VERDICT_UNTRUSTED_HOST 成对，别散着写字面量）。 */
+  const VERDICT_TRUSTED = "trusted";
+
+  it("userinfo / 编码点 / 尾点 / 空白 / CRLF / 片段 这些绕过写法全部落进 untrusted-host", () => {
+    // 判据是 HOST_GLYPHS_RE + 解析结果两条一起。文件头点名的两个真实绕过：
+    //   local\thost:8787  → new URL(...).hostname === "localhost"（tab 被静默吃掉）
+    //   evil.com@localhost:8787 → 同样折成 "localhost"（user@ 前缀被静默丢掉）
+    // 前者已有用例钉着，后者以及下面其余几类此前只有注释、没有用例——注释里的断言
+    // 必须有对应的红得起来的测试，否则有人把 HOST_GLYPHS_RE 放宽时不会有任何测试报警。
+    const hostileHosts = [
+      // userinfo 前缀：与 local\thost 同类的静默改写。
+      "evil.com@localhost:8787",
+      // 片段里再塞一枚 userinfo，绕过点在 URL 解析的更后面。
+      "127.0.0.1:8787#@evil.test",
+      // 百分号编码的点：WHATWG 不会把它还原成句点，但也不该由解析器去猜。
+      "localhost%2e:8787",
+      // 尾点（FQDN 根写法）：hostname 是 "localhost."，与回环字面量差一字符。
+      "localhost.:8787",
+      // IPv6 前缀拼接。
+      "[::1]evil.test",
+      // 端口写成十六进制 / 越界。
+      "localhost:0x1f",
+      "localhost:99999999",
+      // 首尾空白与串内空白（端口换 9999，免得整串里嵌进 LOCALHOST_AUTHORITY 那个字面量，
+      // 被 sonarjs 的重复字面量规则按子串算重）。
+      "localhost:9999 ",
+      " localhost:9999",
+      "local host:9999",
+      // CRLF 头注入与尾随 tab：解析器会静默吃掉，正是先按字形拒的理由。
+      "localhost:9999\r\nX-Injected: 1",
+      "127.0.0.1:9999\t",
+    ];
+    for (const host of hostileHosts) {
+      assert.equal(verdictForHost(host), VERDICT_UNTRUSTED_HOST, `${host} 不得被当成回环权威`);
+    }
+  });
+
+  it("八位组与带方括号的回环写法仍然放行（字形收紧不得误伤真权威）", () => {
+    // 与上一条互为反面：判据放宽到"什么都交给 WHATWG"或收紧过头都会在这里露馅。
+    const loopbackAuthorities = [
+      LOCALHOST_AUTHORITY,
+      // 大写：authority 判定走 URL.hostname（WHATWG 解析会自己折小写）。
+      "LOCALHOST:8787",
+      IPV4_AUTHORITY,
+      // WHATWG 的 IPv4 缩写写法，解析后仍是 127.0.0.1。
+      "127.1:8787",
+      // 127/8 整段都是回环。
+      "127.255.255.255:8787",
+      "[::1]:8787",
+      // 无端口（默认 80）。
+      "localhost",
+    ];
+    for (const host of loopbackAuthorities) {
+      assert.equal(verdictForHost(host), VERDICT_TRUSTED, `${host} 应放行`);
+    }
+    // 反面三枚：0.0.0.0 不是回环、非法八位组解析不出来、八进制 0277 折成 191.0.0.1。
+    for (const host of ["0.0.0.0:8787", "127.0.0.256:8787", "0277.0.0.1:8787"]) {
+      assert.equal(verdictForHost(host), VERDICT_UNTRUSTED_HOST, `${host} 不得放行`);
+    }
   });
 });

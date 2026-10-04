@@ -33,7 +33,7 @@ End users do not install or enable it separately: any consumer package pulls it 
 | | |
 | --- | --- |
 | Node.js | `^22.19.0 \|\| >=24.0.0`, the same clause as the harness root |
-| dsh | `>=0.2.0-rc.2`, declared as an **optional** peer (this package needs no host at import time) |
+| dsh | `>= 0.2.1-alpha.1`, declared as an **optional** peer (this package needs no host at import time) |
 | Module format | ESM only. `require()` works only where Node supports `require(esm)` |
 | Tree shaking | `"sideEffects": false` |
 
@@ -130,8 +130,9 @@ Known upstream limitation: `@deepseek-ai/dsh-llm`'s own declarations import `@de
 ## Quality gates
 
 - `npm run check` = typecheck → lint → build → test (coverage thresholds 100 for lines, statements, functions and branches) → format check.
-- `test/publish-manifest.test.ts` is the release-shape gate: every `exports` target must be inside what `files` actually ships, entries must point at build output rather than source, and `publishConfig` must not carry entry fields. One set of "internal reference" patterns scans **both planes**: **artifacts** must contain no absolute paths, home-directory references, dates, or sibling-package identifiers; **source and docs** must contain no dates and no "this round / next round" wording that only made sense during collaboration. The artifact pass cannot see comments, so the source pass is what keeps that cleanup from being a one-off.
+- `test/publish-manifest.test.ts` is the release-shape gate: every `exports` target must be inside what `files` actually ships, entries must point at build output rather than source, and `publishConfig` must not carry entry fields. It also pins **facet/`exports` parity in both directions**: every `lib/*.ts` needs a matching subpath (a missing one means that facet is not importable by any of the nine consumer packages, while the build — which follows the builder's own entries array — stays green), and no dangling subpath may outlive its facet. `./lib/canonicalize-region-paths` is the one facet that lives in `exports` but not in the barrel, and that subpath is load-bearing: nine sibling packages' `build-*.mjs` import it, so removing it breaks all of their builds at once. One set of "internal reference" patterns scans **both planes**: **artifacts** must contain no absolute paths, home-directory references, dates, or sibling-package identifiers; **source and docs** must contain no dates and no "this round / next round" wording that only made sense during collaboration. The artifact pass cannot see comments, so the source pass is what keeps that cleanup from being a one-off.
 - `test/build-host.test.ts` compares the bytes on disk against an in-memory build, so editing `lib/*.ts` without rebuilding goes red.
+- `test/setup-logs.ts` (a vitest setup file) is the ledger for runtime logs: it takes over `console.*`, so the two `console.error` calls in `lib/` neither leak into the test report (that stack trace is pure noise) nor go unclaimed — every `[shared/*]` line must match a template fragment in `test/log-templates.ts` or the run goes red. Do not substitute vitest's `silent`: it only hides, and a newly added log would still go unnoticed.
 - `.github/workflows/ci.yml` runs the gate on push and pull request across a Node matrix and on Windows; the install matrix there additionally packs, installs into a clean directory with no flags, imports every subpath and type-checks a consumer probe.
 
 ## FAQ

@@ -33,7 +33,7 @@ import { readBody, sendJson } from "@jayyuen66/dsh-plugin-shared/lib/http";
 | | |
 | --- | --- |
 | Node.js | `^22.19.0 \|\| >=24.0.0`，与 harness 根同款 |
-| dsh | `>=0.2.0-rc.2`，声明为 **optional** peer（本包 import 时不需要宿主在场） |
+| dsh | `>= 0.2.1-alpha.1`，声明为 **optional** peer（本包 import 时不需要宿主在场） |
 | 模块形态 | 仅 ESM。`require()` 只在支持 `require(esm)` 的 Node 上可用 |
 | Tree shaking | `"sideEffects": false` |
 
@@ -130,8 +130,9 @@ sonarjs 的入口是**惰性解析**的，发生在 `definePluginConfig()` 内�
 ## 质量门
 
 - `npm run check` = typecheck → lint → build → test（覆盖率 lines/statements/functions/branches 四阈值 100）→ fmt:check。
-- `test/publish-manifest.test.ts` 是发布形态门：`exports` 的每个目标都必须在 `files` 真会发出去的范围内；入口必须指编译产物而不是源码；`publishConfig` 不得携带入口字段。同一组"内部指涉"判据扫两个平面：**产物**不得出现绝对路径、家目录指涉、日期或兄弟包标识符；**源码与文档**不得出现日期与"这一轮/下一轮"这类只在协作当时成立的措辞——产物面那条看不见注释，所以必须单独扫源码，否则清理只是一次性动作、没有回归保护。
+- `test/publish-manifest.test.ts` 是发布形态门：`exports` 的每个目标都必须在 `files` 真会发出去的范围内；入口必须指编译产物而不是源码；`publishConfig` 不得携带入口字段。它还钉着**切面与 `exports` 的双向 parity**：每个 `lib/*.ts` 都要有对应子路径（少一条 = 该切面对 9 个消费包不可 import，而构建走的是 builder 自己的 entries 数组、不会报错），反过来也不许留悬空子路径。`./lib/canonicalize-region-paths` 正是"在 `exports` 里、不在 barrel 里"的那一枚，且这条子路径是承重的（9 个兄弟包的 `build-*.mjs` 靠它），删它会一次性打断全部构建。同一组"内部指涉"判据扫两个平面：**产物**不得出现绝对路径、家目录指涉、日期或兄弟包标识符；**源码与文档**不得出现日期与"这一轮/下一轮"这类只在协作当时成立的措辞——产物面那条看不见注释，所以必须单独扫源码，否则清理只是一次性动作、没有回归保护。
 - `test/build-host.test.ts` 里的指纹用例比较磁盘产物与内存构建的字节，所以改了 `lib/*.ts` 忘了重建会直接红。
+- `test/setup-logs.ts`（vitest setupFile）是算子日志的账本：它接管 `console.*`，于是 `lib/` 里那两行 `console.error` 既不会漏进测试报告（那条栈是纯噪点），又必须被用例认领——每条 `[shared/*]` 日志都要对得上 `test/log-templates.ts` 里的模板片段，否则当场红。别拿 vitest 的 `silent` 顶替：那只是不显示，新飘出来的日志照样没人看。
 - `.github/workflows/ci.yml` 在 push 与 PR 上跨 Node 版本矩阵、并在 Windows 上跑同一道门；那边的安装矩阵还会打包、在干净目录里不带任何 flag 安装、逐子路径 import、并对消费方探针文件做类型检查。
 
 ## 常见问题

@@ -43,6 +43,8 @@ interface Manifest {
   readonly exports?: Record<string, unknown>;
   readonly files?: readonly string[];
   readonly publishConfig?: Record<string, unknown>;
+  readonly dependencies?: Record<string, string>;
+  readonly peerDependencies?: Record<string, string>;
 }
 
 /** 一条 `files` 模式归类后的形态。 */
@@ -240,5 +242,88 @@ describe("发布形态", () => {
         expect(pattern.test(source.text), `${source.file} 命中内部指涉 ${pattern}`).toBe(false);
       }
     }
+  });
+});
+
+describe("宿主依赖的版本形状（升级防线）", () => {
+  it("dsh-* 家族一律精确钉，不留任何范围算子", async () => {
+    // registry 上的 dist-tag 是这轮实测出来的陷阱：
+    //   @deepseek-ai/dsh-session 的 `latest` → 0.0.1-rc.1
+    //   `next` → 0.2.0-rc.2（实际在用的），`alpha` → 0.2.1-alpha.1
+    // 也就是说 `latest` 指向的是一个**远早于宿主 ABI** 的版本。精确钉是让「不带版本地
+    // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
+    // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
+    // 那等于让消费方在没有测试的情况下换掉宿主类型面。
+    const { manifest } = await readSurface();
+    const dshDeps = Object.entries(manifest.dependencies ?? {}).filter(([name]) =>
+      name.startsWith("@deepseek-ai/dsh-"),
+    );
+    expect(dshDeps.length, "至少要钉住一个 dsh-* 依赖").toBeGreaterThan(0);
+    for (const [name, range] of dshDeps) {
+      expect(range, `${name} 必须是精确版本，实际 ${range}`).toMatch(/^\d+\.\d+\.\d+-/u);
+    }
+  });
+
+  it("dsh-* 全部与 peer 的 dsh 同版本（不许装出第二份宿主类型）", async () => {
+    // 宿主类型面被这些包以 type-only 方式消费；同一个会话里出现两个 dsh-session 的
+    // 拷贝，nominal 类型（品牌串、投影状态）会开始互相不认，而那不报编译错、只报运行期
+    // 「认不出这个 callId」。同版本是让这件事不发生的最小条件。
+    const { manifest } = await readSurface();
+    const peer = manifest.peerDependencies?.["@deepseek-ai/dsh"];
+    expect(peer, "peer 依赖缺失：宿主版本就失去基准了").toBeDefined();
+    const hostVersion = (peer ?? "").replace(/^[\^~]/u, "");
+    const drifted = Object.entries(manifest.dependencies ?? {}).filter(
+      ([name, range]) => name.startsWith("@deepseek-ai/dsh-") && range !== hostVersion,
+    );
+    expect(drifted, "这些 dsh-* 与宿主 dsh 不同版本").toStrictEqual([]);
+  });
+});
+
+describe("切面与 exports 的 parity（新增/改名切面时的静默失败面）", () => {
+  it("每个 lib/*.ts 切面都有对应的 exports 子路径", async () => {
+    // 消费方一律按裸包子路径引 shared（`@jayyuen66/dsh-plugin-shared/lib/xxx`），所以切面
+    // 少了 exports 条目 = 这个切面对 9 个消费包**不可 import**，而门禁全绿：build 走的是
+    // build-host.mjs 自己的 entries 数组，根本不看 manifest；publish-manifest 的既有断言
+    // 只验「已声明的 exports 都能落到真实文件」，验不出「该声明的没声明」。
+    const { manifest } = await readSurface();
+    const libNames = await readdir(path.join(pkgDir, "lib"));
+    const facets = libNames
+      .filter((name) => name.endsWith(".ts") && name !== "index.ts")
+      .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`);
+    expect(facets.length, "至少要扫到切面").toBeGreaterThan(0);
+    for (const facet of facets) {
+      expect(manifest.exports, `${facet} 缺 exports 条目`).toHaveProperty(facet);
+    }
+  });
+
+  it("exports 里没有指向已删切面的悬空子路径", async () => {
+    // 反方向同样要钉：切面改名或合并后忘了删 exports 条目，发布出去的是一个 import 即抛的
+    // 子路径，而包自身一切正常。
+    const { manifest } = await readSurface();
+    const libNames = await readdir(path.join(pkgDir, "lib"));
+    const onDisk = new Set(
+      libNames
+        .filter((name) => name.endsWith(".ts"))
+        .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`),
+    );
+    // 只看 lib 子路径（./config/* 与 "." 不在这个集合里，那三枚各有各的落点）。
+    const libSubpaths = Object.keys(manifest.exports ?? {}).filter((key) =>
+      key.startsWith("./lib/"),
+    );
+    for (const key of libSubpaths) {
+      expect(onDisk.has(key), `exports 里的 ${key} 在 lib/ 下没有对应源文件`).toBe(true);
+    }
+  });
+
+  it("canonicalize-region-paths 在 exports 里却不在 barrel：这条 parity 是承重的", async () => {
+    // 单独点出来，因为 lib/canonicalize-region-paths.ts 的文件头曾经写着「不进出 exports」，
+    // 而那是**错的**：9 个兄弟包的 build-*.mjs 正靠这条子路径引它。照着错注释去「清理」
+    // exports，会一次性打断全部 9 个包的构建，而本包自己的门禁一声不响。
+    const { manifest } = await readSurface();
+    const barrel = await readFile(path.join(pkgDir, "lib", "index.ts"), "utf8");
+    const subpath = "./lib/canonicalize-region-paths";
+    expect(manifest.exports).toHaveProperty(subpath);
+    // 不在 barrel：进了根导入面，每个运行期消费方都要为它付一次导入。
+    expect(barrel).not.toContain("canonicalize");
   });
 });

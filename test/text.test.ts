@@ -122,4 +122,43 @@ describe("两端拼接（failureDetail 的用法）", () => {
       i += code > BMP_CE ? 2 : 1;
     }
   });
+
+  it("两端在无限预算下同口径：整串原样返回（而不是空串）", () => {
+    // NaN 那一侧两条路径已经各有用例钉着；Infinity 是另一侧的"预算不可用"形态：
+    // truncateStart 走 `text.length <= Infinity` 直接交回整串，truncateEnd 交给官方件
+    // 的 slice(0, Infinity) 也交回整串。两者必须同向，否则"预算取自配置"时两端会分叉。
+    const text = "abc\u{1F600}def";
+    assert.equal(truncateStart(text, Number.POSITIVE_INFINITY), text);
+    assert.equal(truncateEnd(text, Number.POSITIVE_INFINITY), text);
+    // 负无穷归到"预算 ≤ 0"那一档 ⇒ 空串，与零预算同口径。
+    assert.equal(truncateStart(text, Number.NEGATIVE_INFINITY), "");
+    assert.equal(truncateEnd(text, Number.NEGATIVE_INFINITY), "");
+  });
+
+  it("空串与「预算恰好等于串长」两端都原样返回", () => {
+    assert.equal(truncateEnd("", 0), "");
+    assert.equal(truncateStart("", 0), "");
+    assert.equal(truncateStart("", 5), "");
+    assert.equal(truncateEnd("abc", 3), "abc");
+    assert.equal(truncateStart("abc", 3), "abc");
+    // 超出一格才动，且切点落在合法位置时保留量不塌陷。
+    assert.equal(truncateEnd("abcd", 3), "abc");
+    assert.equal(truncateStart("abcd", 3), "bcd");
+  });
+});
+
+describe("兼容面：truncateEnd 依赖的官方件仍在装着的 DSH 里", () => {
+  it("官方 truncateWithoutSplittingSurrogatePair 存在且可调用", async () => {
+    // lib/text.ts 的文件头记着：官方件在 0.2.0-rc.2 存在、在 0.1.7-alpha.1 不存在。
+    // 类型面挡得住"导出被删"（tsc 会红），但挡不住**运行期拿到 undefined**——例如
+    // 消费插件装在另一份更老的 DSH 上。那种情况下 truncateEnd 会在第一次调用时抛
+    // TypeError，而它的调用点全在把工具结果写进会话日志的路径上。
+    // 本包把 DSH 依赖钉成精确版本（0.2.0-rc.2），但 9 个消费插件各自的 DSH 由宿主决定，
+    // 所以这里把"符号存在且是函数"当成一条要钉的契约。
+    const official = await import("@deepseek-ai/dsh-output-retention");
+    assert.equal(typeof official.truncateWithoutSplittingSurrogatePair, "function");
+    // 顺带钉住它确实是我们以为的那件事：切点切开代理对时丢的是尾部那枚孤立高代理。
+    assert.equal(official.truncateWithoutSplittingSurrogatePair("a\u{1F600}", 1), "a");
+    assert.equal(official.truncateWithoutSplittingSurrogatePair("a\u{1F600}b", 3), "a\u{1F600}");
+  });
 });

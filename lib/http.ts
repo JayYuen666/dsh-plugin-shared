@@ -43,9 +43,17 @@ export function sendJson(res: ServerResponse, status: number, payload: unknown):
   res.end(body);
 }
 
-/** 读单值请求头：重复头取首项，非字符串/无 headers 面（部分 mock）归空串。 */
+/**
+ * 读单值请求头：重复头取首项，非字符串/无 headers 面（部分 mock）归空串。
+ *
+ * 取头名先折小写：Node 的 `IncomingHttpHeaders` 键一律小写，而 `checkCsrf` 的头名由**调用方**
+ * 传入（本包刻意不统一各插件的历史头名）。调用方按 HTTP 规范写 `X-Csrf-Token` 时，直查会永远
+ * 落空——那不是"这条请求没带 token"，而是"这个端点从此 100% 403"，且失败现场离病因很远
+ * （实测：同一份 headers，只因传入头名的大小写不同，结果从 true 翻成 false）。
+ * 折小写只动**取键**，不碰比对：token 值仍逐字相等，判定强度不变，方向只从"误拒"挪向"照常判"。
+ */
 function headerValue(req: HttpRequest, name: string): string {
-  const value = req.headers?.[name];
+  const value = req.headers?.[name.toLowerCase()];
   const first = Array.isArray(value) ? value[0] : value;
   return typeof first === "string" ? first : "";
 }

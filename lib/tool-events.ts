@@ -34,17 +34,22 @@ export type { PtcDispatchEventData, PtcDispatchStartEventData } from "@deepseek-
  */
 export interface ToolCallRecord {
   /**
-   * 调用名（edit/write/str_replace_editor/read/grep/…）。
+   * 调用名（edit/write/str_replace_editor/read/grep/…）——本模块的**分桶键**，必选。
    *
-   * 不带 `| undefined`：官方两个来源分支都把它声明成必选 `string`（`tool/call` 见
-   * packages/core/session/src/types.ts:361，`PtcDispatchStartEventData.name` 见
-   * packages/core/tools/src/types.ts:15），而 callRecordOf 的两处赋值都是原样搬运、没过任何
-   * 运行时校验——所以 undefined 在这里不可表示。
+   * 官方把它声明成必选 `string`（`tool/call` 见 packages/core/session/src/types.ts:361，
+   * PtcDispatchStartEventData.name 见 packages/core/tools/src/types.ts:15），但运行期拦不住
+   * （依据见 usableName）。所以可空性在**扫描层**就处理掉了，不带到类型面：callRecordOf 遇到
+   * 缺可用 name 的调用类事件整条跳过，与 hasObjectData 同一口径。
    *
-   * 与下面 callId 的不对称是有理由的：callId 官方虽是品牌必选串，本模块**主动放宽**它，
-   * 因为 usableCallId 要对重放/跨边界送来的坏值做运行时校验、空串也归 undefined。name 没有
-   * 这一层校验，就该跟着官方保持必选——放宽一个没校验过的字段，等于凭空造出一个让消费方
-   * 必须处理的假状态，消费包里那几处判空点就是这么长出来的。
+   * 为什么不把过滤留给消费方：下游分类全建立在 name 上——editPathOf 的 str_replace_editor
+   * 只读判定、门禁侧的 EDIT_TOOLS 与 refSearchTools 名单——而 editPathOf 的兜底分支会把任何
+   * 非 str_replace_editor 的调用一律判成 write。无名调用一旦进了台账，只要它的 arguments
+   * 里有 file_path 就算成写操作。现在是靠三个消费方各自记得先判一次才没出事——那是同一条
+   * 不变式的三份手抄，漏一份就出事。
+   *
+   * 与 callId 的差别是**为什么一个必选、一个可空**：callId 由 usableCallId 兜底，且它有
+   * nc:<seq> 兜底席位（消费方的 noCallId 桶专门收那种行），缺了不影响归类；name 一旦缺了
+   * 就没法分桶、没有兜底席位，只能在入口滤掉。
    */
   readonly name: string;
   /** callId：tool/result 串联键；缺失时由调用方按 seq 造 `nc:` 键。 */
@@ -99,6 +104,23 @@ function usableCallId(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * 工具名取用：非空串才认，空串与非串一并归 undefined。判据与 `usableCallId` 同形，理由不同——
+ * callId 是**串联键**，错了会让 tool/result 与 tool/call 错配；name 是**分桶键**，而下游全部
+ * 分类都建立在它之上（editPathOf 的 str_replace_editor 判定、门禁侧的 EDIT_TOOLS /
+ * refPolicy 名单）。没有 name 的调用无法归类。
+ *
+ * 官方把它声明成必选 `string`（`tool/call` 见 packages/core/session/src/types.ts:361，
+ * PtcDispatchStartEventData.name 见 packages/core/tools/src/types.ts:15），但**运行期拦不住**：
+ * Session.append 只过 snapshotJsonValue（只要是 lossless JSON 就放行），随后的
+ * validateSessionEventData 自述「does not validate complete event payloads」且只覆盖几个
+ * surface 事件、不含 tool/call。所以缺 name 的 tool/call 能被写进日志（实测：append 接受
+ * `{ arguments: "{}" }`）。消费侧没有资格假设上游一定守约——这道过滤必须在本层做。
+ */
+function usableName(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /** 解析 tool/call 的 arguments：string JSON 文本或已解析对象；非法/缺失 → 空对象。
  *
  *  **这一对原语是公开面，不是残留。** 自建折叠单元的消费方（`toolEventRowsOf` 的使用者）
@@ -143,21 +165,27 @@ function callRecordOf(event: SessionEvent, index: number): ToolCallRecord | unde
     return record;
   }
   if (event.type === "tool/call") {
-    record = {
-      name: event.data.name,
-      callId: usableCallId(event.data.callId),
-      arguments: parseToolArguments(event.data.arguments),
-      badArguments: toolArgumentsBad(event.data.arguments),
-      seq: index,
-    };
+    // 缺可用 name 即坏事件，整条不出行：见 usableName 的理由。callId 仍照旧放宽——它有
+    // nc:<seq> 兜底席位，消费方（quality-gate 的 noCallId 桶）要的正是那种行。
+    const name = usableName(event.data.name);
+    if (name !== undefined) {
+      record = {
+        name,
+        callId: usableCallId(event.data.callId),
+        arguments: parseToolArguments(event.data.arguments),
+        badArguments: toolArgumentsBad(event.data.arguments),
+        seq: index,
+      };
+    }
   } else if (event.type === "tool/ptc-dispatch-start") {
     // PTC 子调用开始与 tool/call 同义，差别有二：串联键由 subCallId 承担，且 arguments
     // 官方是派发前已归一化的 `unknown`（不是 raw JSON 串）。缺失配对键即坏事件：直接
     // 跳过，不给 `nc:` 保守成功待遇——造出假证据会让门禁 fail-open（原实现同口径）。
     const subCallId = usableCallId(event.data.subCallId);
-    if (subCallId !== undefined) {
+    const name = usableName(event.data.name);
+    if (subCallId !== undefined && name !== undefined) {
       record = {
-        name: event.data.name,
+        name,
         callId: subCallId,
         arguments: parseToolArguments(event.data.arguments),
         badArguments: toolArgumentsBad(event.data.arguments),

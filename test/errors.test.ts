@@ -119,4 +119,33 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
     };
     assert.equal(errorText(new Error("外", { cause: hostile })), `外: ${UNRENDERABLE}`);
   });
+
+  it("超深的 cause 链撞上栈上限时降级成占位文本，而不是把 RangeError 抛给调用方", () => {
+    // `path` 那个 Set 只拦**环**，不拦深度：一条 5 万层的链是有限无环的，递归会一路走到
+    // 爆栈。爆栈抛出的 RangeError 恰好落在每个 render 帧自己的 try 里，于是最深那一节
+    // 塌成占位文本、外层照样拼完——实测 5 万层输出 35708 字、耗时 52ms、不抛。
+    // 这条要钉的是"不抛"：errorText 的调用点全在 catch 之后（通知、面板、日志），
+    // 一旦它自己抛，宿主就再也拿不到那句人读文本了。
+    let deep: Error = new Error("leaf");
+    for (let level = 0; level < 50_000; level += 1) {
+      deep = new Error(`L${String(level)}`, { cause: deep });
+    }
+    let rendered = "";
+    assert.doesNotThrow(() => {
+      rendered = errorText(deep);
+    });
+    assert.equal(typeof rendered, "string");
+    assert.ok(rendered.includes(UNRENDERABLE), "爆栈那一节降级为占位文本");
+    assert.ok(rendered.startsWith("L49999: "), "最外层仍按原样渲染");
+  });
+
+  it("中等深度的 cause 链完整渲染到最内层（别让上面那条把正常深度也钉成降级）", () => {
+    let deep: Error = new Error("leaf");
+    for (let level = 0; level < 500; level += 1) {
+      deep = new Error(`L${String(level)}`, { cause: deep });
+    }
+    const rendered = errorText(deep);
+    assert.ok(rendered.endsWith(": leaf"), "由外到内一路拼到最内层");
+    assert.ok(!rendered.includes(UNRENDERABLE), "这个深度不该触发降级");
+  });
 });

@@ -42,15 +42,23 @@ export function claimApply(ctx: CardApplyCtx, flag: string, label: string): bool
     return false;
   }
   marker[flag] = true;
-  ctx.effect(
-    () => () => {
-      // 置 undefined 而非 delete：删动态键会被本仓 lint 基线的 typescript/no-dynamic-delete
-      // 判红，它援引的正是「频繁 delete 会把对象推进 V8 字典模式、内联缓存失效」那一条。
-      // 语义上两者等价——判据是 `=== true`，残留的 undefined 键不影响守卫；真要字面意义上的
-      // "从未 claim 过"，该换个键名，而不是在这里删键。
-      marker[flag] = undefined;
-    },
-    label,
-  );
+  try {
+    ctx.effect(
+      () => () => {
+        // 置 undefined 而非 delete：删动态键会被本仓 lint 基线的 typescript/no-dynamic-delete
+        // 判红，它援引的正是「频繁 delete 会把对象推进 V8 字典模式、内联缓存失效」那一条。
+        // 语义上两者等价——判据是 `=== true`，残留的 undefined 键不影响守卫；真要字面意义上的
+        // "从未 claim 过"，该换个键名，而不是在这里删键。
+        marker[flag] = undefined;
+      },
+      label,
+    );
+  } catch (error) {
+    // 挂不上 effect 就等于这次**没拿到**声明权（清理没挂成，将来无人复位）。标记必须原样退回：
+    // 否则占位会一直挂着，这条 apply 从此永远返回 false，守卫从"防重复"退化成"禁止再挂"，
+    // 而除了整页刷新没有别的补救。异常照旧上抛——调用方要看见它，且它不是本守卫的责任。
+    marker[flag] = undefined;
+    throw error;
+  }
   return true;
 }

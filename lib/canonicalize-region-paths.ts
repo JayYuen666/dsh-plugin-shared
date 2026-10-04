@@ -19,13 +19,17 @@
 //      shared 自己的产物会把 node_modules 路径误折成 `lib/index.js`。
 // 两条都幂等：canonical 形态既不行首带相对段，也不以这两枚锚点段开头。
 //
-// 只在 builder 侧调用：本模块**不进 barrel、不进 shared/build-host.mjs 的 facets**。它是构建
-// 脚本用的纯字符串函数，不是插件运行时 API；进了 barrel 就会被 host 产物内联进去，白占体积。
-// 也**不进 shared/package.json 的 `exports`**：包代码用包名说明符引 shared 是因为那是要发布的
-// 运行时 API，而本模块的调用方是各包的 `build-*.mjs`——它们根本不在 `files`（各包 files 只有
-// `host.js`/`client.js`/`cordis.patch.yml`），也不是 `publish-check/repo-surface.mjs` 扫的配置面
-// （那里只查根层配置，源码/脚本里的 `../` 明确不受这棵树限制）。所以 builder 用仓内相对说明符
-// `../shared/lib/canonicalize-region-paths.ts` 是有意的，不是漏了 `exports` 条目。
+// 只在 builder 侧调用，且**刻意不进 barrel**：它是构建脚本用的纯字符串函数，不是插件运行时
+// API；进了 `lib/index.ts` 就会让每个运行期消费方都为它付一次导入。build-host.mjs 因此把它
+// 单独列进 `entries`（不进 `facets` 数组——那数组是 barrel 的成员表），产出一个独立入口。
+//
+// ⚠ 它**确实在 `package.json` 的 `exports` 里**（`./lib/canonicalize-region-paths`），而且这条
+// 是承重的：9 个兄弟包的 `build-*.mjs` 正是靠它按包子路径引本函数（quality-gate / ocr-review /
+// session-rescue / dir-prep-organize / zvec-grep / ctx-observe / danger-guard / lesson-loop /
+// scrapling，各一对 build-host 与 build-client）。只有本包自己的两个 builder 用相对说明符
+// `./lib/canonicalize-region-paths.ts`（它们在包内，不需要绕子路径）。
+// 删掉那条 exports = 一次性打断全部 9 个包的构建，所以本文件头曾经那句「不进出 exports」是
+// 错的，照着它做会出事；test/publish-manifest.test.ts 现在钉着这条 parity。
 //
 // 纯字符串：不起子进程、不读盘、不 import node:path —— 包根由调用方（builder 里已有的
 // import.meta.dirname）作为字符串交进来，本模块只做行内文本重写。因此可单测，也能在同一进程
