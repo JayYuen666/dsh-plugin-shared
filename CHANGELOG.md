@@ -2,6 +2,24 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.3
+
+### Changed
+
+- **Breaking (install surface): no `@deepseek-ai/*` left in `dependencies`.** The seven host packages move to `peerDependencies` (`@deepseek-ai/dsh-output-retention` required — it is the one value import, `truncateWithoutSplittingSurrogatePair` behind `truncateEnd`; the six type-only ones optional) plus the same seven in `devDependencies` so this repository still compiles and tests them. `dependencies` is now empty.
+  - **Why this was a defect rather than a preference:** a consumer plugin is installed into a profile that runs pnpm with `nodeLinker: hoisted` and `autoInstallPeers: false`. Anything this package listed under `dependencies` was therefore written into the profile as a **real directory**, sitting next to the copy the host process had already loaded. `@deepseek-ai/dsh-tools` keys its `TOOL_RUNTIME_SCHEDULER` with a plain `Symbol` (not `Symbol.for`), so symbol identity is per module instance: the host's `dsh-agent-loop` reads the `ToolRuntime` that was mounted from the duplicate using its own copy's symbol, receives `undefined`, and every native tool call throws `Cannot read properties of undefined (reading 'prepare')` — the entire profile loses its tools. This package's build, typecheck and coverage gate all stayed green right up to that point, which is why the check now lives in `test/publish-manifest.test.ts`.
+  - Measured in an isolated profile: installing a consumer that pulls shared `0.1.2` materialises fifteen `@deepseek-ai/*` directories and loads two distinct `dsh-tools` instances in one process; the same consumer against `0.1.3` materialises none and loads one.
+  - Consumers that import a type-only facet (`lib/job-outcome`, `lib/tool-events`, `lib/card-apply`, `lib/locale`) keep resolving those host types the way they already do — through their own declarations — because peers are not installed into a profile and optional peers no longer drag a second copy along.
+- **`test/publish-manifest.test.ts` gains a manifest-level gate** (`@deepseek-ai/* 一律不进 dependencies`) and the two version-shape assertions now read the peer ∪ dev union instead of `dependencies`. Without the gate the failure is invisible from this repository: the artifact is correct, the host is not.
+- `README.md` / `README.zh-CN.md` "Dependencies" rewritten. The previous text justified `dependencies` ("`dsh-output-retention` is a value import, so it must ship as a dependency") — the runtime need is real, the chosen table was not: host-provided runtime packages belong in `peerDependencies`. It also claimed `cordis` uses `~`; the manifest has pinned it exactly since `0.1.2`, and the sentence now says so.
+
+### Not changed, deliberately
+
+- **The exact pins stay exact.** Only the table they live in moves. Loosening them to `^` would let a consumer's host type surface drift to whatever the registry serves, which is the failure `0.1.2` pinned down.
+- **`@deepseek-ai/dsh-output-retention` is a required peer, not optional.** It is the only host package reached at runtime; a consumer whose host does not provide it should fail loudly at import rather than get `undefined` two frames inside `truncateEnd`.
+- **The release line stays `0.1.x`:** this ships as 0.1.3 rather than 0.2.0, for the reason recorded under 0.1.1 — every sibling pins `^0.1.0`, which under `0.x` resolves to `>=0.1.0 <0.2.0`, so cutting 0.2.0 would need nine coordinated range bumps. Staying on the patch line is exactly what lets every consumer pick this fix up with no edit at all. The cost is that an install-surface change arrives through a patch, as it did in 0.1.1 and 0.1.2.
+- **The one consumer-facing failure face is a missing type import.** A package that imported a type-only facet (`lib/job-outcome`, `lib/tool-events`, `lib/card-apply`, `lib/locale`) and relied on shared to drag the host package into its own flat tree must now declare that host package itself. Under pnpm's isolated layout it already had to, because transitive dependencies are not importable there.
+
 ## 0.1.2
 
 ### Changed
@@ -69,7 +87,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `.github/workflows/ci.yml`: the quality gate on push and pull request, across a Node version matrix and on Windows, plus a clean-directory install matrix that packs, installs with no flags, imports every subpath and type-checks a consumer probe.
 - `build-clean.mjs`, wired as `prebuild`, deletes `dist/` before each build so a renamed facet cannot keep publishing its orphan artifact.
 - `engines.node`, `sideEffects`, `homepage`, `bugs`, `keywords`.
-- `CHANGELOG.md` and `README.zh.md`.
+- `CHANGELOG.md` and `README.zh-CN.md`.
 - `lib/job-outcome` re-exports the official `JobOutcome` type so consumers can name it without restating its structure.
 - `readBody` rejects a budget that is not a finite non-negative number with the new `BodyRead` reason `bad-budget`; `guardBody` answers it with HTTP 500 instead of blaming the client.
 - `deriveProjectKey` normalizes Windows path separators and routes a drive root to `default`. Both spellings of one Windows directory now share a bucket.

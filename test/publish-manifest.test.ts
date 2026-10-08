@@ -44,44 +44,48 @@ interface Manifest {
   readonly files?: readonly string[];
   readonly publishConfig?: Record<string, unknown>;
   readonly dependencies?: Record<string, string>;
+  readonly devDependencies?: Record<string, string>;
   readonly peerDependencies?: Record<string, string>;
 }
 
-/** 一条 `files` 模式归类后的形态。 */
-interface PatternShape {
-  /** 要列的目录（相对包根）。 */
-  readonly dir: string;
-  /** 只收这一种后缀；空串表示收全部。exact 为真时本字段是**完整文件名**。 */
-  readonly extension: string;
-  /** true = 该条目是精确文件名（带点号又无通配）；false = 目录或后缀模式。 */
-  readonly exact: boolean;
-}
+/** 一条 `files` 模式归类后的两种形态。 */
+type PatternShape =
+  /** 目录或后缀模式：列该目录（可递归）下以 `extension` 结尾的文件。 */
+  | { readonly kind: "glob"; readonly dir: string; readonly extension: string }
+  /** 精确文件名：带点号又无通配的条目是**文件名**（`README.zh-CN.md`），不是后缀过滤。 */
+  | { readonly kind: "exact"; readonly file: string };
 
 /**
  * 把 `files` 的一条模式归类。本包实际用到的只有三种写法：裸文件名、目录名、`dir/*.ext`。
  *
- * `exact` 这一档不能省：带点号又无通配的条目是**文件名**（`README.zh.md`），不是后缀过滤。
- * 原实现把它当 `.md` 过滤，于是顶层每个 `.md` 都被算进「files 会发出去的集合」——实测把
- * 未列入 files 的 `CHANGELOG.md` 也算了进去（`tar tzf` 确认它并不随包发布）。集合虚高会让
- * 「入口都在 files 覆盖内」这道断言比 npm 真实语义更宽松：门禁自己放松了。
+ * 「精确文件名」这一档不能和后缀过滤混为一谈，而且必须是**判别联合**而不是一个布尔开关：
+ * 开关方案下两种形态挤在同一个 `extension` 字段里 —— 精确形态要存的是完整文件名，
+ * 后缀形态要存的是 `.svg`，一个字段装不下两者，于是实现只能二选一。旧实现选了后缀，
+ * 于是 `icon.svg` 被读成「收所有 `.svg` 的文件」：精确条目因此**完全失效**，
+ * `expand` 一条文件都没返回。
+ *
+ * 集合虚高或虚低都会让「入口都在 files 覆盖内」这道断言失真。实测两种方向都踩过：
+ * 虚高时未列入 files 的 `CHANGELOG.md` 也被算进去（`tar tzf` 确认它并不随包发布）；
+ * 虚低时同一套门禁复制到兄弟包，第一版就把 `main: "host.js"` 误报成「不在 files 覆盖内」，
+ * 而那个包的文件确实随包发布。判别联合让两者在类型上就分得开，不必靠注释提醒。
  *
  * @param entry - `files` 数组里的一项
- * @returns 该模式要列的目录与后缀过滤
+ * @returns 该模式要列的目录与后缀过滤，或一个精确文件名
  */
 function shapeOf(entry: string): PatternShape {
   const dot = entry.lastIndexOf(".");
   const star = entry.indexOf("*");
   if (star !== -1) {
     return {
+      kind: "glob",
       dir: entry.slice(0, star).replace(/\/$/u, ""),
       extension: entry.slice(dot),
-      exact: false,
     };
   }
   if (!entry.includes(".")) {
-    return { dir: entry, extension: "", exact: false };
+    return { kind: "glob", dir: entry, extension: "" };
   }
-  return { dir: ".", extension: entry.slice(dot), exact: true };
+  return { kind: "exact", file: entry };
 }
 
 /**
@@ -90,11 +94,13 @@ function shapeOf(entry: string): PatternShape {
  * @returns 命中的文件清单
  */
 async function expand(shape: PatternShape): Promise<string[]> {
+  if (shape.kind === "exact") {
+    return existsSync(path.join(pkgDir, shape.file)) ? [shape.file] : [];
+  }
   const names = await readdir(path.join(pkgDir, shape.dir), { recursive: shape.dir !== "." });
-  const wanted = shape.extension;
   return names
     .map((name) => name.split(path.sep).join("/"))
-    .filter((name) => wanted === "" || (shape.exact ? name === wanted : name.endsWith(wanted)))
+    .filter((name) => shape.extension === "" || name.endsWith(shape.extension))
     .map((name) => path.posix.join(shape.dir, name));
 }
 
@@ -188,6 +194,28 @@ describe("发布形态", () => {
     }
   });
 
+  it("files 里的精确文件名条目确实被算进发布集合（shapeOf/expand 的回归防线）", async () => {
+    // 单独钉住这两件事，因为它们坏掉时**上面那道入口覆盖断言不会响**：
+    //   · 精确条目没被算进来 → 集合虚低 → 入口一旦靠精确条目承载就会误报；
+    //   · 精确条目被当成后缀过滤 → 集合虚高 → 门禁对自己的约束放松。
+    // 旧实现正是后者：`icon.svg` 被读成「收所有 .svg」，于是把未列入 files 的
+    // `CHANGELOG.md` 之类的文件也算进去，而上面那道断言照样全绿。
+    const { manifest, shipped } = await readSurface();
+    const exact = (manifest.files ?? []).filter(
+      (entry) => !entry.includes("*") && entry.includes("."),
+    );
+    expect(exact.length, "本包的 files 里应当有精确文件名条目可供验证").toBeGreaterThan(0);
+    for (const entry of exact) {
+      // 一条断言同时钉住 kind 与 file：精确形态必须携带完整文件名。这是旧实现唯一失效的
+      // 那一位，而上面那道「入口覆盖」断言对它毫无反应。
+      expect(shapeOf(entry), `${entry} 应归类为精确文件名并携带完整文件名`).toStrictEqual({
+        kind: "exact",
+        file: entry,
+      });
+      expect(shipped.has(entry), `${entry} 是精确条目，却没被算进发布集合`).toBe(true);
+    }
+  });
+
   it("publishConfig 只留可见性与源，不留入口覆盖", async () => {
     const { manifest } = await readSurface();
     for (const key of Object.keys(manifest.publishConfig ?? {})) {
@@ -226,7 +254,7 @@ describe("发布形态", () => {
     const configSources = configNames
       .filter((name) => name.endsWith(".ts"))
       .map((name) => path.join("config", name));
-    const docs = ["README.md", "README.zh.md", "CHANGELOG.md"].filter((name) =>
+    const docs = ["README.md", "README.zh-CN.md", "CHANGELOG.md"].filter((name) =>
       existsSync(path.join(pkgDir, name)),
     );
     const sources = [...libSources, ...configSources, ...docs];
@@ -245,7 +273,33 @@ describe("发布形态", () => {
   });
 });
 
+/**
+ * 宿主包在 peer 与 dev 两张表里的并集。`dependencies` 是禁区（见下面那条门禁）：peer 记录
+ * 「运行期由宿主提供」，dev 记录「本包编译与测试要用它」，两者都不会被消费方的 profile 安装。
+ * 同名键以 peer 表为准，那才是消费方环境里真正提供的那一枚。
+ * @param manifest - 解析后的 package.json
+ * @returns 宿主包名到版本区间
+ */
+function hostRanges(manifest: Manifest): Record<string, string> {
+  return { ...manifest.devDependencies, ...manifest.peerDependencies };
+}
+
 describe("宿主依赖的版本形状（升级防线）", () => {
+  it("@deepseek-ai/* 一律不进 dependencies：装出去会在宿主进程里物化第二份", async () => {
+    // 钉的是「全绿但宿主瘫痪」这一类坑。本包只要被消费方声明成普通依赖，profile 的 hoisted
+    // 安装就会把这批 @deepseek-ai/* 落成**真实目录**，与宿主进程里已有的那份并存在一起。
+    // 而 `@deepseek-ai/dsh-tools` 的 TOOL_RUNTIME_SCHEDULER 是普通 Symbol（不是 Symbol.for），
+    // 符号身份按模块实例计算：宿主 dsh-agent-loop 用自己那份的 Symbol 去读由副本挂载出来的
+    // ToolRuntime，得到 undefined，于是每一次原生工具调用都抛
+    // "Cannot read properties of undefined (reading 'prepare')"，整个 profile 的工具一起失效。
+    // 构建、类型检查与本包测试在此之前全部照绿，判据只能落在 manifest 面上。
+    const { manifest } = await readSurface();
+    const leaked = Object.keys(manifest.dependencies ?? {}).filter((name) =>
+      name.startsWith("@deepseek-ai/"),
+    );
+    expect(leaked, "这些宿主包会随消费方装进 profile，物化出第二份实例").toStrictEqual([]);
+  });
+
   it("dsh-* 家族一律精确钉，不留任何范围算子", async () => {
     // registry 上的 dist-tag 是这轮实测出来的陷阱：
     //   @deepseek-ai/dsh-session 的 `latest` → 0.0.1-rc.1
@@ -255,7 +309,7 @@ describe("宿主依赖的版本形状（升级防线）", () => {
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
     // 那等于让消费方在没有测试的情况下换掉宿主类型面。
     const { manifest } = await readSurface();
-    const dshDeps = Object.entries(manifest.dependencies ?? {}).filter(([name]) =>
+    const dshDeps = Object.entries(hostRanges(manifest)).filter(([name]) =>
       name.startsWith("@deepseek-ai/dsh-"),
     );
     expect(dshDeps.length, "至少要钉住一个 dsh-* 依赖").toBeGreaterThan(0);
@@ -272,7 +326,7 @@ describe("宿主依赖的版本形状（升级防线）", () => {
     const peer = manifest.peerDependencies?.["@deepseek-ai/dsh"];
     expect(peer, "peer 依赖缺失：宿主版本就失去基准了").toBeDefined();
     const hostVersion = (peer ?? "").replace(/^[\^~]/u, "");
-    const drifted = Object.entries(manifest.dependencies ?? {}).filter(
+    const drifted = Object.entries(hostRanges(manifest)).filter(
       ([name, range]) => name.startsWith("@deepseek-ai/dsh-") && range !== hostVersion,
     );
     expect(drifted, "这些 dsh-* 与宿主 dsh 不同版本").toStrictEqual([]);

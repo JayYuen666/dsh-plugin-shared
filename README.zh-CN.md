@@ -1,6 +1,6 @@
 # @jayyuen66/dsh-plugin-shared
 
-[English](./README.md) · [简体中文](./README.zh.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md)
 
 ## 这个包是什么
 
@@ -97,11 +97,12 @@ sonarjs 的入口是**惰性解析**的，发生在 `definePluginConfig()` 内�
 
 ## 依赖
 
-七条 `dependencies`，全是 `@deepseek-ai/*`：
+`dependencies` 是空的；七枚 `@deepseek-ai/*` 只出现在 `peerDependencies` 与 `devDependencies` 里。这条由 `test/publish-manifest.test.ts` 钉住，不是风格偏好：
 
-- `@deepseek-ai/dsh-output-retention` 是**值导入**（`truncateEnd` 用它），所以必须是依赖。
-- 其余六枚只被发布出去的 `.d.ts` 引用。之所以要声明，是因为未声明的类型导入不会大声报错，而是静默降级：`lib/job-outcome` 的 `ShellProcess`/`JobOutcome` 曾经来自消费方根本不保证存在的包，于是在 `skipLibCheck: true` 下写错 `status` 或 `exitCode` 一条都不报，返回值类型直接塌成 `any`；而 pnpm 的隔离布局下这些包压根解析不到。
-- 版本口径跟着宿主走：`dsh-*` 家族内用精确钉，`cordis` 用 `~`，与宿主本体自己声明的一致，这样是复用同一份而不是装出第二份。
+- **写进 `dependencies` 会让消费方的宿主瘫掉。** 消费方是 dsh 插件，被装进 profile（`nodeLinker: hoisted`、`autoInstallPeers: false`）。宿主包只要出现在 `dependencies`，pnpm 就在 profile 里把它们落成**真实目录**，与宿主进程里已有的那份并存。而 `@deepseek-ai/dsh-tools` 的 `TOOL_RUNTIME_SCHEDULER` 是普通 `Symbol`（不是 `Symbol.for`），符号身份按模块实例计算——宿主 `dsh-agent-loop` 拿自己那份的 Symbol 去读由副本挂载出来的 `ToolRuntime`，得到 `undefined`，于是**每一次原生工具调用都抛** `Cannot read properties of undefined (reading 'prepare')`，整个 profile 的工具一起失效。本包的构建、类型检查与测试在这之前全部照绿，所以判据只能落在 manifest 面。
+- `@deepseek-ai/dsh-output-retention` 是**值导入**（`truncateEnd` 用它），运行期由宿主提供，因此是非 optional 的 peer。
+- 其余六枚只被发布出去的 `.d.ts` 引用，声明成 optional peer 加 dev：peer 保住类型面不静默降级——`lib/job-outcome` 的 `ShellProcess`/`JobOutcome` 曾经来自消费方根本不保证存在的包，于是在 `skipLibCheck: true` 下写错 `status` 或 `exitCode` 一条都不报，返回值类型直接塌成 `any`；dev 让本包自己的编译与测试解析得到。profile 不装 peer，所以不产生副本。
+- 版本口径跟着宿主走：`dsh-*` 家族内一律精确钉，`cordis` 也精确钉，与宿主本体自己声明的一致，这样是复用同一份而不是装出第二份。
 
 已知的上游限制：`@deepseek-ai/dsh-llm` 的声明文件引用了它自己没声明的 `@deepseek-ai/dsh-attachment`。它经 `dsh-session` 传递进来，所以开 `skipLibCheck: false` 的消费方会看到来自**那个包**的 `TS2307`，不是来自本包。
 
@@ -110,7 +111,7 @@ sonarjs 的入口是**惰性解析**的，发生在 `definePluginConfig()` 内�
 `main` 与 `exports` 只指 `dist/`，不存在第二套源码形态的 manifest。
 
 - `publishConfig` 只带 `access` 和 `registry`。把 `main`/`exports` 放在那里是错的：pnpm 发布时会把它们合并到顶层，npm 不会——用 npm 发出去的包，十四个入口指向的都是 tarball 里不存在的文件。
-- `files` 是 `icon.svg`、`dist`、`config/*.json`、`README.zh.md`。npm 永远附带 `package.json`、`LICENSE` 和 `README.md`；`README.zh.md` 显式列出才会一起发。
+- `files` 是 `icon.svg`、`dist`、`config/*.json`、`README.zh-CN.md`。npm 永远附带 `package.json`、`LICENSE` 和 `README.md`；`README.zh-CN.md` 显式列出才会一起发。
 - `build` 第一步删除 `dist/`：`files` 整目录收，切面一旦改名，上一代孤儿产物会继续被发出去。
 - `prepare` 挂 `build`。消费方从 registry 安装时它不执行；它存在是为了让打包、发布与 workspace link 拿到的都是新鲜 `dist/`。
 - 必须有编译产物：Node 对 `node_modules` 里的 `.ts` 直接抛 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`，而发出去的包正是躺在那里被载入的。barrel 的声明文件由 `build-host.mjs` 生成，因为源码形态的 `export * from "./http.ts"` 消费方解析不到。
