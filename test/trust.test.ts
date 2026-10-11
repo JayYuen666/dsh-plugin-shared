@@ -8,7 +8,12 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { requestTrust, guardTrust, trustRejectionText } from "../lib/trust.ts";
+import {
+  requestTrust,
+  guardTrust,
+  trustRejectionText,
+  isNonLoopbackBindHost,
+} from "../lib/trust.ts";
 import { logged, loggedText } from "./setup-logs.ts";
 
 /** 手搓一个 IncomingMessage 形状（与 test/http.test.ts 同一口径：默认 headers 为空对象）。 */
@@ -46,6 +51,13 @@ const LOCALHOST_AUTHORITY = "localhost:8787";
 
 /** 回环的 IPv4 写法（本机服务面的默认端口）；与上者成对，字面量各写一次。 */
 const IPV4_AUTHORITY = "127.0.0.1:8787";
+
+/** 回环绑定的默认写法（配置面那一侧；`IPV4_AUTHORITY` 是它作 Host 头时的形态）。 */
+const IPV4_LOOPBACK_BIND = "127.0.0.1";
+
+/** 私网绑定地址与它作 Host 权威时的形态（非回环服务面那几条用例共用）。 */
+const LAN_BIND_ADDRESS = "192.168.1.5";
+const LAN_AUTHORITY = "192.168.1.5:8787";
 
 /** 手搓一条只带 Host 的请求（把 `requestTrust(fakeReq({…}))` 那三层嵌套收进一处，
  *  下面的表驱动才读得动；放在模块级是因为它不捕获任何作用域变量）。 */
@@ -155,10 +167,10 @@ describe("requestTrust：Host 权威腿", () => {
     );
   });
 
-  it("绑 0.0.0.0 时才放本机网卡实际持有的地址；不放后缀名", () => {
-    const local = ["192.168.1.5", "10.0.0.7", "[fd00::1234]"];
+  it("声明了非回环服务面才放本机网卡实际持有的地址；不放后缀名", () => {
+    const local = [LAN_BIND_ADDRESS, "10.0.0.7", "[fd00::1234]"];
     assert.equal(
-      requestTrust(fakeReq({ headers: { host: "192.168.1.5:8787" } }), {
+      requestTrust(fakeReq({ headers: { host: LAN_AUTHORITY } }), {
         servingNonLoopback: true,
         localInterfaceAddresses: local,
       }),
@@ -173,7 +185,7 @@ describe("requestTrust：Host 权威腿", () => {
       "IPv6 唯一局部址要能与带方括号的形态对上",
     );
     assert.equal(
-      requestTrust(fakeReq({ headers: { host: "192.168.1.5:8787" } }), {
+      requestTrust(fakeReq({ headers: { host: LAN_AUTHORITY } }), {
         localInterfaceAddresses: local,
       }),
       VERDICT_UNTRUSTED_HOST,
@@ -490,5 +502,103 @@ describe("host 字形面：WHATWG 会静默改写的输入一律先按字形拒"
     for (const host of ["0.0.0.0:8787", "127.0.0.256:8787", "0277.0.0.1:8787"]) {
       assert.equal(verdictForHost(host), VERDICT_UNTRUSTED_HOST, `${host} 不得放行`);
     }
+  });
+});
+
+// ── 绑定地址那一侧（servingNonLoopback 的取值面）──────────────────────────────
+//
+// 这组用例钉的是一处**宿主 0.2.1-alpha.2 换形**留下的坑：`@deepseek-ai/dsh-host-webserver` 的
+// `Config.host` 从 `'127.0.0.1' | '0.0.0.0'` 换成「任意本机接口的 IP 字面量」，并把通配地址
+// 在载入时直接拒掉。于是消费方沿用至今的那行 `webServer.host === "0.0.0.0"` 恒为 false——
+// 判据还盯着那枚再也绑不上的字面量，真绑上网卡地址的服务面却把自己整片拒成 403。
+// 谓词本身归 `lib/trust.ts`，这里只验三件事：回环字形收得全、非回环放得开、与官方不同名漂移。
+
+/** 回环绑定的全部字形：127/8 整段、`::1` 的三种拼法、带 `%zone` 的、以及映射到 127/8 的形。 */
+const LOOPBACK_BIND_LITERALS = [
+  IPV4_LOOPBACK_BIND,
+  "127.0.0.2",
+  "127.255.255.255",
+  "::1",
+  // WHATWG 把这两种拼法都折成 `[::1]`；只按字面比 `::1` 的实现会在这里漏。
+  "::0.0.0.1",
+  "0:0:0:0:0:0:0:1",
+  "::1%lo",
+  // IPv4 映射形归一成 `[::ffff:7f00:1]`：回环位在内嵌 IPv4 的首段，不在前缀里。
+  "::ffff:127.0.0.1",
+  "0:0:0:0:0:ffff:127.0.0.1",
+];
+
+/** 非回环绑定的字形：私网、ULA、带链路与 zone 的链路本地址，以及三种通配写法（现已绑不上，仍算非回环）。 */
+const NON_LOOPBACK_BIND_LITERALS = [
+  LAN_BIND_ADDRESS,
+  "10.0.0.7",
+  "fd00::1234",
+  "fe80::1%en0",
+  // 映射到非回环 IPv4：`::ffff:0:1` 折成 0.0.0.1，它不是 127/8 也不是全零。
+  "::ffff:8.8.8.8",
+  "::ffff:0:1",
+  "0.0.0.0",
+  "::",
+  "::ffff:0.0.0.0",
+];
+
+describe("isNonLoopbackBindHost：绑定字面量 → servingNonLoopback", () => {
+  it("回环绑定不开本机网卡权威：127/8、`::1` 的各形拼法与映射到 127/8 的形", () => {
+    for (const host of LOOPBACK_BIND_LITERALS) {
+      assert.equal(isNonLoopbackBindHost(host), false, `${host} 是回环，不该算非回环服务面`);
+    }
+  });
+
+  it("网卡地址与通配地址都算非回环服务面", () => {
+    for (const host of NON_LOOPBACK_BIND_LITERALS) {
+      assert.equal(isNonLoopbackBindHost(host), true, `${host} 不是回环`);
+    }
+  });
+
+  it("取不到值与非字面量按只绑回环处理——这一支与官方刻意相反", async () => {
+    // 官方 `!isLoopbackHost` 对非字面量给 **true**（它只认 IP 字面量，`localhost` 解析不出来）。
+    // 这里取反方向：宿主自己的 config 校验已经拒掉非字面量，那种值到不了本函数；万一到了，
+    // false 是**少放**可信任的 Host 权威，而不是多放。下面那条对表用例因此只跑字面量。
+    const { isLoopbackHost } = await import("@deepseek-ai/dsh-host-webserver");
+    for (const host of ["localhost", "[::1]", "", "0.0.0.1:80", "not-an-ip"]) {
+      assert.equal(isNonLoopbackBindHost(host), false, `${host} 不是绑定字面量，按保守档`);
+    }
+    assert.equal(isNonLoopbackBindHost(undefined), false, "读不到 webServer.host 时按只绑回环");
+    // 反面钉一次，免得日后有人把这条分歧当"实现没对齐"顺手抹平。
+    assert.equal(isLoopbackHost("localhost"), false, "官方那侧对非字面量给 false，本函数给保守档");
+  });
+
+  it("与官方 isLoopbackHost 逐字面对表：本包这份实现没有漂", async () => {
+    // `isLoopbackHost` 是宿主 0.2.1-alpha.2 才公开导出的（此前只是 webserver 包的模块私有件）。
+    // 能直接对表之后，口径漂移就红在本包的门上，而不是红在某个消费方装不上局域网的时候。
+    const { isLoopbackHost } = await import("@deepseek-ai/dsh-host-webserver");
+    for (const host of [...LOOPBACK_BIND_LITERALS, ...NON_LOOPBACK_BIND_LITERALS]) {
+      assert.equal(
+        isNonLoopbackBindHost(host),
+        !isLoopbackHost(host),
+        `${host} 与官方口径不一致：本包 ${String(isNonLoopbackBindHost(host))} / 官方 ${String(!isLoopbackHost(host))}`,
+      );
+    }
+  });
+
+  it("端到端：绑网卡地址的服务面放得开本机权威，只绑回环的放不开", () => {
+    // 谓词写错的后果不在谓词身上，而在局域网里那一次 403（或更糟：本机服务面对外敞开）。
+    const local = [LAN_BIND_ADDRESS, "[fd00::1234]"];
+    assert.equal(
+      requestTrust(fakeReq({ headers: { host: LAN_AUTHORITY } }), {
+        servingNonLoopback: isNonLoopbackBindHost(LAN_BIND_ADDRESS),
+        localInterfaceAddresses: local,
+      }),
+      "trusted",
+      "绑在 192.168.1.5 上就该认这台机器自己的权威",
+    );
+    assert.equal(
+      requestTrust(fakeReq({ headers: { host: LAN_AUTHORITY } }), {
+        servingNonLoopback: isNonLoopbackBindHost(IPV4_LOOPBACK_BIND),
+        localInterfaceAddresses: local,
+      }),
+      VERDICT_UNTRUSTED_HOST,
+      "只绑回环时私网权威仍得拒",
+    );
   });
 });

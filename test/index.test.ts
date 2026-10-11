@@ -12,6 +12,7 @@ import {
   fieldOf,
   guardBody,
   isCrossOrigin,
+  isNonLoopbackBindHost,
   isRecord,
   jobOutcomeOf,
   messagesFor,
@@ -58,6 +59,7 @@ describe("lib/index 聚合导出", () => {
       requestTrust,
       guardTrust,
       trustRejectionText,
+      isNonLoopbackBindHost,
       jobOutcomeOf,
     ]) {
       expect(fn).toBeTypeOf("function");

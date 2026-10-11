@@ -26,23 +26,27 @@
 //   真正可达的是 handle 上的 requestRejection() / admit()，但它们把浏览器认证一并叠上：
 //   未认证返 401（packages/client/connection/src/rpc-host.ts:104-107）。本模块刻意只管
 //   "信任"、不要求"已认证"（本地 CLI 是既有信任面，见下面分歧 1），所以那条 API 也不能
-//   直接顶替。trustedHosts 同理存成 private 字段、插件侧读不到；本模块唯一可用的信号是
-//   webServer.host === "0.0.0.0"。
+//   直接顶替。trustedHosts 同理存成 private 字段、插件侧读不到（宿主 0.2.1-alpha.2 把它从
+//   `webRuntime` 挪到 `webStartup` 服务上，仍是 profile 的配置面）；本模块可用的信号只有
+//   `webServer.host` 那枚绑定字面量，判法见 `isNonLoopbackBindHost`。
 // 四处刻意分歧，每条都有理由：
 //   1. 缺 `Host` 只在**回环对端**放行（官方一律拒）：那层还有 browser-auth，我们没有，
 //      而本地 CLI 是既有信任面（`lib/http.ts` 的 `isCrossOrigin` 已把"空头不拦"写成口径）。
 //      可达性本机实测：HTTP/1.1 无 Host 由 **node:http 自己回 400**，根本到不了 handler；
 //      能带着"无 Host"走到这里的只有 **HTTP/1.0 或裸 socket**（实测 `GET /a HTTP/1.0` 到
 //      handler）。所以这一支不是"浏览器可能不发 Host"的兜底，而是本地面的通路；绑
-//      `0.0.0.0` 时同网段的裸 socket 也能走到 —— README 明写残余风险。
+//      非回环网卡字面量时同网段的裸 socket 也能走到 —— README 明写残余风险。
 //      另一处实测：重复 Host 头被 Node 折成**首项字符串**（数组形态在生产上不可达，
 //      那条判据是给未来/其它运行时留的 fail-closed，不是当前攻击面）。
 //   2. `sec-fetch-site` 用**白名单**（只放 `same-origin`/`none`/缺失），不照抄官方的"只拒
 //      `cross-site`"：官方那套把本机异端口标成 `same-site` 并放行，本仓不放过（沿用既有语义）。
 //   3. 非回环服务面用**本机网卡实际持有的 IP**，不用官方的 `trustedHosts` 配置。
 //      **不放 `.local`/`.lan` 之类后缀名**——mDNS 名可被本机任意进程或同网段主机声称并应答
-//      127.0.0.1，那样 Host 与 Origin 两条腿会同时被骗过。官方那份 `isLoopbackHost` 也不能拿来
-//      替代：它额外接受 `::`、`0.0.0.0` 与 `.localhost` 后缀，用在权威判定上是放宽而非收紧。
+//      127.0.0.1，那样 Host 与 Origin 两条腿会同时被骗过。`@deepseek-ai/dsh-http-proxy` 那份
+//      `isLoopbackHost`（packages/util/http-proxy/src/policy.ts:257）也不能拿来替代：它额外接受
+//      `::`、`0.0.0.0` 与 `.localhost` 后缀，用在权威判定上是放宽而非收紧。别把它和宿主
+//      0.2.1-alpha.2 新出的 `@deepseek-ai/dsh-host-webserver` 同名导出混为一谈——后者管的是
+//      **绑定地址**那一侧，`isNonLoopbackBindHost` 与它对齐，不是与这一份。
 //   4. `guardTrust` 自带"头未发"检查：`sendJson` 在头已发时静默 no-op，若有人把闸门挪到
 //      `await readBody()` 之后，它会静默失败为放行。
 //
@@ -52,6 +56,7 @@
 
 import os from "node:os";
 import type { ServerResponse } from "node:http";
+import { isIPv4, isIPv6 } from "node:net";
 import { sendJson, CROSS_ORIGIN_TEXT } from "./http.ts";
 import type { HttpRequest } from "./http.ts";
 
@@ -60,7 +65,10 @@ export type TrustVerdict = "trusted" | "untrusted-host" | "cross-site" | "bad-or
 
 /** `requestTrust` / `guardTrust` 的可选入参。 */
 export interface TrustOptions {
-  /** 宿主是否绑在非回环地址上（`webServer.host === "0.0.0.0"`）。缺省按 false（保守）。 */
+  /**
+   * 宿主是否绑在非回环地址上——由 `isNonLoopbackBindHost(webServer.host)` 取，**不要**再自己比
+   * 字面量。缺省按 false（保守）。
+   */
   servingNonLoopback?: boolean;
   /** 注入本机地址面（测试用；缺省取 `os.networkInterfaces()` 的实际值）。 */
   localInterfaceAddresses?: readonly string[];
@@ -74,6 +82,61 @@ const SAME_SITE_ALLOW: ReadonlySet<string> = new Set(["same-origin", "none"]);
 
 /** Host 权威不是本机可信地址时的响应文案。 */
 const UNTRUSTED_HOST_TEXT = "untrusted host authority";
+
+/** WHATWG 把 `::0.0.0.1`、`0:0:0:0:0:0:0:1` 这类拼法一律折成这一枚 IPv6 回环规范形。 */
+const IPV6_LOOPBACK = "[::1]";
+
+/** 回环段 127/8 的首段（IPv4 字面量按十进制文本认它）。 */
+const LOOPBACK_V4_OCTET = "127";
+
+/**
+ * IPv4 映射形里 127/8 那一族的规范前缀。WHATWG 把 `::ffff:127.x.y.z` 一律折成 `[::ffff:7f..:..]`，
+ * 且那枚高字落在 0x7f00–0x7fff、必写作四位，所以前缀的头两位就锁定了内嵌 IPv4 的首段。
+ * 非 127/8 的映射形要么更短（`::ffff:0:1`）要么另起一位（`::ffff:808:808`），都撞不上这个前缀。
+ */
+const MAPPED_LOOPBACK_PREFIX = "[::ffff:7f";
+
+/**
+ * IPv6 绑定字面量是不是回环。`::1` 有多样拼法（`::0.0.0.1`、全展开形），IPv4 映射形写的是十进制
+ * 尾段，两样都先交 WHATWG 归一再认——归一之后回环只剩 `IPV6_LOOPBACK` 与
+ * `MAPPED_LOOPBACK_PREFIX` 这一枚值和这一个前缀。`%zone` 是接口选择器、不是地址位，归一前先剥。
+ *
+ * 这里不兜解析失败：`isIPv6` 已闸过语法，实测它接受的字形 WHATWG 全部接得住（含 `%zone` 剥后
+ * 的 `::1%25` 这类），所以本函数没有"走不到的分支"要凑覆盖率——那条前提由台架的字形表钉着。
+ */
+function isLoopbackIPv6(host: string): boolean {
+  const canonical = new URL(`http://[${host.split("%", 1).join("")}]`).hostname;
+  return canonical === IPV6_LOOPBACK || canonical.startsWith(MAPPED_LOOPBACK_PREFIX);
+}
+
+/**
+ * 绑定地址的字面量谓词：`webServer.host` → {@link TrustOptions.servingNonLoopback}。
+ *
+ * 为什么现在要由本包出这个谓词：`@deepseek-ai/dsh-host-webserver` 的 `Config.host` 在宿主
+ * 0.2.1-alpha.2 从 `'127.0.0.1' | '0.0.0.0'` 换成**任意本机接口 IP 字面量**，并把通配地址
+ * （`0.0.0.0`、`::` 及其映射形）**在载入时拒掉**。于是消费方沿用至今的那行
+ * `webServer.host === "0.0.0.0"` 恒为 false——非回环服务面换了形态（一枚真的网卡地址），
+ * 判据却还盯着那枚再也绑不上的字面量，局域网访问会被本模块整片拒成 403。
+ *
+ * 口径与官方 `isLoopbackHost` 对齐（台架见 `test/trust.test.ts`）。一处**刻意**分歧：非字面量
+ * （`localhost`、带方括号的 `[::1]`）本函数按 false，官方那侧 `!isLoopbackHost` 得 true。
+ * 宿主自身的 config 校验已经拒掉非字面量，那种值到不了这里；万一到了，false 收紧而非放宽
+ * 可放行的 Host 权威——这个方向上宁可错杀。
+ *
+ * @param host - `webServer.host` 的绑定值；读不到（缺字段、空串、非字面量）按只绑回环处理
+ * @returns 绑的是非回环接口地址时为 true
+ */
+export function isNonLoopbackBindHost(host: string | undefined): boolean {
+  if (host === undefined) {
+    return false;
+  }
+  if (isIPv4(host)) {
+    // `isIPv4` 已经拒掉前导零（`0277.0.0.1` 不是字面量），所以按十进制文本比首段就够，
+    // 与下面 `isLoopbackHostname` 对 Host 权威的那条判据同形。
+    return host.split(".", 1).join("") !== LOOPBACK_V4_OCTET;
+  }
+  return isIPv6(host) && !isLoopbackIPv6(host);
+}
 
 /** Origin 那条腿的结论（三形共用：沙箱 `null` 源、Origin 解析失败、权威不相等）。 */
 const BAD_ORIGIN_VERDICT: TrustVerdict = "bad-origin";

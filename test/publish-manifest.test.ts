@@ -301,9 +301,9 @@ describe("宿主依赖的版本形状（升级防线）", () => {
   });
 
   it("dsh-* 家族一律精确钉，不留任何范围算子", async () => {
-    // registry 上的 dist-tag 是这轮实测出来的陷阱：
+    // registry 上的 dist-tag 是实测出来的陷阱（截至本包钉住的这一支）：
     //   @deepseek-ai/dsh-session 的 `latest` → 0.0.1-rc.1
-    //   `next` → 0.2.0-rc.2（实际在用的），`alpha` → 0.2.1-alpha.1
+    //   `next` → 0.2.0-rc.2，`alpha` → 0.2.1-alpha.2（实际在用的那一支）
     // 也就是说 `latest` 指向的是一个**远早于宿主 ABI** 的版本。精确钉是让「不带版本地
     // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，

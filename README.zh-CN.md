@@ -33,7 +33,7 @@ import { readBody, sendJson } from "@jayyuen66/dsh-plugin-shared/lib/http";
 | | |
 | --- | --- |
 | Node.js | `^22.19.0 \|\| >=24.0.0`，与 harness 根同款 |
-| dsh | `>= 0.2.1-alpha.1`，声明为 **optional** peer（本包 import 时不需要宿主在场） |
+| dsh | `>= 0.2.1-alpha.2`，声明为 **optional** peer（本包 import 时不需要宿主在场） |
 | 模块形态 | 仅 ESM。`require()` 只在支持 `require(esm)` 的 Node 上可用 |
 | Tree shaking | `"sideEffects": false` |
 
@@ -64,7 +64,7 @@ import { readBody, sendJson } from "@jayyuen66/dsh-plugin-shared/lib/http";
 | `./lib/record` | `isRecord`、`fieldOf` |
 | `./lib/errors` | `errorText`：语义对齐官方 `@deepseek-ai/dsh-llm` 的 `errorChain`（cause 链、`AggregateError` 成员、空 message 回退 name、跨 realm 取自有 message、敌意 getter 降级），本地零依赖实现 |
 | `./lib/jsonl` | `shrinkJsonlTail`：JSONL 尾部收缩的纯决策件；触发策略与错误出口留给调用方 |
-| `./lib/trust` | `requestTrust` / `guardTrust` / `trustRejectionText`：`/_dsh/*` 端点的请求信任判据（Host 权威 → `sec-fetch-site` 白名单 → Origin 逐字比对） |
+| `./lib/trust` | `requestTrust` / `guardTrust` / `trustRejectionText`：`/_dsh/*` 端点的请求信任判据（Host 权威 → `sec-fetch-site` 白名单 → Origin 逐字比对）；`isNonLoopbackBindHost`：由 `webServer.host` 那枚绑定字面量取 `servingNonLoopback` |
 | `./lib/job-outcome` | `jobOutcomeOf` + `SettledProcess` + `JobOutcome`：把落定的子进程映射成官方作业注册表的结局 |
 | `./lib/canonicalize-region-paths` | 构建期字符串件：把 rolldown 写的 `//#region <路径>` 折成与 `process.cwd()` 无关的形态。之所以只给子路径，就是为了让运行期消费方不必为它付一次导入 |
 
@@ -127,6 +127,7 @@ sonarjs 的入口是**惰性解析**的，发生在 `definePluginConfig()` 内�
 - **`errorText` 的返回值变长了**（签名与名字不变）。它从"单层 message"扩成与官方 `errorChain` 同语义：cause 链拼成 `外: 内`、`AggregateError` 附 `[e1; e2]`、空 message 回退 `Error.name`、跨 realm 的 Error 取其自带 `message` 而不是 `String()` 的 `"Error: …"`。**依赖旧文本做正则匹配的调用方要重新核对**（例如按括号取数的那类 `exec`）。
 - `editPathOf` 的返回类型收成按 `kind` 判别的 `EditTarget`，只保留 `write` / `read-view` 两支——`"skip"` 从来不会被产出，留在类型里只会逼调用方写永不执行的分支。路径取不到时仍返回所属那一支、`path` 为 `undefined`。
 - `isCrossOrigin` / `queryParam` / `checkCsrf` / `requestTrust` / `guardTrust` 的首参数由 `IncomingMessage` **放宽**为 `HttpRequest`。`readBody` / `guardBody` 仍是 `IncomingMessage`：它们要消费请求体，而 `PartialRequest` 不保证可异步迭代。
+- **`servingNonLoopback` 现在要由 `isNonLoopbackBindHost(webServer.host)` 取，别再写 `webServer.host === "0.0.0.0"`。** 宿主 0.2.1-alpha.2 把 `@deepseek-ai/dsh-host-webserver` 的 `Config.host` 从 `'127.0.0.1' | '0.0.0.0'` 换成任意本机接口的 IP 字面量，并在载入时拒掉通配地址。于是那句旧比较恒为 false：绑在真实网卡地址上的插件认不出自己的权威，局域网来的请求整片吃 `403 untrusted host authority`。`TrustOptions` 的签名没动，所以这不是 API 破坏，而是一条**悄悄失效**的取值口径的修复。`test/trust.test.ts` 会把新谓词与官方 `isLoopbackHost`（同一次宿主发布里才转为公开导出）逐字面对表。
 
 ## 质量门
 

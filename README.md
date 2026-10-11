@@ -33,7 +33,7 @@ End users do not install or enable it separately: any consumer package pulls it 
 | | |
 | --- | --- |
 | Node.js | `^22.19.0 \|\| >=24.0.0`, the same clause as the harness root |
-| dsh | `>= 0.2.1-alpha.1`, declared as an **optional** peer (this package needs no host at import time) |
+| dsh | `>= 0.2.1-alpha.2`, declared as an **optional** peer (this package needs no host at import time) |
 | Module format | ESM only. `require()` works only where Node supports `require(esm)` |
 | Tree shaking | `"sideEffects": false` |
 
@@ -64,7 +64,7 @@ The subpath column is the in-package specifier; value imports must prefix it wit
 | `./lib/record` | `isRecord`, `fieldOf` |
 | `./lib/errors` | `errorText`: semantics aligned with the official `@deepseek-ai/dsh-llm` `errorChain` (cause chain, `AggregateError` members, empty message falling back to `name`, cross-realm `message` read off the value itself, hostile getters degraded), implemented locally with zero dependencies |
 | `./lib/jsonl` | `shrinkJsonlTail`: the pure decision half of JSONL tail halving; trigger policy and error exit stay with the caller |
-| `./lib/trust` | `requestTrust` / `guardTrust` / `trustRejectionText`: request-trust predicate for `/_dsh/*` endpoints (Host authority → `sec-fetch-site` allow-list → byte-exact Origin) |
+| `./lib/trust` | `requestTrust` / `guardTrust` / `trustRejectionText`: request-trust predicate for `/_dsh/*` endpoints (Host authority → `sec-fetch-site` allow-list → byte-exact Origin), plus `isNonLoopbackBindHost` to derive `servingNonLoopback` from the `webServer.host` bind literal |
 | `./lib/job-outcome` | `jobOutcomeOf` + `SettledProcess` + `JobOutcome`: maps a settled subprocess onto the official job registry's outcome |
 | `./lib/canonicalize-region-paths` | Build-time string helper that folds rolldown's `//#region <path>` markers into a `process.cwd()`-independent form. Exported as a subpath precisely because runtime consumers should not pay an import for it |
 
@@ -127,6 +127,7 @@ Known upstream limitation: `@deepseek-ai/dsh-llm`'s own declarations import `@de
 - **`errorText` now returns more text** (same name and signature). It went from a single `message` layer to the official `errorChain` semantics: a cause chain renders as `outer: inner`, an `AggregateError` appends `[e1; e2]`, an empty message falls back to `Error.name`, and a cross-realm `Error` yields its own `message` instead of `String()`'s `"Error: ..."`. **Callers that regex the old text must re-check** (a `exec` that pulls a number out of parentheses, for example).
 - `editPathOf` returns a `kind`-discriminated `EditTarget` with only `write` / `read-view`: `"skip"` was never produced, and leaving it in the type only pushed consumers into writing unreachable branches. When no path can be read it still returns the matching arm with `path` set to `undefined`.
 - `isCrossOrigin` / `queryParam` / `checkCsrf` / `requestTrust` / `guardTrust` widened their first parameter from `IncomingMessage` to `HttpRequest`. `readBody` / `guardBody` still take `IncomingMessage` because they consume the request body and `PartialRequest` does not guarantee async iteration.
+- **`servingNonLoopback` must now come from `isNonLoopbackBindHost(webServer.host)`, not from `webServer.host === "0.0.0.0"`.** Host 0.2.1-alpha.2 changed `@deepseek-ai/dsh-host-webserver`'s `Config.host` from the two-value union `'127.0.0.1' | '0.0.0.0'` to any concrete local-interface IP literal and started rejecting wildcard bind addresses at load. The old comparison is therefore constant `false`: a plugin bound to a real interface address stops recognizing its own authority, and every LAN request comes back `403 untrusted host authority`. `TrustOptions` is unchanged, so this is not an API break — it is a fix for a derivation that silently stopped working. `test/trust.test.ts` cross-checks the new predicate against the official `isLoopbackHost`, which became a public export in the same host release.
 
 ## Quality gates
 
