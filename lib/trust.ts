@@ -141,18 +141,35 @@ export function isNonLoopbackBindHost(host: string | undefined): boolean {
 /** Origin 那条腿的结论（三形共用：沙箱 `null` 源、Origin 解析失败、权威不相等）。 */
 const BAD_ORIGIN_VERDICT: TrustVerdict = "bad-origin";
 
-/** 两形之外没有第三形（Node 的 IncomingHttpHeaders 值是 `string | string[]`），故不做 typeof 自卫。 */
-function singleHeader(req: HttpRequest, name: string): string | null {
+/**
+ * 读一个头的**三态**：缺席 / 单值 / 重复（折叠面，判不得）。
+ *
+ * 为什么必须把「重复」与「缺席」分开：旧实现把长度非 1 的数组折成 `null`，而 `null` 在
+ * `origin` 与 `sec-fetch-site` 两处都被读成**缺席**——于是重复头落进「当没带」那条路。
+ * 对**攻击者**而言这不构成提权（能把头发重复的客户端也能干脆不发，而缺席本来就放行，
+ * 见文件头分歧 1），但它是一条**降级路**：反向代理在转发时补一枚 Origin、或任何让上游
+ * 头重复的中间层，都会把一条本该被 `sec-fetch-site: cross-site` / `Origin: 恶意域`
+ * 拒掉的请求变成 trusted。基础设施造成的重复不该等价于"客户端没带"。
+ *
+ * 三态各自的后果：`origin` 重复 → `bad-origin`；`sec-fetch-site` 重复 → `cross-site`；
+ * `host` 重复 → `untrusted-host`（这一条旧实现已显式拒，本改动只是把它并入同一套三态）。
+ */
+type HeaderRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "single"; readonly value: string }
+  | { readonly kind: "duplicate" };
+
+function readHeader(req: HttpRequest, name: string): HeaderRead {
   const value = req.headers?.[name];
   if (value === undefined) {
-    return null;
+    return { kind: "absent" };
   }
   if (Array.isArray(value)) {
-    // 单元素数组是 Node 归一后的合法形状（真值就是那枚），多元素即"重复头"= 折叠面，判不得。
+    // 单元素数组是 Node 归一后的合法形状（真值就是那枚）；多元素即"重复头"，与缺席不同档。
     // 写成 join() 而不是 value[0]：后者在 noUncheckedIndexedAccess 下要再加一条进不去的分支。
-    return value.length === 1 ? value.join("") : null;
+    return value.length === 1 ? { kind: "single", value: value.join("") } : { kind: "duplicate" };
   }
-  return value;
+  return { kind: "single", value };
 }
 
 /** Host 头的可接受字形。WHATWG 解析会**静默吃掉** tab/CR/LF 并丢掉 `user@` 前缀，
@@ -173,21 +190,34 @@ function authorityOf(authority: string): URL | null {
   }
 }
 
-/** 回环判定：`localhost` / `[::1]` / 127/8 四段纯数字（逐条对齐官方 loopback-hostname.ts）。 */
+/** 回环判定：`localhost` / `[::1]` / IPv4 映射的 127/8 / 127/8 四段纯数字。
+ *
+ *  映射形那一档是**两侧口径对齐**的必需项：`isLoopbackIPv6`（绑地址那侧）已经把
+ *  `::ffff:127.x.y.z` 认作回环，于是 `isNonLoopbackBindHost("::ffff:127.0.0.1")` 交回
+ *  false、宿主按"只绑回环"起服务；但浏览器访问该地址时 Host 头是 `[::ffff:7f00:1]:port`
+ *  （WHATWG 归一形，见 authorityOf），这一侧旧实现只认 `::1` 与 IPv4 四段，于是**恒判
+ *  非回环 → 整片 403**：绑得了、开得了、就是谁也访问不了。只绑回环的服务面自己撞上它。
+ *  判据与 isLoopbackIPv6 共用 MAPPED_LOOPBACK_PREFIX，两边不会各自漂移。
+ *  （逐条对齐官方 loopback-hostname.ts 的其余四段纯数字判据。） */
 function isLoopbackHostname(hostname: string): boolean {
   const lowered = hostname.toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(lowered)) {
+  if (LOOPBACK_HOSTNAMES.has(lowered) || lowered.startsWith(MAPPED_LOOPBACK_PREFIX)) {
     return true;
   }
   const parts = lowered.split(".");
   return (
     parts.length === 4 &&
-    parts[0] === "127" &&
+    parts[0] === LOOPBACK_V4_OCTET &&
     parts.every((part) => /^\d{1,3}$/u.test(part) && Number(part) <= 255)
   );
 }
 
-/** `os.networkInterfaces()` 的地址面：IPv6 加方括号（与 `URL.hostname` 同形），IPv4 原样。 */
+/** `os.networkInterfaces()` 的地址面：IPv6 加方括号（与 `URL.hostname` 同形），IPv4 原样。
+ *
+ *  刻意**每次现读**而不缓存：这一面只在 `servingNonLoopback === true` 时才被问（只绑回环的
+ *  部署一次都不会走到），而缓存会把它变成进程级不可观测状态——test/trust-ifaces.test.ts
+ *  正是靠「每个用例换一张 os 桩表」钉这条回落支路的，加缓存就得再配一个测试专用重置口，
+ *  那是为一个非缺陷的性能取舍往生产面开缝。收益（省一次 getifaddrs）与代价不成比例。 */
 function interfaceAddresses(): string[] {
   const listed: string[] = [];
   for (const infos of Object.values(os.networkInterfaces())) {
@@ -209,10 +239,14 @@ function isAcceptedAuthority(hostname: string, opts: TrustOptions): boolean {
   return (opts.localInterfaceAddresses ?? interfaceAddresses()).includes(hostname);
 }
 
-/** `sec-fetch-site` 白名单（缺失等于非浏览器面，交 Host/Origin 两条腿判）。 */
+/** `sec-fetch-site` 白名单：缺席 = 非浏览器面（交 Host/Origin 两条腿判，见分歧 1）；
+ *  **重复 = 判不得 = 拒**（与缺席不同档，见 readHeader 的注释）。 */
 function siteIsSameOrigin(req: HttpRequest): boolean {
-  const site = singleHeader(req, "sec-fetch-site");
-  return site === null || SAME_SITE_ALLOW.has(site);
+  const read = readHeader(req, "sec-fetch-site");
+  if (read.kind === "duplicate") {
+    return false;
+  }
+  return read.kind === "absent" || SAME_SITE_ALLOW.has(read.value);
 }
 
 /**
@@ -238,15 +272,14 @@ function peerLoopback(req: HttpRequest): boolean | null {
  * 与 Node 客户端（Node 确实收无 Host 的请求）。
  */
 function authorityOfFrom(req: HttpRequest, opts: TrustOptions): URL | null | "rejected" {
-  const rawHost = req.headers?.host;
-  if (Array.isArray(rawHost) && rawHost.length !== 1) {
+  const read = readHeader(req, "host");
+  if (read.kind === "duplicate") {
     return "rejected";
   }
-  const host = singleHeader(req, "host");
-  if (host === null) {
+  if (read.kind === "absent") {
     return peerLoopback(req) === false ? "rejected" : null;
   }
-  const parsed = authorityOf(host);
+  const parsed = authorityOf(read.value);
   if (parsed === null || !isAcceptedAuthority(parsed.hostname, opts)) {
     return "rejected";
   }
@@ -265,10 +298,15 @@ export function requestTrust(req: HttpRequest, opts: TrustOptions = {}): TrustVe
   if (!siteIsSameOrigin(req)) {
     return "cross-site";
   }
-  const origin = singleHeader(req, "origin");
-  if (origin === null) {
+  const originRead = readHeader(req, "origin");
+  if (originRead.kind === "duplicate") {
+    // 重复 ≠ 缺席：缺席放行（非浏览器面），重复则无从判定是哪一个域在说，保守拒。
+    return BAD_ORIGIN_VERDICT;
+  }
+  if (originRead.kind === "absent") {
     return "trusted";
   }
+  const origin = originRead.value;
   // `null` 是沙箱 iframe / file: 的不透明源；缺 Host（本地面）时无从比对，保守拒。
   if (origin === "null" || hostUrl === null) {
     return BAD_ORIGIN_VERDICT;

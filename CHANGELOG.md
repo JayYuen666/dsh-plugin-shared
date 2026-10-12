@@ -2,6 +2,23 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.5-rc
+
+### Fixed
+
+- **Duplicate `Origin` / `sec-fetch-site` headers are no longer treated as absent** (`lib/trust.ts`). `singleHeader` folded any multi-valued header to `null`, and `null` is read as *absent* on both of those legs — so `sec-fetch-site: same-origin, cross-site` and `Origin: http://evil.test, http://a` both fell through to `trusted`. Reading a tri-state (`absent` / `single` / `duplicate`) fixes the inversion: duplicates now yield `cross-site` and `bad-origin` respectively, and `Host` (which already rejected them explicitly) is folded into the same reader. The previous behaviour was pinned by a test whose stated rationale — *"these two are not the trust source, missing them just falls back to the Host leg"* — holds only from the attacker's side: a client able to duplicate a header could equally omit it, and absent is accepted by design (see the `node:http` local surface). It misses the **infrastructure** side, where a reverse proxy appending an `Origin`, or any upstream that duplicates a header, *downgrades* a request that `sec-fetch-site: cross-site` should have rejected. Header duplication is undecidable, so it is now rejected.
+- **IPv4-mapped loopback is loopback on the `Host` leg too** (`lib/trust.ts`). `isLoopbackIPv6` has always classified `::ffff:127.0.0.1` as loopback, so `isNonLoopbackBindHost` reports `false` and the host serves loopback-only — but `isLoopbackHostname` accepted only `::1` and four decimal octets. A browser reaching that address sends `Host: [::ffff:7f00:1]:port` (WHATWG's canonical form), which the old code read as non-loopback: the server **binds, starts, and then 403s every request**. Fail-closed lockout rather than exposure, but a self-inflicted one. Both legs now share `MAPPED_LOOPBACK_PREFIX`, so they cannot drift again. Mapped forms of *non*-loopback addresses (`::ffff:8.8.8.8`) are still rejected.
+
+### Changed
+
+- `resolveLocalePreference` (`lib/locale.ts`) reads `preference` through `Object.hasOwn` instead of a bare index. This is deliberately **opposite** to `fieldOf` in `lib/record.ts`, where the prototype-chain read is load-bearing (cordis service methods are prototype members): this function reads a settings **value**, has no capability-probing use, and with the prototype read a single `Object.prototype.preference = "en"` flipped the UI language of every consuming plugin.
+
+### Not changed, deliberately
+
+- **`os.networkInterfaces()` is still read per request.** Caching it would make the address face unobservable at process scope, and `test/trust-ifaces.test.ts` pins that fallback precisely by swapping a stub table per test. Caching buys one `getifaddrs` on a path that only runs when `servingNonLoopback` is true, and costs a test-only reset hook in production code.
+- **A cross-site `GET` with neither `Sec-Fetch-Site` nor `Origin` is still admitted** (browsers below Safari 16.4 / Firefox 90 / Chrome 76). Requiring `Origin` would break every same-origin browser request, since those do not send it. The exposure is bounded: `sendJson` sets no `Access-Control-Allow-Origin`, so SOP blocks the response from being read, and the affected routes are side-effect-free.
+- **HTTP/2 is still unguarded.** `:authority` carries no `host` header, so on an `http2` server the `Host` leg is skipped. Unreachable — the host webserver is `node:http` — and there is no Node API to read `:authority` as a `Host` equivalent.
+
 ## 0.1.4
 
 ### Changed

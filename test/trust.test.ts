@@ -305,7 +305,12 @@ describe("requestTrust：sec-fetch-site 与 Origin", () => {
     );
   });
 
-  it("重复的 sec-fetch-site / Origin 头同样落进「取值面被折叠」那条判据", () => {
+  it("重复的 sec-fetch-site / Origin 头一律拒（重复 ≠ 缺席）", () => {
+    // 这条用例原先断言 trusted，理由是「这两条头不是信任来源，缺了只会退回 Host 腿」。
+    // 那条理由只覆盖了**攻击者**视角：能把头发重复的客户端也能干脆不发，而缺席本来就放行，
+    // 所以重复并不构成提权。但它漏了**基础设施**视角——反向代理补一枚 Origin、或任何让
+    // 上游头重复的中间层，都会把一条本该被 `sec-fetch-site: cross-site` /
+    // `Origin: 恶意域` 拒掉的请求降级成 trusted。重复是判不得，判不得就要拒。
     assert.equal(
       requestTrust(
         fakeReq({
@@ -315,8 +320,8 @@ describe("requestTrust：sec-fetch-site 与 Origin", () => {
           },
         }),
       ),
-      "trusted",
-      "数组长度非 1 时按缺失处理：这两条头不是信任**来源**，缺了只会退回 Host 腿",
+      "cross-site",
+      "sec-fetch-site 重复 → 判不得 → 拒（不是退回 Host 腿）",
     );
     assert.equal(
       requestTrust(
@@ -324,8 +329,33 @@ describe("requestTrust：sec-fetch-site 与 Origin", () => {
           headers: { host: LOCALHOST_AUTHORITY, origin: ["http://evil.test", "http://a"] },
         }),
       ),
+      "bad-origin",
+      "Origin 重复 → 判不得 → 拒",
+    );
+    assert.equal(
+      requestTrust(
+        fakeReq({
+          headers: { host: [LOCALHOST_AUTHORITY, "evil.test"], "sec-fetch-site": "same-origin" },
+        }),
+      ),
+      "untrusted-host",
+      "Host 重复仍照旧拒（这一档旧实现已显式拒，本次只是并入同一套三态）",
+    );
+  });
+
+  it("单元素数组仍是合法形状（Node 归一后的那枚）", () => {
+    // 三态改动不得误伤「Node 把重复头并成单串」这条常见路径：数组长度 1 给出的就是那枚。
+    assert.equal(
+      requestTrust(
+        fakeReq({
+          headers: {
+            host: [LOCALHOST_AUTHORITY],
+            "sec-fetch-site": [FETCH_SITE_SAME_ORIGIN],
+            origin: [`http://${LOCALHOST_AUTHORITY}`],
+          },
+        }),
+      ),
       "trusted",
-      "同上：Origin 折叠掉等于不带，Host 腿仍在拒可疑权威",
     );
   });
 });
@@ -547,6 +577,31 @@ describe("isNonLoopbackBindHost：绑定字面量 → servingNonLoopback", () =>
     for (const host of LOOPBACK_BIND_LITERALS) {
       assert.equal(isNonLoopbackBindHost(host), false, `${host} 是回环，不该算非回环服务面`);
     }
+  });
+
+  it("绑到 IPv4 映射回环时 Host 权威那条腿也认它（两侧口径对齐，否则整片 403）", () => {
+    // 这条锁的是一次**自相矛盾**的修复：isNonLoopbackBindHost 早已把 `::ffff:127.0.0.1`
+    // 判成回环（⇒ servingNonLoopback=false、宿主按只绑回环起服务），而 Host 腿旧实现只认
+    // `::1` 与 IPv4 四段，于是浏览器带着 `[::ffff:7f00:1]:port` 的 Host 头访问自己刚起的
+    // 服务会被判成非回环 —— 绑得了、开得了、谁也访问不了（fail-closed 锁死，不是提权）。
+    for (const host of ["[::ffff:127.0.0.1]:8787", "[::ffff:7f00:1]:8787"]) {
+      assert.equal(
+        requestTrust(fakeReq({ headers: { host } })),
+        verdictForHost(host),
+        `${host} 是映射形回环，与 isNonLoopbackBindHost 的判定必须一致`,
+      );
+      assert.equal(
+        verdictForHost(host),
+        verdictForHost(LOCALHOST_AUTHORITY),
+        "映射形回环与字面 localhost 必须给出同一结论",
+      );
+    }
+    // 映射形里**非**回环的那一枚仍要拒（否则就成了「凡带 ::ffff: 就放行」的漏洞）。
+    assert.equal(
+      requestTrust(fakeReq({ headers: { host: "[::ffff:8.8.8.8]:8787" } })),
+      VERDICT_UNTRUSTED_HOST,
+      "映射到公网地址的形态不是回环",
+    );
   });
 
   it("网卡地址与通配地址都算非回环服务面", () => {

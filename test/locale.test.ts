@@ -108,6 +108,23 @@ describe("resolveLocalePreference", () => {
     assert.equal(resolveLocalePreference("en"), DEFAULT_LOCALE);
   });
 
+  it("只认自有键：原型上的 preference 不得改掉界面语言", () => {
+    // 本函数读的是 settings 的**用户配置值**，不是 cordis 服务对象——后者才需要沿原型链
+    // 探测方法（lib/record.ts 的 fieldOf，那边的原型链读取是承重的）。这里带上原型读取时，
+    // 一枚原型污染（`Object.prototype.preference = "en"`）就能把所有插件的界面语言翻成英文。
+    const polluted = Object.create({ preference: "en" }) as Record<string, unknown>;
+    assert.equal(
+      resolveLocalePreference(polluted),
+      DEFAULT_LOCALE,
+      "原型上的 preference 不是配置值，必须当缺席处理",
+    );
+    // 自有键优先于原型键：加 hasOwn 不能反过来把合法的自有配置挡掉。
+    const own = Object.assign(Object.create({ preference: "zh" }) as object, {
+      preference: "en",
+    });
+    assert.equal(resolveLocalePreference(own), "en", "自有键照常生效");
+  });
+
   // 断言对象是**官方导出的常量本身**，不是本包抄下来的字面量。写成后者时，用例名说的是
   // "与官方一致"，实际断言的却是本包自己——官方改名它照样绿，等于把要守的耦合排除在门外。
   it("命名空间与字段名与 dsh-client-locale 的常量一致", () => {

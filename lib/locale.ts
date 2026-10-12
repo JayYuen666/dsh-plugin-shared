@@ -78,7 +78,14 @@ export function resolveLocale(raw: unknown): Locale {
  * @returns 归一后的 locale。
  */
 export function resolveLocalePreference(described: unknown): Locale {
-  const raw = isRecord(described) ? described[LOCALE_PREFERENCE_FIELD] : undefined;
+  // ⚠ 这里**刻意**用 Object.hasOwn 而不是直接下标（与 lib/record.ts 的 fieldOf 相反——
+  // 那边的原型链读取是承重的，cordis 服务方法挂在原型上）：本函数读的是 settings 的**用户
+  // 配置值**，不是宿主服务对象，没有"从原型上探测能力"这种用法。带上原型读取时，
+  // `Object.prototype.preference = "en"` 就能改掉全插件的界面语言（实测可复现）。
+  const raw =
+    isRecord(described) && Object.hasOwn(described, LOCALE_PREFERENCE_FIELD)
+      ? described[LOCALE_PREFERENCE_FIELD]
+      : undefined;
   return resolveLocale(raw);
 }
 
