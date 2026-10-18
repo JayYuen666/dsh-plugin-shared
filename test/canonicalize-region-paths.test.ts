@@ -156,7 +156,7 @@ describe("包根字符串的边界形状", () => {
   });
 
   it("pkgDir 只剩分隔符 ⇒ 无从取名，整串原样交回", () => {
-    const code = artifactOf(["session-rescue/lib/http.ts"]);
+    const code = artifactOf(["some-consumer/lib/card-store.ts"]);
     assert.equal(canonicalizeRegionPaths(code, "/"), code);
     assert.equal(canonicalizeRegionPaths(code, "\\"), code);
   });

@@ -1,6 +1,6 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
   "keywords": [
     "cordis",

@@ -53,8 +53,8 @@ The subpath column is the in-package specifier; value imports must prefix it wit
 | Subpath | Provides |
 | --- | --- |
 | `.` | Barrel over the runtime facets listed below. `canonicalize-region-paths` deliberately stays out, so no runtime consumer pays an import for it |
-| `./lib/tool-events` | `scanToolEvents` → the `calls`/`results` tables, `toolEventRowsOf` (its single-event step, same code), `parseToolArguments`, `toolArgumentsBad` (the pair a self-folding consumer needs, so it never re-reads the arguments fields), `editPathOf` and `EditTarget` (discriminated on `kind`, only `write` / `read-view`; `path` is `undefined` when no path could be read); every field of the three ledger interfaces is `readonly`; re-exports the official `SessionEvent` and the two PTC event types |
-| `./lib/card-apply` | `claimApply` + `CardApplyCtx`: apply idempotency guard (`globalThis` flag plus `ctx.effect` cleanup) |
+| `./lib/tool-events` | `scanToolEvents` → the `calls`/`results` tables, `toolEventRowsOf` (its single-event step, same code; the records it hands back already carry normalized `arguments` and `badArguments`), `editPathOf` and `EditTarget` (discriminated on `kind`, only `write` / `read-view`; `path` is `undefined` when no path could be read); every field of the three ledger interfaces is `readonly`; re-exports the official `SessionEvent` and the two PTC event types |
+| `./lib/card-apply` | `claimApply` + `CardApplyCtx`: apply idempotency guard (an **own** boolean flag on `globalThis` plus `ctx.effect` cleanup) |
 | `./lib/card-diff` | `diffTouched`: which touched fields really differ from the snapshot (value comparison, so `undefined`, `null` and an absent key are one and the same value) |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`: cwd → `last-segment-<first 8 hex of sha256(norm)>`, fallback bucket `default` |
 | `./lib/locale` | `Locale` (an alias of the official `BuiltInLocaleId`), `DEFAULT_LOCALE`, `resolveLocale`, `resolveLocalePreference`, `messagesFor`, `MessagesCatalog`, plus `LOCALE_SETTINGS_NAMESPACE` / `LOCALE_PREFERENCE_FIELD` |

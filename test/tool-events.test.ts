@@ -7,12 +7,7 @@
 // 缺 subCallId、retired 的 content[0].isError……）显式走 badEvent()——那是用例明说的意图。
 
 import { describe, expect, it } from "vitest";
-import {
-  scanToolEvents,
-  parseToolArguments,
-  editPathOf,
-  toolEventRowsOf,
-} from "../lib/tool-events.ts";
+import { scanToolEvents, editPathOf, toolEventRowsOf } from "../lib/tool-events.ts";
 import type { SessionEvent, ToolCallRecord } from "../lib/tool-events.ts";
 import {
   badEvent,
@@ -37,19 +32,29 @@ function isErrorOf(event: SessionEvent): boolean | undefined {
   return toolEventRowsOf(event, 0).result?.isError;
 }
 
-describe("parseToolArguments", () => {
-  it("string JSON 解析；非法字符串回空对象", () => {
-    expect(parseToolArguments('{"a":1}')).toStrictEqual({ a: 1 });
-    expect(parseToolArguments("{bad")).toStrictEqual({});
-    expect(parseToolArguments("42")).toStrictEqual({});
+/** 经公开折叠面读一次 arguments 归一结果（`badArguments` 只标记"字符串 JSON 语法非法"）。 */
+function argsOf(
+  raw: unknown,
+): { arguments: Record<string, unknown>; badArguments: boolean } | undefined {
+  const row = toolEventRowsOf(ptcCall("sub-args", "edit", raw), 0).call;
+  return row === undefined
+    ? undefined
+    : { arguments: row.arguments, badArguments: row.badArguments };
+}
+
+describe("arguments 归一（经 toolEventRowsOf 这条公开面）", () => {
+  it("string JSON 解析；非法字符串回空对象并标记为坏参", () => {
+    expect(argsOf('{"a":1}')).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
+    expect(argsOf("{bad")).toStrictEqual({ arguments: {}, badArguments: true });
+    expect(argsOf("42")).toStrictEqual({ arguments: {}, badArguments: false });
   });
 
-  it("对象直用；null/undefined/数组/数字回空对象", () => {
-    expect(parseToolArguments({ a: 1 })).toStrictEqual({ a: 1 });
-    expect(parseToolArguments(null)).toStrictEqual({});
-    expect(parseToolArguments(undefined)).toStrictEqual({});
-    expect(parseToolArguments([1, 2])).toStrictEqual({});
-    expect(parseToolArguments(7)).toStrictEqual({});
+  it("对象直用；null/undefined/数组/数字回空对象但不标坏参", () => {
+    expect(argsOf({ a: 1 })).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
+    expect(argsOf(null)).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(argsOf(undefined)).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(argsOf([1, 2])).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(argsOf(7)).toStrictEqual({ arguments: {}, badArguments: false });
   });
 });
 

@@ -2,6 +2,12 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.6
+
+### Removed
+
+- **`parseToolArguments` / `toolArgumentsBad` are no longer exported.** The functions stay module-private behind `toolEventRowsOf`, whose records already carry normalized `arguments` and `badArguments`. Measured: grepping every `.ts`/`.tsx`/`.mjs` across all nine repositories returns no consumer outside this package's own source and tests. Semver disclosure as in 0.1.5: deleting an export is breaking, and under `0.x` a `^0.1.0` range admits this patch, so an outside consumer that imported either symbol must pin the previous version.
+
 ## 0.1.5
 
 ### Removed

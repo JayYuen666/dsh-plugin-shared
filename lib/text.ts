@@ -4,12 +4,15 @@
 // 高代理在 UTF-8 编码时变 U+FFFD，或使后续 Messages 请求整体失败（上游同一缺陷即
 // 触发本模块的收口）。凡是"切完还会进会话日志"的自制切点一律收口到这里。
 //
-// 消费方清单（按本模块找调用点请以这份为准；改调用点要同步这里）：
+// 消费方清单（谁在切、为什么这一刀要收口；调用点变了要同步这里，现量口径是
+// `grep -rn "shared/lib/text"`）：
 //   - ocr-review/host.ts —— `failureDetail` 的头尾两切、`runCollect` 的 output 一切、
 //     `echoRaw` 一切；
 //   - zvec-grep/host.ts —— `failureDetail` 的头尾两切、`successNotes` 的 stderr 尾切
-//     （成功结果也入日志），以及 rebuild-status 投影的尾窗一切（后来也从这里切：
-//     官方环按 UTF-8 字节裁，那一刀用裸 slice 会在切点留下孤立低代理项，故不留第三份实现）。
+//     （成功结果也入日志）；
+//   - zvec-grep/lib/rebuild-remote.ts —— 作业状态投影的尾窗（这一刀不住 host.ts：官方环按
+//     UTF-8 字节裁，用裸 slice 会在切点留下孤立低代理，所以照样收口到这里）；
+//   - scrapling/lib/output.ts —— `tailOf`（整页压成一行预览的尾切）。
 // 只剩一类切点不在其列：**永不显示给用户也永不入日志**的中间量。
 //
 // 为什么只剩一半：官方等价物 truncateWithoutSplittingSurrogatePair 实测在宿主实装的

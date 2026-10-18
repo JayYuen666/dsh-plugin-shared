@@ -88,6 +88,24 @@ describe("claimApply", () => {
     expect(claimApply(fresh(), "__cardA", CLAIM_LABEL)).toBe(false);
   });
 
+  it("原型污染不算占位：原型链上同名 true 不得让卡片静默不挂载", () => {
+    const flag = "__pollutedPrototypeClaim";
+    // 形状必须造在**继承面**上：首次 claim 之前 globalThis 上根本没有这枚自有键。
+    // 不动 Object.prototype 本身（no-extend-native 拦的就是它，而且污染会留给同进程其余用例）：
+    // 把 globalThis 的原型换成一枚 `Object.create(Object.prototype)` 的中间层，
+    // 其余继承关系原样保留，finally 里换回去。
+    const inherited = Object.create(Object.prototype) as Record<string, unknown>;
+    inherited[flag] = true;
+    Object.setPrototypeOf(globalThis, inherited);
+    try {
+      expect(claimApply(fresh(), flag, CLAIM_LABEL)).toBe(true);
+      // 占位落在自有键上，所以第二次 apply 才由这条判据挡住（守卫照常工作，不受原型影响）。
+      expect(claimApply(fresh(), flag, CLAIM_LABEL)).toBe(false);
+    } finally {
+      Object.setPrototypeOf(globalThis, Object.prototype);
+    }
+  });
+
   it("卸载清理把标记复位成 undefined 而不是删键（删动态键与本仓 lint 基线互斥）", () => {
     const spy = spyCtx();
     expect(claimApply(ctxWith(spy), "__cardC", CLAIM_LABEL)).toBe(true);

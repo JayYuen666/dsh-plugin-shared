@@ -123,10 +123,10 @@ function usableName(value: unknown): string | undefined {
 
 /** 解析 tool/call 的 arguments：string JSON 文本或已解析对象；非法/缺失 → 空对象。
  *
- *  **这一对原语是公开面，不是残留。** 自建折叠单元的消费方（`toolEventRowsOf` 的使用者）
- *  必须自己再读一遍 arguments 字段；若它们只能走 `callRecordOf` 的成片结果，就无法在
- *  "自己那一层"复现同一套判据——而本模块存在的理由正是让字段读取只有一份。 */
-export function parseToolArguments(raw: unknown): Record<string, unknown> {
+ *  模块私有：两种事件形状的记账都经 `callRecordOf` 走这一对，外部消费方拿到的
+ *  `toolEventRowsOf` 记录里已经带好 `arguments` / `badArguments`，不需要也不应该
+ *  自己再解析一遍（公开面只剩折叠结果这一条）。 */
+function parseToolArguments(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
     try {
       const parsed: unknown = JSON.parse(raw);
@@ -144,7 +144,7 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> {
  * 抛错判"不记账"，但对"解析成功却非对象"仍记账（路径留空）。本标记必须精确复用那一个
  * 语义点，不能把"非对象"也划进坏参：多划一刀就等于替消费方改了门禁的松紧。
  */
-export function toolArgumentsBad(raw: unknown): boolean {
+function toolArgumentsBad(raw: unknown): boolean {
   if (typeof raw === "string") {
     try {
       JSON.parse(raw);

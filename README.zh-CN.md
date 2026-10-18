@@ -53,8 +53,8 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 | 子路径 | 提供什么 |
 | --- | --- |
 | `.` | 下面列出的运行期切面的 barrel。`canonicalize-region-paths` 刻意不进，运行期消费方不必为它付一次导入 |
-| `./lib/tool-events` | `scanToolEvents` → `calls`/`results` 两张表、`toolEventRowsOf`（它的单事件那一步，同一份实现）、`parseToolArguments` 与 `toolArgumentsBad`（自建折叠单元的消费方靠这一对，不必自己再读一遍 arguments 字段）、`editPathOf` 与 `EditTarget`（按 `kind` 判别，`write`/`read-view` 两支；路径取不到时 `path` 为 `undefined`）；台账三个接口字段一律 `readonly`；并转出官方 `SessionEvent` 与两枚 PTC 事件类型 |
-| `./lib/card-apply` | `claimApply` + `CardApplyCtx`：apply 幂等守卫（`globalThis` 标记 + `ctx.effect` 卸载清理） |
+| `./lib/tool-events` | `scanToolEvents` → `calls`/`results` 两张表、`toolEventRowsOf`（它的单事件那一步，同一份实现；交回的记录已带归一后的 `arguments` 与 `badArguments`）、`editPathOf` 与 `EditTarget`（按 `kind` 判别，`write`/`read-view` 两支；路径取不到时 `path` 为 `undefined`）；台账三个接口字段一律 `readonly`；并转出官方 `SessionEvent` 与两枚 PTC 事件类型 |
+| `./lib/card-apply` | `claimApply` + `CardApplyCtx`：apply 幂等守卫（`globalThis` 上的**自有**布尔标记 + `ctx.effect` 卸载清理） |
 | `./lib/card-diff` | `diffTouched`：草稿层里哪些字段真的与快照不同（按值比较，所以 `undefined`、`null` 与键缺失是同一种值） |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`：cwd → `尾目录名-<sha256(norm) 前 8 位 hex>`，兜底桶 `default` |
 | `./lib/locale` | `Locale`（官方 `BuiltInLocaleId` 的别名）、`DEFAULT_LOCALE`、`resolveLocale`、`resolveLocalePreference`、`messagesFor`、`MessagesCatalog`，加 `LOCALE_SETTINGS_NAMESPACE` 与 `LOCALE_PREFERENCE_FIELD` |

@@ -50,7 +50,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   // 实测挂在生产文件上的错用形态：danger-guard/host.ts 的模块级 `let strArrayWarned = false`
   // 被 require-hook 判成「setup 没进 hook」（3 条）、注释里出现官方设置 API 名 `describe()`
   // 被 no-commented-out-tests 判成「注释掉了用例」（3 条）、
-  // dir-prep-organize/src/client-entry.ts:437 同类 1 条。
+  // dir-prep-organize 的 client-entry.ts 同类 1 条。
   "vitest/*": { kind: "文体作用域", measured: 7, note: "用例结构类判据在非用例文件上无从计算" },
   "vitest/no-hooks": {
     kind: "上游不推荐",
@@ -122,7 +122,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "import/no-default-export": {
     kind: "契约冲突",
     measured: 38,
-    note: "官方 cordis 入口就是 default export（vendor/loader/src/index.ts:201 先 unwrap default），12 条正是 12 个 bundle 入口",
+    note: "官方 cordis 入口就是 default export（vendor/loader/src/index.ts 的 unwrapExports 先 unwrap default），12 条正是 12 个 bundle 入口",
   },
   "import/no-named-export": {
     kind: "契约冲突",
@@ -147,7 +147,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "import/no-anonymous-default-export": {
     kind: "契约冲突",
     measured: 12,
-    note: "官方 cordis 入口是匿名对象 default export（registry.ts:92 读 name/Config/apply），具名化等于改官方形态",
+    note: "官方 cordis 入口是匿名对象 default export（registry.ts 的 RegistryService.plugin() 读 name/Config，isApplicable() 判 apply），具名化等于改官方形态",
   },
   "eslint/no-duplicate-imports": {
     kind: "实测否证",
@@ -735,13 +735,15 @@ export const BASE_RULES: RuleTable = {
   "import/no-nodejs-modules": "off",
   "import/no-relative-parent-imports": "off",
   "import/max-dependencies": "off",
-  // 官方 cordis 入口形态就是 default export：`vendor/cordis/src/registry.ts:92` 读
-  // name/Config/apply，`vendor/loader/src/index.ts:201` 先 unwrap `default`。
+  // 官方 cordis 入口形态就是 default export：`vendor/cordis/src/registry.ts` 的
+  // `RegistryService.plugin()` 登记 runtime 时直接读 name/Config/apply，
+  // `vendor/loader/src/index.ts` 的 `unwrapExports` 先 unwrap `default`。
   // 禁止默认导出等于禁止 12 个 bundle 的入口写法，属契约冲突而非噪声。
   "import/no-default-export": "off",
   // 实测 12 条 = 12 个 bundle 入口（独立 -c 探针逐包复测，含测试文件同为 12）：
   // 官方入口形态就是 `export default { name, Config, apply }`
-  // （vendor/cordis/src/registry.ts:92 直接读这三个字段），要求先具名再导出等于改官方形态。
+  // （vendor/cordis/src/registry.ts 的 `RegistryService.plugin()` 直接读这三个字段），
+  // 要求先具名再导出等于改官方形态。
   "import/no-anonymous-default-export": "off",
   // 具名导出的默认对象上做成员访问是本仓对 cordis 官方声明的常态用法。
   "import/no-named-as-default-member": "off",
