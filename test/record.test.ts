@@ -1,11 +1,14 @@
 // lib/record 单元测试：unknown → Record 的窄化判据与单字段投影。
-// 为什么单独测：这两个判据是 SP-D 从 9 个包、27 个文件里回删出来的**唯一真源**（isRecord 实测 37 处、
-// fieldOf 13 处逐字同构），一旦这里的短路顺序被改动，波及面是全仓的 unknown 投影链，
+// 为什么单独测：这两个判据是从各包逐字同构的重复定义里收敛出来的**唯一真源**，
+// 一旦这里的短路顺序被改动，波及面是全仓的 unknown 投影链，
 // 而各包自己的测试只会间接经过它——四阈值 100 要求三个拒绝子句各被判过一次假。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
-import { fieldOf, isRecord } from "../lib/record.ts";
+import { fieldOf, hasMethods, isRecord } from "../lib/record.ts";
+
+/** 可调用样本：不用 `() => undefined`，基线的 unicorn(no-useless-undefined) 判红那个字面量。 */
+const callable = (): string => "ok";
 
 describe("isRecord（unknown → Record 的窄化判据）", () => {
   it("普通对象为真，且能把 unknown 收成 Record<string, unknown>", () => {
@@ -41,14 +44,14 @@ describe("fieldOf（从 unknown 投影单个字段）", () => {
     // 消费方的能力探测读的是**原型上的方法**，不是自有键。具体调用点（本文件不会被发布，
     // 所以包名可以写在这儿；lib/record.ts 的声明 JSDoc 里不能写，会随 .d.ts 发出去）：
     //   typeof fieldOf(settings, "describe") === "function"
-    //     quality-gate/host.ts:1267-1268、lesson-loop/host.ts:266
+    //     quality-gate/host.ts、lesson-loop/host.ts
     //   hasMethods(fieldOf(value, "timer"), ["timeout"])
     //   hasMethods(fieldOf(value, "settings"), ["describe", "mutate"])
-    //     session-rescue/host.ts:502-504
+    //     session-rescue/host.ts
     //   typeof fieldOf(session, "snapshotEvents") === "function"
-    //     session-rescue/host.ts:565
-    // cordis 服务对象的方法都在原型上。把它改成 Object.hasOwn，那四处会一律判否，
-    // 三个包随即认不出合法的 cordis 服务——而误判的表现是「静默返回 false」，不是报错。
+    //     session-rescue/host.ts
+    // cordis 服务对象的方法都在原型上。把它改成 Object.hasOwn，上面每一处都会判否，
+    // 各消费包随即认不出合法的 cordis 服务——而误判的表现是「静默返回 false」，不是报错。
     // 用显式原型而不是 class：cordis 服务对象本来就是「方法挂在原型上的普通对象」，
     // 这比 class 实例更贴近真实形状，也免掉 class 成员那两条 lint。
     const proto = { describe: (): string => "ok" };
@@ -76,5 +79,25 @@ describe("fieldOf（从 unknown 投影单个字段）", () => {
     const foreignArray: unknown = runInNewContext("[1, 2]");
     assert.equal(isRecord(foreignArray), false, "Array.isArray 跨 realm 成立，instanceof 不成立");
     assert.equal(fieldOf(foreignArray, "0"), undefined);
+  });
+});
+
+describe("hasMethods（服务面校验）", () => {
+  it("非 Record 的五种形状全部拒绝", () => {
+    for (const value of [null, undefined, 1, "x", []]) {
+      assert.equal(hasMethods(value, ["kill"]), false, `不该认 ${String(value)}`);
+    }
+  });
+
+  it("清单里有一个成员不可调用就整体拒绝", () => {
+    assert.equal(hasMethods({ kill: callable, read: "x" }, ["kill", "read"]), false);
+  });
+
+  it("全部可调用才算服务面", () => {
+    assert.equal(hasMethods({ kill: callable, read: callable }, ["kill", "read"]), true);
+  });
+
+  it("空清单只验「是个对象」——调用方据此把「没有方法要验」与「服务不在」分开", () => {
+    assert.equal(hasMethods({}, []), true);
   });
 });

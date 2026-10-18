@@ -8,14 +8,14 @@
 // 用例要看日志内容时用 logged()/loggedText() 取，断言写在用例里。
 //
 // 本包与兄弟包（danger-guard / quality-gate / lesson-loop / session-rescue /
-// dir-prep-organize）共用这一份形状；prefix 少了收尾的 `]`——本包有两枚标签
-// （`[shared/trust]` 与 `[shared/lesson-bus]`），写成 `[shared]` 一枚都匹配不上。
+// dir-prep-organize）共用这一份形状；prefix 少了收尾的 `]`——本包的标签带模块后缀
+// （`[shared/lesson-bus]`），写成 `[shared]` 会连自己那一枚都匹配不上。
 import { afterEach, beforeEach } from "vitest";
 import assert from "node:assert/strict";
 
 import { LOG_TEMPLATES } from "./log-templates.ts";
 
-/** 本包标签前缀，如 `[shared/trust]`。 */
+/** 本包标签前缀，如 `[shared/lesson-bus]`。 */
 const PKG_PREFIX = "[shared";
 
 /** 插件会用到的四个 console 级别（联合类型取属性，避免以字符串索引 Console）。 */

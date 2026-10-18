@@ -1,14 +1,12 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.1.5-rc",
-  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + webServer HTTP 样板（sendJson/CORS/CSRF/body 限制）+ 卡片 apply 骨架 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
+  "version": "0.1.5",
+  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
   "keywords": [
     "cordis",
-    "csrf",
     "dsh",
     "plugin",
-    "tool-events",
-    "webserver"
+    "tool-events"
   ],
   "homepage": "https://github.com/JayYuen666/dsh-plugin-shared#readme",
   "bugs": {
@@ -35,10 +33,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./lib/http": {
-      "types": "./dist/types/http.d.ts",
-      "default": "./dist/http.js"
-    },
     "./lib/tool-events": {
       "types": "./dist/types/tool-events.d.ts",
       "default": "./dist/tool-events.js"
@@ -46,6 +40,10 @@
     "./lib/card-apply": {
       "types": "./dist/types/card-apply.d.ts",
       "default": "./dist/card-apply.js"
+    },
+    "./lib/card-diff": {
+      "types": "./dist/types/card-diff.d.ts",
+      "default": "./dist/card-diff.js"
     },
     "./lib/project-key": {
       "types": "./dist/types/project-key.d.ts",
@@ -74,10 +72,6 @@
     "./lib/jsonl": {
       "types": "./dist/types/jsonl.d.ts",
       "default": "./dist/jsonl.js"
-    },
-    "./lib/trust": {
-      "types": "./dist/types/trust.d.ts",
-      "default": "./dist/trust.js"
     },
     "./lib/job-outcome": {
       "types": "./dist/types/job-outcome.d.ts",
@@ -115,17 +109,16 @@
     "prepare": "npm run --loglevel=warn build"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5-alpha.1",
-    "@deepseek-ai/dsh-brand": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-jobs": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-scope": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-session": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-shell": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-brand": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
@@ -138,14 +131,14 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.5-alpha.1",
-    "@deepseek-ai/dsh": "^0.2.1-alpha.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-jobs": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-session": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-shell": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-alpha.2"
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -160,6 +153,9 @@
     "@deepseek-ai/dsh-jobs": {
       "optional": true
     },
+    "@deepseek-ai/dsh-output-retention": {
+      "optional": false
+    },
     "@deepseek-ai/dsh-session": {
       "optional": true
     },
@@ -172,7 +168,7 @@
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": ">=0.2.1-alpha.2",
-    "node": "^22.19.0 || >=24.0.0"
+    "dsh": "^0.2.1-rc.2",
+    "node": ">=22.12.0"
   }
 }

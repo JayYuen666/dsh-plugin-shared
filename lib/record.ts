@@ -1,13 +1,34 @@
 // lib/record.ts —— unknown → Record 的窄化判据与单字段投影。
 //
-// 为什么值得单点定义：本仓实测 `isRecord` 37 处定义（31 处逐字同形、6 处只是
-// `&&` 操作数换序——三个子句都是无副作用的类型/相等判定，`&&` 可交换故同余）、`fieldOf`
-// 13 处全部逐字同形，满足 README「同一份样板在两处以上逐字同构地重复才收敛进来」的判据。
+// 为什么值得单点定义：`isRecord` 与 `fieldOf` 在各包里原本是逐字同构的重复定义
+// （`&&` 操作数换序的那几处与它们同余——三个子句都是无副作用的类型/相等判定），
+// 满足 README「同一份样板在两处以上逐字同构地重复才收敛进来」的判据。
 // 领域判定（例：某包「缺字段即视为该卡不存在」）不在本文件，留在各插件。
 
 /** 对象类型守卫：非 `null` 的 `object` 且非数组（`Record` 索引签名投影的基础）。 */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 服务面校验：对象存在且**声明的每个方法**都可调用。
+ *
+ * 只做 `typeof value["shell"] === "object"` 的话，守卫声称的是「有这个服务」而实际证明的只是
+ * 「有个对象」——运行到一半才炸。逐个点名方法，守卫才名副其实。
+ * @param value 待验证的服务候选（来自 `ctx.get(...)` 的 unknown）
+ * @param methods 该服务面必须可调用的方法名
+ * @returns 是否为可用的服务面
+ */
+export function hasMethods(value: unknown, methods: readonly string[]): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  for (const method of methods) {
+    if (typeof value[method] !== "function") {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -17,7 +38,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * 方法照样取得到。消费方正靠这一条做**能力探测**——cordis 服务对象的方法挂在原型上、不是
  * 自有键，形如 `typeof fieldOf(settings, "describe") === "function"`、
  * `hasMethods(fieldOf(value, "timer"), ["timeout"])`、`typeof fieldOf(session,
- * "snapshotEvents") === "function"`（三处消费包的调用点与行号记在 test/record.test.ts）。
+ * "snapshotEvents") === "function"`（消费包的调用点记在 test/record.test.ts）。
  * 改成 `Object.hasOwn` 会让上面几处**一律判否**，那些包随即认不出合法的 cordis 服务——
  * 而这类误判的表现是「能力探测静默返回 false」，不是报错，极难往这里归因。
  *

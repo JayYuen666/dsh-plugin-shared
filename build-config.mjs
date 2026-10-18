@@ -4,7 +4,7 @@
 // 为什么需要这一步：消费包的 `oxlint.config.ts` / `vitest.config.ts` 按子路径
 // `@jayyuen66/dsh-plugin-shared/config/...` 取用它们，而发布件躺在 node_modules 里 ——
 // Node 对 node_modules 下的 .ts 直接抛 ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING（实测：
-// 消费包 `pnpm lint` 就断在这）。lib 那 13 个切面早有 dist 产物，配置面是唯一漏掉的一块。
+// 消费包 `pnpm lint` 就断在这）。lib 那批切面早有 dist 产物，配置面是唯一漏掉的一块。
 // 说明符保持不变（./config/oxlint、./config/vitest.base），只把发布态的指向从 .ts 换成 dist 产物，
 // 与 lib 切面「开发态 .ts / 发布态 dist .js」同一套形态。
 // external 判据与 build-host.mjs 同源（dependencies + peerDependencies 的包名段一律外部化），
@@ -51,7 +51,7 @@ export async function buildConfig() {
     entryFileNames: "[name].js",
     chunkFileNames: "[name]-[hash].js",
     // 同样压缩：配置面是消费方构建期才加载的，但它整个 dist/ 都在 files 白名单里，
-    // 是本包最大的单个产物（oxlint.base 未压缩 36,139 B）。压掉的是规则表的注释与缩进，
+    // 是本包最大的单个产物（oxlint.base 未压缩时远大于其余各件）。压掉的是规则表的注释与缩进，
     // 对 oxlint 读取规则毫无影响——它读的是结构，不是排版。
     minify: true,
   });

@@ -6,7 +6,7 @@
 // node_modules 里被 dsh 载入的——官方包入口也一律是编译产物（packages/bundle/base
 // 的 main 就是 lib/index.js）。本仓源码住在 lib/ 下，故产物落 dist/，不与源码混目录。
 // 类型产物：各切面由 tsc -p tsconfig.build.json 出 dist/types/*.d.ts；barrel 的
-// d.ts 在此生成——源码里 `export * from "./http.ts"` 是类型剥离形态所需，原样进
+// d.ts 在此生成——源码里 `export * from "./record.ts"` 是类型剥离形态所需，原样进
 // d.ts 会让消费方解析不到（.ts 不是可解析的类型说明符），故重写成 ./types/x.js。
 // 顶部 node reference：oxlint 类型检查对 .mjs 不自动加载 @types/node，需显式声明
 // 才能解析 node:fs/promises、process、import.meta（否则整文件按 error 类型误报 unsafe）。
@@ -25,9 +25,9 @@ const isExternal = await createIsExternal(root);
 
 /** 各切面（消费方按子路径取，谁也不必为别人的依赖买单）。 */
 const facets = [
-  "http",
   "tool-events",
   "card-apply",
+  "card-diff",
   "project-key",
   "locale",
   "lesson-bus",
@@ -36,7 +36,6 @@ const facets = [
   "errors",
   "jsonl",
   "job-outcome",
-  "trust",
 ];
 
 /** barrel 之外还要单独出的入口：lib/index.ts 聚合同运行时行为。
@@ -83,11 +82,11 @@ export async function buildHost() {
     format: "esm",
     entryFileNames: "[name].js",
     chunkFileNames: "[name]-[hash].js",
-    // 压缩：实测同一批 14 个入口 35,020 B -> 10,345 B（省 70.5%）。本包的 dist 就是发布形态，
+    // 压缩：实测同一批入口压后只有未压缩态的一小截。本包的 dist 就是发布形态，
     // 消费方把它当 external 直接 import（不再二次打包），所以这些字节是真实装载成本。
     // 官方根 tsdown.config.ts 同样没开 minify，但那是 monorepo 内消费，与这里的处境不同。
-    // 唯一变大的入口是 barrel（1,300 -> 1,523 B）：oxc 会把 re-export 的具名清单展开。
-    // +223 B 换 24 KB 缩减，划算。
+    // 唯一变大的入口是 barrel：oxc 会把 re-export 的具名清单展开。
+    // 它多出的那几个字节远小于整批的缩减，划算。
     minify: true,
   });
   const chunks = output.filter((item) => item.type === "chunk");
@@ -98,9 +97,9 @@ export async function buildHost() {
   // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两侧），写盘那一侧不再是
   // 唯一的正典化点。
   //
-  // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测 14 个 chunk 里
+  // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测本批 chunk 里
   // 仍含 "//#region" 字样的那一个只是 canonicalize-region-paths.js 里正则的字面量，不是标记。
-  // 保留调用是因为它无成本、且 9 个兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
+  // 保留调用是因为它无成本、且各兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
   // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。
   const files = chunks.map((chunk) =>
     artifact(path.join(outDir, chunk.fileName), canonicalizeRegionPaths(chunk.code, root)),

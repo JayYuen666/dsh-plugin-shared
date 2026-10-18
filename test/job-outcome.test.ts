@@ -6,7 +6,7 @@
 // 作业同形，否则同一个 job_list 里会出现两套说法。
 
 import { describe, expect, it } from "vitest";
-import { jobOutcomeOf } from "../lib/job-outcome.ts";
+import { jobOutcomeOf, killProc } from "../lib/job-outcome.ts";
 import type { SettledProcess } from "../lib/job-outcome.ts";
 
 /**
@@ -60,5 +60,27 @@ describe("jobOutcomeOf", () => {
     const outcome = jobOutcomeOf(settled({ status: "killed", exitCode: null, signal: "SIGKILL" }));
     expect(Object.keys(outcome).toSorted()).toStrictEqual(["detail", "status"]);
     expect(outcome.detail).not.toMatch(/cancel|用户取消/u);
+  });
+});
+
+describe("killProc（清理臂的收进程）", () => {
+  it("把 kill 转给句柄", () => {
+    const calls: number[] = [];
+    killProc({
+      kill: () => {
+        calls.push(1);
+      },
+    });
+    expect(calls).toStrictEqual([1]);
+  });
+
+  it("句柄已回收时 kill 自己抛错也不向清理臂通报", () => {
+    expect(() => {
+      killProc({
+        kill: () => {
+          throw new Error("already reaped");
+        },
+      });
+    }).not.toThrow();
   });
 });

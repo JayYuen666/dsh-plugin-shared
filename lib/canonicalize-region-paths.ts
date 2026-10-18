@@ -24,12 +24,12 @@
 // 单独列进 `entries`（不进 `facets` 数组——那数组是 barrel 的成员表），产出一个独立入口。
 //
 // ⚠ 它**确实在 `package.json` 的 `exports` 里**（`./lib/canonicalize-region-paths`），而且这条
-// 是承重的：9 个兄弟包的 `build-*.mjs` 正是靠它按包子路径引本函数（quality-gate / ocr-review /
+// 是承重的：各兄弟包的 `build-*.mjs` 正是靠它按包子路径引本函数（quality-gate / ocr-review /
 // session-rescue / dir-prep-organize / zvec-grep / ctx-observe / danger-guard / lesson-loop /
 // scrapling，各一对 build-host 与 build-client）。只有本包自己的两个 builder 用相对说明符
 // `./lib/canonicalize-region-paths.ts`（它们在包内，不需要绕子路径）。
-// 删掉那条 exports = 一次性打断全部 9 个包的构建，所以本文件头曾经那句「不进出 exports」是
-// 错的，照着它做会出事；test/publish-manifest.test.ts 现在钉着这条 parity。
+// 删掉那条 exports = 一次性打断所有依赖它的包的构建，所以「不进出 exports」那句是
+// 错的，照着它做会出事；test/publish-manifest.test.ts 钉着这条 parity。
 //
 // 纯字符串：不起子进程、不读盘、不 import node:path —— 包根由调用方（builder 里已有的
 // import.meta.dirname）作为字符串交进来，本模块只做行内文本重写。因此可单测，也能在同一进程

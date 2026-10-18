@@ -46,6 +46,7 @@ interface Manifest {
   readonly dependencies?: Record<string, string>;
   readonly devDependencies?: Record<string, string>;
   readonly peerDependencies?: Record<string, string>;
+  readonly peerDependenciesMeta?: Record<string, { readonly optional?: boolean }>;
 }
 
 /** 一条 `files` 模式归类后的两种形态。 */
@@ -300,11 +301,21 @@ describe("宿主依赖的版本形状（升级防线）", () => {
     expect(leaked, "这些宿主包会随消费方装进 profile，物化出第二份实例").toStrictEqual([]);
   });
 
+  it("每一条 peer 都在 peerDependenciesMeta 里显式表过态", async () => {
+    // 缺省即「必需」——而必需 peer 在 npm 7+ 是装不上就 ERESOLVE，不是一条警告。本包只有一条
+    // 真是必需（`dsh-output-retention` 被 lib/text.ts 值导入），其余都要 optional: true，
+    // 否则消费方会被这个库替宿主包要一份它本来自带的东西。「加 peer 忘了加 meta」这种不对称
+    // 别的门禁都看不见：类型、构建、用例、exports parity 全部照绿。
+    const { manifest } = await readSurface();
+    const peers = Object.keys(manifest.peerDependencies ?? {});
+    expect(peers.length, "至少要有一条 peer 才有可钉的面").toBeGreaterThan(0);
+    const silent = peers.filter((name) => manifest.peerDependenciesMeta?.[name] === undefined);
+    expect(silent, "这些 peer 没写 optional，会被消费方的安装器读成硬要求").toStrictEqual([]);
+  });
+
   it("dsh-* 家族一律精确钉，不留任何范围算子", async () => {
-    // registry 上的 dist-tag 是实测出来的陷阱（截至本包钉住的这一支）：
-    //   @deepseek-ai/dsh-session 的 `latest` → 0.0.1-rc.1
-    //   `next` → 0.2.0-rc.2，`alpha` → 0.2.1-alpha.2（实际在用的那一支）
-    // 也就是说 `latest` 指向的是一个**远早于宿主 ABI** 的版本。精确钉是让「不带版本地
+    // registry 上的 dist-tag 是实测出来的陷阱（复跑：`npm view @deepseek-ai/dsh-session dist-tags`）：
+    // `latest` 指向的是一个**远早于宿主 ABI** 的版本，本包在用的那一支走 `next`。精确钉是让「不带版本地
     // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
     // 那等于让消费方在没有测试的情况下换掉宿主类型面。
@@ -370,9 +381,9 @@ describe("切面与 exports 的 parity（新增/改名切面时的静默失败�
   });
 
   it("canonicalize-region-paths 在 exports 里却不在 barrel：这条 parity 是承重的", async () => {
-    // 单独点出来，因为 lib/canonicalize-region-paths.ts 的文件头曾经写着「不进出 exports」，
-    // 而那是**错的**：9 个兄弟包的 build-*.mjs 正靠这条子路径引它。照着错注释去「清理」
-    // exports，会一次性打断全部 9 个包的构建，而本包自己的门禁一声不响。
+    // 单独点出来，因为 lib/canonicalize-region-paths.ts 的文件头一度写着「不进出 exports」，
+    // 而那是**错的**：各兄弟包的 build-*.mjs 正靠这条子路径引它。照着错注释去「清理」
+    // exports，会一次性打断所有依赖它的包的构建，而本包自己的门禁一声不响。
     const { manifest } = await readSurface();
     const barrel = await readFile(path.join(pkgDir, "lib", "index.ts"), "utf8");
     const subpath = "./lib/canonicalize-region-paths";

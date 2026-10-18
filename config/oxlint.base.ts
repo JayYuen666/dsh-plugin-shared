@@ -691,6 +691,12 @@ export const BASE_RULES: RuleTable = {
   "eslint/max-params": ["error", { max: 5 }],
   "eslint/max-statements": ["error", 50],
   "eslint/no-console": ["error", { allow: ["warn", "error", "info"] }],
+  // start 口径只拦「注释以这四个词开头」：anywhere 会把 `todo/write` 事件名、`api_key:xxx` 脱敏示例
+  // 这类领域词一起判红，而为过门改写它们恰恰是注释纪律要禁止的事。
+  "eslint/no-warning-comments": [
+    "error",
+    { terms: ["todo", "fixme", "xxx", "hack"], location: "start" },
+  ],
   "eslint/no-param-reassign": "error",
   "eslint/no-underscore-dangle": [
     "error",

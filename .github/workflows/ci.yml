@@ -69,25 +69,99 @@ jobs:
           npm install -D oxlint vitest --no-audit --no-fund
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
-          const subs = ["./lib/http", "./lib/tool-events", "./lib/card-apply", "./lib/project-key",
-            "./lib/locale", "./lib/lesson-bus", "./lib/text", "./lib/record", "./lib/errors",
-            "./lib/jsonl", "./lib/trust", "./lib/job-outcome", "./lib/canonicalize-region-paths",
-            "./config/oxlint", "./config/vitest.base"];
-          for (const s of subs) {
+          // 名单取自装进来的那份产物自己的 exports，不在这里再抄一份：抄来的清单与发布面是
+          // 两个真相，增删切面时工作流会静默落后，探针就再也看不见漏项。
+          const manifest = (await import(NAME + "/package.json", { with: { type: "json" } })).default;
+          // 按**目标形态**分档，不按名字分档：`.js` 那档按 ESM 装载，`.json` 那档是给 tsc
+          // `extends` 读的纯 JSON（`./config/tsconfig*.json`），裸 import() 它会以
+          // ERR_IMPORT_ATTRIBUTE_MISSING 失败——那是探针自己的写法问题，不是发布面坏了。
+          // 两档之外的目标形态直接红：静默跳过等于把新形态的入口从不检查。
+          const jsSubs = [];
+          const jsonSubs = [];
+          for (const [key, spec] of Object.entries(manifest.exports)) {
+            if (key === "." || key === "./package.json") continue;
+            const target = typeof spec === "string" ? spec : spec?.default;
+            if (typeof target !== "string") throw new Error(`${key} 的 exports 目标不是字符串`);
+            if (target.endsWith(".js")) jsSubs.push(key);
+            else if (target.endsWith(".json")) jsonSubs.push(key);
+            else throw new Error(`${key} 的目标形态不认识：${target}`);
+          }
+          if (jsSubs.length === 0) throw new Error("exports 里没有 .js 入口，这一档探针等于没跑");
+          if (jsonSubs.length === 0) throw new Error("exports 里没有 .json 入口，这一档探针等于没跑");
+          for (const s of jsSubs) {
             const mod = await import(NAME + s.slice(1));
             if (Object.keys(mod).length === 0) throw new Error(`${s} 没有任何导出`);
+          }
+          for (const s of jsonSubs) {
+            const doc = (await import(NAME + s.slice(1), { with: { type: "json" } })).default;
+            if (doc === null || typeof doc !== "object") throw new Error(`${s} 不是 JSON 对象`);
           }
           const root = await import(NAME);
           // 根入口与其它子路径同级断言：dist/index.d.ts 由 build-host.mjs 依据自己的 facets
           // 数组生成，facets 与 package.json 的 exports 漂一处，只有这条断言能报出来。
           if (Object.keys(root).length === 0) throw new Error("根入口没有任何导出");
-          console.log("根入口导出数:", Object.keys(root).length);
+          console.log(
+            "入口分档：", jsSubs.length, "条 .js +", jsonSubs.length, "条 .json；根入口导出数:",
+            Object.keys(root).length,
+          );
           '
       - name: 消费方类型检查（两种 skipLibCheck 档位）
         run: |
           set -euo pipefail
           cd /tmp/probe
           npm install -D typescript@7.0.2 @types/node@26.6.3 --no-audit --no-fund
+          # 类型面的 peer 必须现量装齐再判：本包把 5 个只承载类型的 @deepseek-ai/* 声明为
+          # optional peer，npm 于是不装它们，而 dist/**/*.d.ts 直接引它们的类型 ⇒ 裸装下 ① 收到
+          # 7 条指向**本包自己** .d.ts 的 TS2307（"dsh-plugin-shared"这三个词命中的是文件路径，
+          # 不是外部包名）、② 因类型退化成 any 收不到 TS2322。实测：装齐这几个 peer 后两支都转绿。
+          # 清单不手抄：只取「产物 .d.ts 里引到 且 package.json 里声明过」的交集——未声明的引用
+          # 因此装不进来，这道门原本要抓的"未声明依赖导致退化"照样有牙。宿主包与只作值导入的
+          # dsh-output-retention 都不在这个交集里，所以探针的安装面不因此变大。
+          # 这里**故意**让 $peers 不加引号：要的就是按空格切成多个包名当参数，不是被 IFS 咬。
+          peers=$(node --input-type=module -e '
+          import { readFileSync, readdirSync } from "node:fs";
+          const ROOTDIR = "node_modules/@jayyuen66/dsh-plugin-shared";
+          const pkg = JSON.parse(readFileSync(ROOTDIR + "/package.json", "utf8"));
+          const declared = { ...pkg.dependencies, ...pkg.peerDependencies };
+          const specifiers = [];
+          const walk = (dir) => {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              const p = dir + "/" + entry.name;
+              if (entry.isDirectory()) walk(p);
+              else if (entry.name.endsWith(".d.ts")) {
+                for (const m of readFileSync(p, "utf8").matchAll(/from\s*["\x27](@deepseek-ai\/[^"\x27]+)["\x27]/gu)) specifiers.push(m[1]);
+              }
+            }
+          };
+          walk(ROOTDIR + "/dist");
+          const pkgs = [...new Set(specifiers.map((s) => s.split("/").length > 2 ? s.split("/").slice(0, 2).join("/") : s))];
+          const install = pkgs.filter((p) => declared[p] !== undefined).map((p) => p + "@" + declared[p]);
+          if (install.length === 0) throw new Error("产物 .d.ts 里没有引用任何声明过的 @deepseek-ai 包：清单空了，这道门等于没跑");
+          console.log(install.join(" "));
+          ')
+          echo "类型面 peer 现量（产物引到 ∩ 清单声明过）：${peers}"
+          npm install -D $peers --no-audit --no-fund
+          # ① 现在会把 `./config/*` 两份 .d.ts 也拉进 program，它们顶端 import `oxlint` 与
+          # `vitest/config`——那是消费方自备的工具链（本包刻意不声明为 peer）。上一步「逐子路径
+          # import」已经装过，这里再写一次是幂等的：不把"这一步必须在另一步之后跑"变成隐含前提。
+          npm install -D oxlint vitest --no-audit --no-fund
+          # ① 得覆盖**整个**公共类型面，不能只判 consumer.ts 引到的那几份 .d.ts：实测把一条未声明
+          # 依赖插进 dist/types/text.d.ts，这一整步仍然 exit 0（绿着放过了）。切面清单同样不手抄，
+          # 从装进来的那份 exports 现量取，分档纪律与「逐子路径 import」一致：`.json` 那两档是给
+          # tsc `extends` 读的纯 JSON、不是模块，不进 program。
+          node --input-type=module -e '
+          import { writeFileSync } from "node:fs";
+          const manifest = (await import("@jayyuen66/dsh-plugin-shared/package.json", { with: { type: "json" } })).default;
+          const facets = [];
+          for (const [key, spec] of Object.entries(manifest.exports)) {
+            if (key === "." || key === "./package.json") continue;
+            const target = typeof spec === "string" ? spec : spec?.default;
+            if (typeof target === "string" && target.endsWith(".js")) facets.push(key);
+          }
+          if (facets.length === 0) throw new Error("exports 里没有 .js 切面：① 的扫描面空了，这道门等于没跑");
+          writeFileSync("surface.ts", facets.map((f, i) => "import type * as facet" + i + " from \"@jayyuen66/dsh-plugin-shared" + f.slice(1) + "\";").join("\n") + "\n");
+          console.log("① 的类型面扫描切面数：", facets.length);
+          '
           cat > consumer.ts <<'TS'
           import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
           import type { JobOutcome, SettledProcess } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
@@ -118,8 +192,9 @@ jobs:
           # 因为 tsc 发现错误本就该非零退出，判据在输出内容上而不在退出码上。
           #
           # ① 本包自己的声明文件不得再有 TS2307（未声明的类型依赖）。这里必须 skipLibCheck=false：
-          #    只有关掉它，tsc 才会走进去看本包 .d.ts 内部那条 import。
-          consumer_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck false consumer.ts 2>&1) || true
+          #    只有关掉它，tsc 才会走进去看本包 .d.ts 内部那条 import。program 里同时放 surface.ts
+          #    （上面按 exports 现量生成的全部 .js 切面）——只判 consumer.ts 引到的那几份会漏掉其余切面。
+          consumer_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck false consumer.ts surface.ts 2>&1) || true
           if printf '%s\n' "$consumer_out" | grep -q 'dsh-plugin-shared'; then
             echo "本包声明文件仍有未解析的类型依赖"; exit 1
           fi
@@ -141,11 +216,16 @@ jobs:
           # import 与消费方类型探针在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
-          for (const s of ["./lib/http", "./lib/tool-events", "./lib/project-key", "./lib/locale", "./lib/job-outcome"]) {
+          // 只跑 lib 面：config 两面要消费方自备 oxlint / vitest 工具链，本目录没装（上面
+          // 那条 npm 侧探针是专门装了才跑的）。名单同样读自产物的 exports。
+          const manifest = (await import(NAME + "/package.json", { with: { type: "json" } })).default;
+          const subs = Object.keys(manifest.exports).filter((s) => s.startsWith("./lib/"));
+          if (subs.length === 0) throw new Error("exports 的 lib 面为空，这一档探针等于没跑");
+          for (const s of subs) {
             const mod = await import(NAME + s.slice(1));
             if (Object.keys(mod).length === 0) throw new Error(`${s} 没有任何导出`);
           }
-          console.log("pnpm 布局下子路径解析正常");
+          console.log("pnpm 布局下子路径解析正常：", subs.length, "条 lib 子路径");
           '
           # 这个目录是 pnpm 管的（上面刚 `pnpm add` 过），装 devDep 也得用 pnpm：
           # 实测在 pnpm 布局的项目里跑 `npm install -D` 会以

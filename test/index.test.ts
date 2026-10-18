@@ -4,43 +4,31 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  checkCsrf,
   claimApply,
   deriveProjectKey,
+  diffTouched,
   editPathOf,
   errorText,
   fieldOf,
-  guardBody,
-  isCrossOrigin,
-  isNonLoopbackBindHost,
+  hasMethods,
   isRecord,
+  isSettingsConflict,
   jobOutcomeOf,
+  killProc,
   messagesFor,
-  shrinkJsonlTail,
   parseToolArguments,
   resolveLocale,
-  queryParam,
-  readBody,
-  requestTrust,
-  guardTrust,
-  trustRejectionText,
   scanToolEvents,
-  sendJson,
   settleLessonCall,
+  shrinkJsonlTail,
   toolArgumentsBad,
   truncateEnd,
   truncateStart,
 } from "../lib/index.ts";
 
 describe("lib/index 聚合导出", () => {
-  it("http / tool-events / card-apply / project-key / locale / lesson-bus / text / record / errors / jsonl / trust / job-outcome 十二面的公开成员都是函数", () => {
+  it("根 barrel 把每一面的公开成员都作为函数导出（面数不写死：新增切面就该在这里被看到）", () => {
     for (const fn of [
-      sendJson,
-      isCrossOrigin,
-      queryParam,
-      checkCsrf,
-      readBody,
-      guardBody,
       parseToolArguments,
       toolArgumentsBad,
       scanToolEvents,
@@ -56,11 +44,11 @@ describe("lib/index 聚合导出", () => {
       fieldOf,
       errorText,
       shrinkJsonlTail,
-      requestTrust,
-      guardTrust,
-      trustRejectionText,
-      isNonLoopbackBindHost,
       jobOutcomeOf,
+      killProc,
+      diffTouched,
+      hasMethods,
+      isSettingsConflict,
     ]) {
       expect(fn).toBeTypeOf("function");
     }

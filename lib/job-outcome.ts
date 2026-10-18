@@ -51,3 +51,27 @@ export function jobOutcomeOf(proc: SettledProcess): JobOutcome {
   }
   return { status: "completed", detail: `exit code: ${String(proc.exitCode ?? 0)}` };
 }
+
+/**
+ * 只用得到的那一个成员。**不按 `ShellProcess` 整型收**：本函数丢弃 `kill()` 的返回值，
+ * 把官方的返回类型写进签名等于要求每个调用方（含测试替身）都得交回一个 boolean，
+ * 而这里真正需要的只是「有一个可以试着调的 kill」。
+ */
+export interface KillableProcess {
+  kill: () => unknown;
+}
+
+/**
+ * 收掉子进程，**忽略抛错**：进程可能已自然退出或已被系统回收，此时 kill 失败不是本包的失败。
+ *
+ * 为什么不向调用方通报：调用点都在清理臂（卸载、被拒、超时）上，那里没有可行动的下一步；
+ * 把异常抛出去只会让清理链半途而废，留下更难的现场。
+ * @param proc 待收的句柄
+ */
+export function killProc(proc: KillableProcess): void {
+  try {
+    proc.kill();
+  } catch {
+    // 忽略
+  }
+}

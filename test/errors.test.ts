@@ -4,7 +4,7 @@
 import vm from "node:vm";
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { errorText } from "../lib/errors.ts";
+import { errorText, isSettingsConflict } from "../lib/errors.ts";
 
 /** 敌意对象/toString 拿不到值时的统一占位文本。 */
 const UNRENDERABLE = "<unrenderable value>";
@@ -147,5 +147,20 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
     const rendered = errorText(deep);
     assert.ok(rendered.endsWith(": leaf"), "由外到内一路拼到最内层");
     assert.ok(!rendered.includes(UNRENDERABLE), "这个深度不该触发降级");
+  });
+});
+
+describe("isSettingsConflict（设置冲突那一类失败）", () => {
+  it("认 code 那一形", () => {
+    assert.equal(isSettingsConflict({ code: "SETTINGS_CONFLICT" }), true);
+  });
+
+  it("认 name 那一形：跨 realm 抛来的错误类不是同一个构造函数", () => {
+    assert.equal(isSettingsConflict({ name: "SettingsConflictError" }), true);
+  });
+
+  it("两形都不是则否，敌意形状不从这里抛", () => {
+    assert.equal(isSettingsConflict(new Error("boom")), false);
+    assert.equal(isSettingsConflict(null), false);
   });
 });

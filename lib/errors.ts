@@ -3,11 +3,11 @@
 // 语义对齐官方 `@deepseek-ai/dsh-llm` 的 `errorChain`，但本地实现而不依赖它。
 // 不依赖的理由是实测的，不是偏好：本文件的调用点包含 client 半，而宿主把 dsh-llm
 // 整包拖进浏览器产物时，rolldown 在 platform:"browser" 下即便强制 moduleSideEffects:false
-// 也仍是 160,105 B（八个模块：zod 59,661 + schemastery 55,693 + dsh-llm 自身 22,957…），
+// 也仍是数百 KB 的浏览器产物（zod 与 schemastery 占其中大头），
 // 且残留一个浏览器解析不了的 node:module；改成动态 import 只是把它推迟成同样大的异步块。
 // 官方自己也不这么做——packages/client/* 对 dsh-llm 一律 import type，零值导入。
 //
-// 下面五条**就是官方 `errorChain` 自己的语义**，本文件逐条对齐（packages/llm/llm/src/error.ts
+// 下面这几条**就是官方 `errorChain` 自己的语义**，本文件逐条对齐（packages/llm/llm/src/error.ts
 // 的同名函数，与这里的 render 逐行同构）。写成"相对『单层 message』多出的"会误导：读的人会
 // 以为上游缺这五条能力，于是既不查官方件，也不推动上游收敛。
 //   1. cause 链：`new Error("外", { cause: inner })` 渲染成 "外: 内"；
@@ -25,6 +25,8 @@
 //   session-rescue/host.ts 的 errorText —— 同名但读 message 的方式不同，不吃 instanceof。
 //
 // 本文件不碰文件、不读环境变量、不发外部请求。
+
+import { fieldOf } from "./record.ts";
 
 /** 取对象**自有**的 message 属性；不是可读字符串则回 undefined。 */
 function ownMessage(value: object): string | undefined {
@@ -83,4 +85,19 @@ function render(value: unknown, path: Set<unknown>): string {
  */
 export function errorText(error: unknown): string {
   return render(error, new Set<unknown>());
+}
+
+/**
+ * 是不是「设置冲突」那一类失败（宿主在两个界面同时改同一份设置时抛的形）。
+ *
+ * 认两枚痕迹而不是 `instanceof`：跨 realm 抛过来的错误类不是同一个构造函数，而
+ * `code`/`name` 是宿主两边都写的那两个值。经 `fieldOf` 读，免得在敌意形状上抛。
+ * @param error 捕获到的值
+ * @returns 该失败是否应当按「设置已被别处改动」处理
+ */
+export function isSettingsConflict(error: unknown): boolean {
+  return (
+    fieldOf(error, "code") === "SETTINGS_CONFLICT" ||
+    fieldOf(error, "name") === "SettingsConflictError"
+  );
 }

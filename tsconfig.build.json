@@ -10,9 +10,9 @@
     "types": ["node"]
   },
   "include": [
-    "lib/http.ts",
     "lib/tool-events.ts",
     "lib/card-apply.ts",
+    "lib/card-diff.ts",
     "lib/project-key.ts",
     "lib/locale.ts",
     "lib/lesson-bus.ts",
@@ -20,7 +20,6 @@
     "lib/record.ts",
     "lib/errors.ts",
     "lib/jsonl.ts",
-    "lib/trust.ts",
     "lib/job-outcome.ts",
     "lib/canonicalize-region-paths.ts"
   ],

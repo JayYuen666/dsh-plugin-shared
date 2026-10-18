@@ -18,9 +18,9 @@ import type { Context } from "@deepseek-ai/cordis";
  * `@deepseek-ai/cordis/lib/types/fiber.d.ts`：`interface Context extends
  * Pick<Fiber, 'effect'>`，同步 `Disposable` 与可 await 的 `AsyncDisposable` 两条重载），
  * 而不是本地重述一条 `(factory: () => (() => void) | undefined, label?) => void`。
- * ⚠ 为什么这条要紧：各卡片的 `ClientCtx.effect` 现在也绑官方，而本地那份把 factory 的
+ * ⚠ 为什么这条要紧：各卡片的 `ClientCtx.effect` 绑的就是官方类型，而本地那份把 factory 的
  * 值域写**宽**了（官方 `SyncEffect` 不收 `undefined`）。函数属性位按 contravariance 检查，
- * 于是「官方 ctx」反而赋不进本投影——三个卡片包会各自撞出一个
+ * 于是「官方 ctx」反而赋不进本投影——各卡片包会各自撞出一个
  * `TS2345 … Type 'undefined' is not assignable to type 'SyncEffect<any>'`，
  * 并在每个消费包里用一个类型断言去过桥。守卫的 ctx 面归本模块所有，就在这里一次修好。
  */

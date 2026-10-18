@@ -66,16 +66,16 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
 
   it("非有限配额让比较恒假 ⇒ 整份原样返回；这一档由调用方保证", () => {
     // 任何数与 NaN / +Infinity 比较都是 false，所以循环一次都不进。这不是本函数该自作主张
-    // 修的：http.readBody 为同一类错误加了 bad-budget 档，是因为那边不设限等于放开内存
-    // 上限（请求体是攻击面）；这边不设限只是「这次不裁」。抛错会把一条清晰的预算错误塞进
-    // 两个消费方各自的 catch（ctx-observe 上抛、lesson-loop 内部吞），反而更难排查。
+    // 修的：这边不设限只是「这次不裁」，不像读请求体那样会同时放开内存上限，因此没有必须
+    // 拒收的那条失败模型。抛错会把一条清晰的预算错误塞进两个消费方各自的 catch（ctx-observe
+    // 上抛、lesson-loop 内部吞），反而更难排查。
     //
     // 两个真实消费方都不会把这种值传进来——具体调用点（本文件不会被发布，所以包名可以写
     // 在这儿；lib/jsonl.ts 的声明 JSDoc 里不能写，会随 .d.ts 发出去）：
-    //   ctx-observe/host.ts:244   trimMetricsFile(file, maxBytes = METRICS_MAX_BYTES)
+    //   ctx-observe/host.ts   trimMetricsFile(file, maxBytes = METRICS_MAX_BYTES)
     //                             —— 固定常量作默认实参，非有限值进不来；
-    //   lesson-loop/lib/jsonl-fuse.ts:21  trimJsonl(file, maxBytes)
-    //     由 lesson-loop/lib/lesson-jsonl.ts:36 的 `maxBytes > 0` 把关，而它的 maxBytes
+    //   lesson-loop/lib/jsonl-fuse.ts  trimJsonl(file, maxBytes)
+    //     由 lesson-loop/lib/lesson-jsonl.ts 的 `maxBytes > 0` 把关，而它的 maxBytes
     //     在 lib/lesson-store.ts 的配额归一里已把非有限值与负数落成 0。
     // 但那道归一在消费方，本包不强制：新增消费方时没有东西会提醒它。契约写进 JSDoc 了，
     // 这里把它钉成用例，免得有人以为它已被处理。
