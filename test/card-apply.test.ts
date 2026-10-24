@@ -74,18 +74,24 @@ describe("claimApply", () => {
     expect(claimApply(fresh(), "__cardB", CLAIM_LABEL)).toBe(false);
   });
 
-  it("占位判据是 === true，不是「键在不在」：残留的 undefined / false / 非布尔都照常 claim", () => {
+  it("占位判据是「自有键上的 true 或 claim symbol」：残留的 undefined / false / 非布尔都照常 claim", () => {
     const marker = globalThis as unknown as Record<string, unknown>;
     // 这三种正是本模块自己会留下的痕迹（清理置 undefined）与外部同名键的落法。
     marker["__staleUndefined"] = undefined;
     marker["__staleFalse"] = false;
     marker["__staleString"] = "true";
-    // "true" 这个字符串尤其危险：写成 if (marker[flag]) 就会被它挡住，而判据是 === true。
+    // "true" 这个字符串尤其危险：写成 if (marker[flag]) 就会被它挡住，而判据比它严。
     expect(claimApply(fresh(), "__staleUndefined", CLAIM_LABEL)).toBe(true);
     expect(claimApply(fresh(), "__staleFalse", CLAIM_LABEL)).toBe(true);
     expect(claimApply(fresh(), "__staleString", CLAIM_LABEL)).toBe(true);
-    // 反面：只有严格的 true 才算占位，判据放宽一分就成了重复挂载。
+    // 反面：只有严格的 true / symbol 才算占位，判据放宽一分就成了重复挂载。
     expect(claimApply(fresh(), "__cardA", CLAIM_LABEL)).toBe(false);
+  });
+
+  it("外部写的 true 仍是占位协议：claim 被拒（对外那一半判据保持不变）", () => {
+    const marker = globalThis as unknown as Record<string, unknown>;
+    marker["__externalTrue"] = true;
+    expect(claimApply(fresh(), "__externalTrue", CLAIM_LABEL)).toBe(false);
   });
 
   it("原型污染不算占位：原型链上同名 true 不得让卡片静默不挂载", () => {
@@ -126,6 +132,21 @@ describe("claimApply", () => {
     expect(claimApply(fresh(), "__cardD", CLAIM_LABEL)).toBe(true);
   });
 
+  it("effect 注册路径上标记被改写后抛错 ⇒ catch 不动改写者的值，异常照旧上抛", () => {
+    // 退回占位只认自己那枚 token：effect 挂不上但槽上已不是本次 claim 的占位时，
+    // 按值退回会把改写者的状态一并抹掉。
+    const marker = globalThis as unknown as Record<string, unknown>;
+    const boom = new Error("effect 注册失败");
+    const hostile: CardApplyCtx = {
+      effect: (() => {
+        marker["__hostileEffect"] = true;
+        throw boom;
+      }) as Context["effect"],
+    };
+    expect(() => claimApply(hostile, "__hostileEffect", CLAIM_LABEL)).toThrow(boom);
+    expect(marker["__hostileEffect"]).toBe(true);
+  });
+
   it("label 原样交给 ctx.effect（生命周期可观测的那一位）", () => {
     const spy = spyCtx();
     claimApply(ctxWith(spy), "__cardE", "dsh-example toolview");
@@ -133,5 +154,43 @@ describe("claimApply", () => {
     expect(spy.calls[0]?.label).toBe("dsh-example toolview");
     // 清理体确实是挂上去的那一枚（不是空壳），否则卸载复位这条路径根本没被覆盖到。
     expect(spy.calls[0]?.cleanup).toBeTypeOf("function");
+  });
+
+  it("旧 disposer 迟到/被重复调用时清不掉新实例的占位（按 token 认领，不按值清）", () => {
+    // HMR / 重复加载不保证 disposer 的时序与次数：旧实例的清理晚于新实例 claim 执行时，
+    // 若按值清会把新占位抹掉，第三次 apply 就能拿到声明权——重复挂载正是守卫要堵的路。
+    const firstSpy = spyCtx();
+    expect(claimApply(ctxWith(firstSpy), "__lateDispose", CLAIM_LABEL)).toBe(true);
+    firstSpy.calls[0]?.cleanup?.();
+    const secondSpy = spyCtx();
+    expect(claimApply(ctxWith(secondSpy), "__lateDispose", CLAIM_LABEL)).toBe(true);
+    // 旧实例的清理被再次调用：此刻槽上已是新实例的 token。
+    firstSpy.calls[0]?.cleanup?.();
+    const marker = globalThis as unknown as Record<string, unknown>;
+    expect(marker["__lateDispose"]).toBeTypeOf("symbol");
+    // 第三次 apply 仍被拒——新实例的占位没有被旧 disposer 误伤。
+    expect(claimApply(fresh(), "__lateDispose", CLAIM_LABEL)).toBe(false);
+  });
+
+  it("claim 之前槽上已有的自有值在卸载时按原样恢复，不被抹成 undefined", () => {
+    const marker = globalThis as unknown as Record<string, unknown>;
+    marker["__preExisting"] = false;
+    const spy = spyCtx();
+    expect(claimApply(ctxWith(spy), "__preExisting", CLAIM_LABEL)).toBe(true);
+    spy.calls[0]?.cleanup?.();
+    expect(marker["__preExisting"]).toBe(false);
+  });
+
+  it("flag 命中 Object.prototype 的成员即抛：__proto__ 一类进不来", () => {
+    // __proto__ 写不进自有属性（setter 忽略非对象值），函数却返回 true——守卫从此永远失灵；
+    // __defineGetter__ 一类是 Object.prototype 的自有成员，落下去会遮蔽同名全局方法。
+    expect(() => claimApply(fresh(), "__proto__", CLAIM_LABEL)).toThrow(/flag/u);
+    expect(() => claimApply(fresh(), "__defineGetter__", CLAIM_LABEL)).toThrow(/flag/u);
+    expect(() => claimApply(fresh(), "constructor", CLAIM_LABEL)).toThrow(/flag/u);
+    expect(() => claimApply(fresh(), "", CLAIM_LABEL)).toThrow(/flag/u);
+  });
+
+  it("flag 不带 __ 前缀照常可用（消费卡里存在无前缀的实际键，前缀是惯例不是判据）", () => {
+    expect(claimApply(fresh(), "someCardApplied", CLAIM_LABEL)).toBe(true);
   });
 });

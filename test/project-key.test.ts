@@ -157,6 +157,16 @@ describe("deriveProjectKey", () => {
     expect(deriveProjectKey(under, winKey)).toMatch(/^proj-[0-9a-f]{8}$/u);
   });
 
+  it("共享根带长路径前缀时也落 default，不造假桶键", () => {
+    // 字形是「两个反斜杠 + 问号 + UNC + 两段」，两段判据直接比会既不像根也不像目录，
+    // 于是落成一个看起来合法的假键。
+    const longShareRoot = `${path.win32.sep}${path.win32.sep}?${path.win32.sep}UNC${path.win32.sep}server${path.win32.sep}share`;
+    expect(deriveProjectKey(longShareRoot, winKey)).toBe("default");
+    // 共享根下的真目录仍按末段出键，判据不该把整条长路径一刀切。
+    const under = `${longShareRoot}${path.win32.sep}proj`;
+    expect(deriveProjectKey(under, winKey)).toMatch(/^proj-[0-9a-f]{8}$/u);
+  });
+
   it("POSIX 上反斜杠是合法文件名字符：不得当分隔符拆段", () => {
     const literalBackslashName = `/a/my${path.win32.sep}proj`;
     expect(deriveProjectKey(literalBackslashName, posixKey)).toMatch(/^my\\proj-[0-9a-f]{8}$/u);

@@ -28,7 +28,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** build-host.mjs 的导出返回形状：单文件正文，或「落盘绝对路径 → 正文」的产物清单。 */
 type BuiltArtifacts = string | Map<string, string>;
@@ -97,6 +97,13 @@ function packageNameOf(pkgDir: string): string {
  * @returns 可直接与另一侧逐字节相等的清单文本
  */
 function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolean): string {
+  // 空清单不打勾：零个产物时两侧都折成 "\n"，逐字节相等的断言恒真，一条永远绿的门禁比
+  // 没有门禁更坏——它会让人以为多产物形态被覆盖了。builder 交回空 Map 是构建实现坏了。
+  if (files.size === 0) {
+    throw new Error(
+      `[${packageNameOf(pkgDir)}] 构建函数交回空产物清单：多产物门禁无从比较（不是"没有差异"）。`,
+    );
+  }
   const rows: string[] = [];
   for (const [file, code] of [...files.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
@@ -123,10 +130,9 @@ export async function hostFreshnessEvidence(
   const artifact = options.artifact ?? DEFAULT_ARTIFACT;
   const pkgName = packageNameOf(pkgDir);
   // 动态导入 .mjs 对 TS 为 any，先收窄到调用面再 await（避免 no-unsafe-*）。
-  const mod = (await import(path.resolve(pkgDir, "build-host.mjs"))) as unknown as Record<
-    string,
-    (() => Promise<BuiltArtifacts>) | undefined
-  >;
+  const mod = (await import(
+    pathToFileURL(path.resolve(pkgDir, "build-host.mjs")).href
+  )) as unknown as Record<string, (() => Promise<BuiltArtifacts>) | undefined>;
   const build = mod[builder];
   if (typeof build !== "function") {
     throw new TypeError(

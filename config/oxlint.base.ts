@@ -1,8 +1,17 @@
 import { createRequire } from "node:module";
 import { defineConfig } from "oxlint";
-import type { OxlintConfig, OxlintOverride } from "oxlint";
+import type { ExternalPluginEntry, OxlintConfig, OxlintOverride } from "oxlint";
 
 export type RuleTable = NonNullable<OxlintConfig["rules"]>;
+
+/**
+ * 入口是否指向 sonarjs。`jsPlugins` 的条目可以是字符串，也可以是带别名的对象形态
+ * （`{ name, specifier }`）——两形的信号都在路径/别名文本里，按子串判。
+ */
+function pointsAtSonarjs(entry: ExternalPluginEntry): boolean {
+  const text = typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
+  return text.includes("sonarjs");
+}
 
 /**
  * 一条规则能被关掉的**全部**合法理由。写不进这六类的，就不该有关掉它的选项。
@@ -93,7 +102,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     note: "动态形态按完整模块面校验工厂返回值，而 @types/node 的 os、@types/react 都是 `export =` 形状、类型面上没有 default；实测三处 TS2769+TS2740/2741，react 那处无论怎么 spread 都补不出 default",
   },
   "vitest/prefer-lowercase-title": {
-    kind: "上游不推荐",
+    kind: "文体作用域",
     measured: 171,
     note: "只在用例文件里生效：它带 autofix，实测一轮 oxlint --fix 静默小写化了 260 条标题（含 nO_VERIFY 这种坏名）。包级 titlePrefixes 只留真正的技术名（GET/CSRF/组件名…）：非技术名（工单号一类）不该借这条豁免留在标题里，而中文开头的标题天然满足判据（无大小写）⇒ 免检面能收多小收多小。实测 oxlint 前缀一命中就把整条标题免检，所以陈旧条目由配置基线自检按『免检面未被使用』点名，不靠人工巡检",
   },
@@ -401,8 +410,9 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
  *
  * 判据是「按文体分别核命中数」。`oxlint --deny=<rule>` 量的是整体，而 `--deny` 盖不住
  * override 层的 off（这条口径见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
- * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 与
- * `eslint/no-await-in-loop` 正是这一类，它们的收窄在 SCRIPTS_OVERRIDES 里，不在这里。
+ * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 正是这一类，
+ * 它的收窄在 SCRIPTS_OVERRIDES 里，不在这里。`eslint/no-await-in-loop` 则两侧都开着
+ * （实测探针对 .mjs 照样报），两边都按代码写到位，没有收窄层。
  */
 export const RETIRED_OFFS: string[] = ["typescript/no-empty-object-type"];
 
@@ -464,8 +474,8 @@ function resolveSonarjsEntry(): string {
   throw new Error(
     `oxlint 基线要挂 eslint-plugin-sonarjs，但从本包解析不到它（试过 ${tried.join("、")}）。` +
       "要么在本包 devDependencies 里装 eslint-plugin-sonarjs，" +
-      "要么把自己解析到的入口经 definePluginConfig({ jsPlugins: [...] }) 传进来——" +
-      "带了入口就不会再解析（那条提示才真正兑现）。",
+      "要么把你自己解析到的 sonarjs 入口经 definePluginConfig({ jsPlugins: [...] }) 传进来" +
+      "（入口路径须指向 sonarjs：SONARJS_RULES 无条件引用它，别家的插件救不了这一条）。",
   );
 }
 
@@ -476,8 +486,13 @@ function resolveSonarjsEntry(): string {
  * 那写法无条件先求值，于是「调用方自带入口」这条官方逃生口在缺 sonarjs 时**用不了**——
  * 抛错发生在调用方的入口被用上之前，报错信息给的补救办法照做必然再报同一条。
  * 分支口径：
- *  - 调用方带了入口 → 解析失败就跳过（它显然自备了），成功则去重后前置；
- *  - 调用方没带 → 解析失败照旧抛那条可操作的信息（缺包是真故障，不该被静默）。
+ *  - 调用方带了**指向 sonarjs 的**入口 → 解析失败就跳过（它自备的就是 sonarjs），
+ *    成功则去重后前置；
+ *  - 调用方只带了别家插件、或没带 → 解析失败照旧抛那条可操作的信息。SONARJS_RULES
+ *    无条件引用 sonarjs，只带别家插件救不了它：那种失败会迟到到 oxlint 装载配置那一刻
+ *    （`Plugin 'sonarjs' not found`），可操作的成因必须在这里先抛出来，而不是被吞掉。
+ *    「指向 sonarjs」按入口路径含 `sonarjs` 判定——调用方传的是自己解析到的插件路径，
+ *    这是能落进字符串判据的全部信号。
  *
  * 导出且把解析器做成入参，是为了「解析失败」那一支在**本仓**可测：本仓 devDependencies
  * 装着 sonarjs，真实的解析路径永远成功，那两个分支就只能靠注桩走到（与 `LauncherLocator`、
@@ -497,7 +512,7 @@ export function resolveJsPlugins(
   try {
     bundled = resolve();
   } catch (error) {
-    if (caller.length === 0) {
+    if (!caller.some((entry) => pointsAtSonarjs(entry))) {
       throw error;
     }
   }
@@ -577,11 +592,14 @@ const BASE_IGNORE_PATTERNS: string[] = [
 
 /**
  * oxlint 认识的 vitest 规则全集（取自 `oxlint --rules` 的表格，73 条）。整族在基线 off，再由
- * TEST_FILE_OVERRIDES 在用例文件上 on —— 理由见
- * OFF_JUSTIFICATIONS 里的 `vitest/*`。列成数组而不是散着写，是为了让「上游新增一条 vitest 规则」
- * 默认落在生产文件之外，而不是默认作用到每一个 host.ts。
+ * TEST_FILE_OVERRIDES 在用例文件上 on —— 理由见 OFF_JUSTIFICATIONS 里的 `vitest/*`。
+ *
+ * 这是一张**快照**，不是「上游新增规则自动落在生产文件之外」的机制：`categories` 是全局
+ * error 开关，上游在任一 category 里新增 vitest 规则，它就会先作用到每一个 host.ts。
+ * 拦这一步的是 test/config-oxlint.test.ts 的一致性用例——它拿 `oxlint --rules` 现量与
+ * 本数组逐条对照，上游新增/删除规则即红，由人工同步名单（需要豁免的再补依据）。
  */
-const VITEST_ALL_RULES: string[] = [
+export const VITEST_ALL_RULES: string[] = [
   "vitest/consistent-each-for",
   "vitest/consistent-test-filename",
   "vitest/consistent-test-it",
@@ -810,7 +828,19 @@ export const BASE_RULES: RuleTable = {
   ...Object.fromEntries(VITEST_ALL_RULES.map((rule) => [rule, "off"])),
 };
 
-const TEST_FILES: string[] = ["**/*.test.ts", "**/*.test.tsx", "**/test/**", "**/__tests__/**"];
+/**
+ * 两种测试文件的形态口径，单源，不许两处各写一份：
+ *  - {@link CASE_FILE_PATTERNS}：**用例文件**本身（vitest 结构类判据只落在这里）；
+ *  - {@link SPEC_FILE_PATTERNS}：spec 命名的用例，只认目录约定下的位置（`__tests__/`
+ *    与 `test/`），散在源码树里的 `*.spec.ts` 不算——那更可能是与 vitest 无关的规格件；
+ *  - 整个测试树的目录通配（`test/**` 与 `__tests__/**` 两种前缀）：含夹具与 helper，
+ *    只享受 {@link TEST_OVERRIDES} 的规模/类型豁免，**不**享受 vitest 结构类判据——
+ *    helper 模块没有用例结构，套上 expect-expect 一类只会整片误报。
+ */
+const CASE_FILE_PATTERNS: string[] = ["**/*.test.ts", "**/*.test.tsx"];
+const SPEC_FILE_PATTERNS: string[] = ["**/__tests__/**/*.spec.ts", "**/test/**/*.spec.ts"];
+
+const TEST_FILES: string[] = [...CASE_FILE_PATTERNS, "**/test/**", "**/__tests__/**"];
 
 /**
  * 用例文件（含 `test/*.ts` 夹具与 helper）共享的豁免：规模类，以及「桩件要跨官方名义类型」
@@ -857,7 +887,7 @@ export const VITEST_ASSERTION_DEFAULTS: string[] = [
 const BARE_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/u;
 
 export const TEST_FILE_OVERRIDES: OxlintOverride = {
-  files: ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**/*.spec.ts"],
+  files: [...CASE_FILE_PATTERNS, ...SPEC_FILE_PATTERNS],
   rules: {
     ...Object.fromEntries(
       VITEST_ALL_RULES.filter((rule) => !VITEST_STILL_OFF_IN_TEST_FILES.has(rule)).map((rule) => [
@@ -875,9 +905,8 @@ export const TEST_FILE_OVERRIDES: OxlintOverride = {
 };
 
 /**
- * 生成用例文件的 override（vitest 结构类判据的开与关都在这张表里）。
- * @param assertionHelpers - 本包"内部会断言"的 helper 函数名，并入 `expect-expect` 的名单。
- * @returns 可直接放进 `overrides` 的配置项。
+ * {@link makeTestFileOverrides} 的入参形状。两份名单都并入规则自带的选项，不改任何规则开关；
+ * 只收裸标识符（通配或带点形式会在 {@link makeTestFileOverrides} 里直接抛）。
  */
 export interface TestFileOverridesOptions {
   /** 本包"内部会断言"的 helper 函数名，并入 `vitest/expect-expect` 的名单。 */
@@ -1083,10 +1112,10 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     // sonarjs 这条 JS plugin 是常挂的（`SONARJS_RULES` 在 rules 里，缺入口就是整份配置加载失败，
     // 实测报 `Plugin 'sonarjs' not found`）；包内自带的入口追加在后面。
     //
-    // 组装交给 resolveJsPlugins：调用方自带入口时**不再无条件求值** resolveSonarjsEntry。
-    // 原写法无条件先解析，缺包就抛，于是本文件那条「要么经 definePluginConfig({ jsPlugins })
-    // 传进来」的提示**兑现不了**——调用方传的入口根本轮不到被用上（实测：sonarjs 缺席时
-    // 传了自己的入口，仍抛同一条错）。
+    // 组装交给 resolveJsPlugins：调用方自带**指向 sonarjs 的**入口时不再无条件求值
+    // resolveSonarjsEntry。原写法无条件先解析，缺包就抛，于是本文件那条「要么经
+    // definePluginConfig({ jsPlugins }) 传进来」的提示**兑现不了**——调用方传的入口根本
+    // 轮不到被用上（实测：sonarjs 缺席时传了自己的入口，仍抛同一条错）。
     jsPlugins: resolveJsPlugins(jsPlugins),
     rules,
     overrides,

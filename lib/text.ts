@@ -52,13 +52,17 @@ export function truncateEnd(text: string, maxChars: number): string {
 
 /**
  * 保留后 `minChars` 个码元；切点切开代理对时丢掉首部那个孤立低代理。
- * `minChars <= 0` 与 NaN 与 `truncateEnd(text, 0)` 同口径返回空串，不返回整串。
+ * `minChars` 不足一枚码元（含 `<= 0`、NaN、`0 < minChars < 1`）与 `truncateEnd(text, 0)`
+ * 同口径返回空串，不返回整串。
  */
 export function truncateStart(text: string, minChars: number): string {
   // NaN 走不进 `<= 0`，却会走进 `slice(-NaN)`＝`slice(0)`＝整串 ⇒ 两种"预算不可用"都点名判，
   // 而不是写成 `!(minChars > 0)`（那条等价但把意图藏进了取反，也被 sonarjs/no-inverted-boolean-check
   // 判成该翻成 `<=` —— 直接翻会漏掉 NaN，所以这里是把两臂写全，不是把判据放宽）。
-  if (minChars <= 0 || Number.isNaN(minChars)) {
+  // 不足一枚码元的正预算同样是"预算不可用"：`slice(-0.5)` 的 ToIntegerOrInfinity 得 `-0`，
+  // 即 `slice(0)` 返回整串——那正是本函数要拦的形态，按小数残量调用（如按比例算出来的
+  // 0.5 个字符）必须落回空串，不能静默退化成整串。
+  if (Number.isNaN(minChars) || minChars < 1) {
     return "";
   }
   if (text.length <= minChars) {

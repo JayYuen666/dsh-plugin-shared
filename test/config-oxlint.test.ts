@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BASE_RULES,
@@ -6,6 +9,7 @@ import {
   SCRIPTS_OVERRIDES,
   TEST_FILE_OVERRIDES,
   TEST_OVERRIDES,
+  VITEST_ALL_RULES,
   VITEST_ASSERTION_DEFAULTS,
   definePluginConfig,
   makeTestFileOverrides,
@@ -34,10 +38,13 @@ const KINDS: OffReason[] = [
   "零代价作废",
 ];
 
-/** 注桩用的两条入口路径与「解析不到」的文案：提为模块级常量（用例里重复出现同一字面量会被
+/** 注桩用的三条入口路径与「解析不到」的文案：提为模块级常量（用例里重复出现同一字面量会被
  *  no-duplicate-string 记成账），解析器替身也提到模块级（consistent-function-scoping）。 */
 const BUNDLED_ENTRY = "/bundled.js";
-const OWN_ENTRY = "/own.js";
+/** 调用方自备的 sonarjs 入口：逃生口只认路径里指向 sonarjs 的那一枚。 */
+const OWN_SONARJS_ENTRY = "/own/eslint-plugin-sonarjs.js";
+/** 与 sonarjs 无关的调用方入口：它救不了 SONARJS_RULES 的缺包。 */
+const OWN_LOCAL_ENTRY = "/own/local-rules.js";
 const SONARJS_MISSING = "解析不到 sonarjs";
 const SONARJS_MISSING_PATTERN = /解析不到 sonarjs/u;
 
@@ -55,19 +62,25 @@ describe("definePluginConfig：关规则必须留依据", () => {
   it("jsPlugins：解析成功时自带入口接在后面，重复的那个不追加第二遍", () => {
     // 本仓装得上 sonarjs，所以「解析成功」这一支是真实路径；去重靠传同一个入口验：
     // 原写法无脑拼接，调用方传的正是本包解析到的那个入口时会挂两遍。
-    expect(resolveJsPlugins([OWN_ENTRY], () => BUNDLED_ENTRY)).toStrictEqual([
+    expect(resolveJsPlugins([OWN_LOCAL_ENTRY], () => BUNDLED_ENTRY)).toStrictEqual([
       BUNDLED_ENTRY,
-      OWN_ENTRY,
+      OWN_LOCAL_ENTRY,
     ]);
     expect(resolveJsPlugins([BUNDLED_ENTRY], () => BUNDLED_ENTRY)).toStrictEqual([BUNDLED_ENTRY]);
   });
 
-  it("jsPlugins：解析失败时自带入口即逃生口，不带入口才抛", () => {
+  it("jsPlugins：解析失败时，指向 sonarjs 的自带入口即逃生口", () => {
     // 两个方向缺一不可：原写法无条件先解析，报错信息给的补救办法（经 jsPlugins 传自己的
     // 入口）照做必然再报同一条——那正是「逃生口兑现不了」的形态。
-    expect(resolveJsPlugins([OWN_ENTRY], boomSonarjs)).toStrictEqual([OWN_ENTRY]);
+    expect(resolveJsPlugins([OWN_SONARJS_ENTRY], boomSonarjs)).toStrictEqual([OWN_SONARJS_ENTRY]);
     expect(() => resolveJsPlugins(undefined, boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
     expect(() => resolveJsPlugins([], boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
+  });
+
+  it("jsPlugins：只带别家插件时解析失败必须照抛（吞掉会把可操作的成因换成 oxlint 的点名红）", () => {
+    // SONARJS_RULES 无条件引用 sonarjs：只带自家插件时配置照样以 `Plugin 'sonarjs' not found`
+    // 失败，而那条报错不带补救办法。可操作的那条话必须在这里先出来。
+    expect(() => resolveJsPlugins([OWN_LOCAL_ENTRY], boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
   });
 
   it("出厂基线本身装载得动（每条 off 都在 OFF_JUSTIFICATIONS 里查到）", () => {
@@ -249,5 +262,40 @@ describe("关规则依据表要自洽（OFF_JUSTIFICATIONS）", () => {
     expect(() => definePluginConfig({ extraRules: { "node/no-unpublished-bin": "off" } })).toThrow(
       /node\/no-unpublished-bin/u,
     );
+  });
+});
+
+describe("vitest 规则全集快照与 oxlint --rules 现量一致（不许自己腐烂）", () => {
+  it("vitest 插件的规则全集逐条对上：上游新增/删除规则即红，人工同步名单", () => {
+    // categories 是全局 error 开关：上游在任一 category 新增 vitest 规则，它会先作用到
+    // 生产文件。基线那张 off 名单是快照，靠这条用例跟住上游——红了对名单，需要豁免的再补依据。
+    // 同步子进程：本门禁无并发需求，而 async 三种写法被基线的 promise 规则夹死
+    // （execFileSync 的登记见本包 oxlint.config.ts，danger-guard 的产物加载门禁同款取舍）。
+    const require = createRequire(import.meta.url);
+    const oxlintBin = path.join(
+      path.dirname(require.resolve("oxlint/package.json")),
+      "bin",
+      "oxlint",
+    );
+    // GitHub Actions 给每一步注入 GITHUB_ACTIONS=true；oxlint 在该标志下把 --rules 的
+    // 列表整份沉掉（stdout 零字节、退出码 0），于是这条判据在 CI 上量到空集——本地没有
+    // 这个变量，永远复现不了。解析用的子进程剥掉它：这里量的是规则集，不是「身处 CI」。
+    // 同批关色（跑测类判据的既定纪律：子进程先关色，输出里的字面量才可匹配）。
+    const childEnv = { ...process.env };
+    delete childEnv["GITHUB_ACTIONS"];
+    const stdout = execFileSync(process.execPath, [oxlintBin, "--rules"], {
+      encoding: "utf8",
+      env: { ...childEnv, NO_COLOR: "1", FORCE_COLOR: "0", CLICOLOR: "0" },
+    });
+    // 表行形状：`| <rule> | vitest | …`（规则名与插件名两列，右列宽度不定）。
+    const names = [...stdout.matchAll(/^\| (?<rule>[^|\s]+)\s+\| vitest\s+\|/gmu)].map(
+      (match) => match.groups?.["rule"] ?? "",
+    );
+    // 空集不打勾：解析不到任何行说明输出格式变了，判据什么都没量到。
+    expect(
+      names.length,
+      "oxlint --rules 里没解析到任何 vitest 规则行（输出格式变了）",
+    ).toBeGreaterThan(0);
+    expect(new Set(names.map((name) => `vitest/${name}`))).toStrictEqual(new Set(VITEST_ALL_RULES));
   });
 });

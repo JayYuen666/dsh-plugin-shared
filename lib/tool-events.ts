@@ -4,7 +4,7 @@
 // 共性问题（两插件各自实现同一契约、双份维护）：
 //   1. tool/call 的 arguments 官方是模型产出的**原始 JSON 字符串**，而 PTC 子调度的
 //      arguments 官方是派发前已 JSON 归一化的 `unknown` —— 两种形态都真实存在，
-//      parseToolArguments 的双分支不是防御性冗余；
+//      readArguments 的双分支不是防御性冗余；
 //   2. tool/result 用 callId 串联 tool/call，isError 判定成败；
 //   3. str_replace_editor 的 view 是只读、不算"写"（两插件都要跳过）；
 //   4. PTC 模式（run_code）的子工具调用以 tool/ptc-dispatch-start + tool/ptc-dispatch
@@ -121,39 +121,36 @@ function usableName(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** 解析 tool/call 的 arguments：string JSON 文本或已解析对象；非法/缺失 → 空对象。
- *
- *  模块私有：两种事件形状的记账都经 `callRecordOf` 走这一对，外部消费方拿到的
- *  `toolEventRowsOf` 记录里已经带好 `arguments` / `badArguments`，不需要也不应该
- *  自己再解析一遍（公开面只剩折叠结果这一条）。 */
-function parseToolArguments(raw: unknown): Record<string, unknown> {
-  if (typeof raw === "string") {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      return isRecord(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  return isRecord(raw) ? raw : {};
+/** arguments 的两个投影：可用的参数对象，以及「是否坏参」标记。 */
+interface ArgumentsView {
+  readonly arguments: Record<string, unknown>;
+  readonly badArguments: boolean;
 }
 
 /**
- * arguments 是否「无法参与记账」：仅当字符串 JSON **语法非法**（JSON.parse 抛错）。
- * 合法 JSON 非对象（`"42"`）、undefined/数字/对象等一律不标——既有消费方对 JSON.parse
- * 抛错判"不记账"，但对"解析成功却非对象"仍记账（路径留空）。本标记必须精确复用那一个
- * 语义点，不能把"非对象"也划进坏参：多划一刀就等于替消费方改了门禁的松紧。
+ * 解析 tool/call 的 arguments：string JSON 文本或已解析对象。
+ *
+ * 坏参标记与解析必须同一次读：两件事都建立在「JSON.parse 抛没抛」上，拆成两个函数就得把
+ * 同一串 JSON 解析两遍（同一份入参两次解析，第一次的抛错与否恰好决定第二次的结论）。
+ * 判据是「仅当字符串 JSON **语法非法**」——合法 JSON 非对象（`"42"`）、undefined/数字/对象
+ * 一律不标：既有消费方对 JSON.parse 抛错判"不记账"，但对"解析成功却非对象"仍记账（路径
+ * 留空）。不能把"非对象"也划进坏参：多划一刀等于替消费方改了门禁的松紧。
+ *
+ * 模块私有：两种事件形状的记账都经 `callRecordOf` 走这一处，外部消费方拿到的
+ * `toolEventRowsOf` 记录里已经带好 `arguments` / `badArguments`，不需要也不应该自己再解析。
+ * @param raw - 事件里的 arguments 原文
+ * @returns 参数对象（非法/缺失时为空对象）与坏参标记
  */
-function toolArgumentsBad(raw: unknown): boolean {
+function readArguments(raw: unknown): ArgumentsView {
   if (typeof raw === "string") {
     try {
-      JSON.parse(raw);
-      return false;
+      const parsed: unknown = JSON.parse(raw);
+      return { arguments: isRecord(parsed) ? parsed : {}, badArguments: false };
     } catch {
-      return true;
+      return { arguments: {}, badArguments: true };
     }
   }
-  return false;
+  return { arguments: isRecord(raw) ? raw : {}, badArguments: false };
 }
 
 /** 调用类事件（tool/call 与 PTC 子调用开始）→ 记账记录；其余返回 undefined。 */
@@ -169,11 +166,12 @@ function callRecordOf(event: SessionEvent, index: number): ToolCallRecord | unde
     // nc:<seq> 兜底席位，消费方（quality-gate 的 noCallId 桶）要的正是那种行。
     const name = usableName(event.data.name);
     if (name !== undefined) {
+      const args = readArguments(event.data.arguments);
       record = {
         name,
         callId: usableCallId(event.data.callId),
-        arguments: parseToolArguments(event.data.arguments),
-        badArguments: toolArgumentsBad(event.data.arguments),
+        arguments: args.arguments,
+        badArguments: args.badArguments,
         seq: index,
       };
     }
@@ -184,11 +182,12 @@ function callRecordOf(event: SessionEvent, index: number): ToolCallRecord | unde
     const subCallId = usableCallId(event.data.subCallId);
     const name = usableName(event.data.name);
     if (subCallId !== undefined && name !== undefined) {
+      const args = readArguments(event.data.arguments);
       record = {
         name,
         callId: subCallId,
-        arguments: parseToolArguments(event.data.arguments),
-        badArguments: toolArgumentsBad(event.data.arguments),
+        arguments: args.arguments,
+        badArguments: args.badArguments,
         seq: index,
       };
     }

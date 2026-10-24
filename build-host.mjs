@@ -14,7 +14,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { rolldown } from "rolldown";
 import { canonicalizeRegionPaths } from "./lib/canonicalize-region-paths.ts";
-import { createIsExternal } from "./build-shared.mjs";
+import { createIsExternal, isMainModule } from "./build-shared.mjs";
 
 const root = import.meta.dirname;
 const outDir = path.join(root, "dist");
@@ -23,8 +23,9 @@ const outDir = path.join(root, "dist");
 // build-shared.mjs——此前这里与 build-config.mjs 各有一份逐字节相同的副本。
 const isExternal = await createIsExternal(root);
 
-/** 各切面（消费方按子路径取，谁也不必为别人的依赖买单）。 */
-const facets = [
+/** 各切面（消费方按子路径取，谁也不必为别人的依赖买单）。与 lib/ 下切面的 parity
+ * 由 test/build-host.test.ts 钉住：新增切面只改 lib/ 不改这里时，barrel 的 d.ts 会静默缺成员。 */
+export const facets = [
   "tool-events",
   "card-apply",
   "card-diff",
@@ -72,6 +73,14 @@ function artifact(file, code) {
  * @returns {Promise<Map<string, string>>}
  */
 export async function buildHost() {
+  // entryFileNames 用的是 `[name]`：两个入口若解析出同一个 name（如不同目录下的 index.ts），
+  // rolldown 会让后一个覆盖前一个，而 find 出去的是 Map 的键（落盘路径），构造时后写覆盖先写
+  // ⇒ 静默少一件产物。入口清单是手写的，这类重名在改名时才会出现，故显式判一次。
+  const entryNames = entries.map((entry) => path.basename(entry).replace(/\.[^.]+$/u, ""));
+  const duplicates = entryNames.filter((name, index) => entryNames.indexOf(name) !== index);
+  if (duplicates.length > 0) {
+    throw new Error(`入口名重复，[name] 占位符会互相覆盖：${duplicates.join(", ")}`);
+  }
   const bundle = await rolldown({
     input: entries.map((entry) => path.join(root, entry)),
     platform: "node",
@@ -89,6 +98,8 @@ export async function buildHost() {
     // 它多出的那几个字节远小于整批的缩减，划算。
     minify: true,
   });
+  // rolldown 的 bundle 持有 worker 与文件句柄：不 close 时循环里反复建实例会把它们攒到进程退出。
+  await bundle.close();
   const chunks = output.filter((item) => item.type === "chunk");
   if (chunks.length === 0) {
     throw new Error("rolldown generate returned no chunk output");
@@ -102,7 +113,10 @@ export async function buildHost() {
   // 保留调用是因为它无成本、且各兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
   // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。
   const files = chunks.map((chunk) =>
-    artifact(path.join(outDir, chunk.fileName), canonicalizeRegionPaths(chunk.code, root)),
+    artifact(
+      path.join(outDir, chunk.fileName),
+      canonicalizeRegionPaths(chunk.code, root, process.cwd()),
+    ),
   );
   files.push(artifact(path.join(outDir, "index.d.ts"), barrelTypes()));
   return new Map(files);
@@ -116,7 +130,7 @@ async function main() {
   console.info("host built:", artifacts.length, "files -> dist/");
 }
 
-if (process.argv[1] === import.meta.filename) {
+if (isMainModule(import.meta.filename)) {
   try {
     await main();
   } catch (error) {

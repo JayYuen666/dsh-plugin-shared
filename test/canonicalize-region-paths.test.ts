@@ -37,6 +37,9 @@ function regionLines(code: string): string[] {
   return code.split("\n").filter((line) => line.startsWith("//#region"));
 }
 
+/** 期望侧的 region 行构造器；传给迭代器时用内联箭头（lint 口径），直调时用它。 */
+const foldedMark = (mark: string): string => `//#region ${mark}`;
+
 /**
  * 造一段产物、折成 canonical、只回 region 行（各用例的主判据形态）。
  * @param marks - 某个 cwd 下 rolldown 实际写出的模块路径
@@ -128,6 +131,22 @@ describe("射程只有 //#region 那一行的路径文本", () => {
     assert.equal(canonicalizeRegionPaths(line, PKG_DIR), line);
   });
 
+  it("跨行模板字面量里以标记起行、但不像路径（含空白）的内容原样保留", () => {
+    // 行首锚点挡不住跨行字面量：这一层由「标记后必须像模块路径」的形状判据拦下，
+    // 运行时字符串值不得被改写。
+    const code = "const s = `\n//#region see the docs for the full list\n`;";
+    assert.equal(canonicalizeRegionPaths(code, PKG_DIR), code);
+  });
+
+  it("残余局限：跨行字面量里与真标记逐字符同形的内容仍会被改写（纯字符串分析无从区分）", () => {
+    // 刻意钉住这一条而不是假装它不存在：什么时候有人给出可区分的判据，改的也是这里。
+    const code = "const s = `\n//#region session-rescue/lib/messages.ts\n`;";
+    assert.equal(
+      canonicalizeRegionPaths(code, PKG_DIR),
+      "const s = `\n//#region lib/messages.ts\n`;",
+    );
+  });
+
   it("生成说明行与真代码行不参与改写", () => {
     const folded = canonicalizeRegionPaths(artifactOf(["session-rescue/lib/messages.ts"]), PKG_DIR);
     const rows = folded.split("\n");
@@ -196,5 +215,163 @@ describe("幂等", () => {
     assert.equal(canonicalizeRegionPaths("", PKG_DIR), "");
     const plain = `${CODE_LINE}\n`;
     assert.equal(canonicalizeRegionPaths(plain, PKG_DIR), plain);
+  });
+});
+
+// cwd 精确档：前缀按 rel(cwd, …) 计算，不再按段名猜。判据形态取自「包内目录与父目录同名」
+// 这一反例——按名猜测的两档失败方式（误折、跨 cwd 不同形、不幂等）在这里都必须成立为不失败。
+describe("cwd 精确档：包内目录与父目录同名不被误折", () => {
+  /** 包根 /repo/plugins/foo，包内存在真实目录 plugins/（与父目录段同名）。 */
+  const COLLIDING_PKG = "/repo/plugins/foo";
+  const WORKSPACE = "/repo";
+  const COLLIDING_MARK_PKG_CWD = "plugins/x.ts";
+  const COLLIDING_MARK_ANCESTOR_CWD = "plugins/foo/plugins/x.ts";
+  const BARE_PKG_MARK = "pkg/lib/a.ts";
+  const DEP_HELPER = "deps/lib/helper.ts";
+
+  it("cwd = 包根：包内真实目录原样保留", () => {
+    const folded = canonicalizeRegionPaths(
+      artifactOf([COLLIDING_MARK_PKG_CWD]),
+      COLLIDING_PKG,
+      COLLIDING_PKG,
+    );
+    assert.deepEqual(regionLines(folded), [foldedMark(COLLIDING_MARK_PKG_CWD)]);
+  });
+
+  it("cwd = 工作区根：只收 rel(cwd, 包根)，包内目录仍在", () => {
+    const folded = canonicalizeRegionPaths(
+      artifactOf([COLLIDING_MARK_ANCESTOR_CWD]),
+      COLLIDING_PKG,
+      WORKSPACE,
+    );
+    assert.deepEqual(regionLines(folded), [foldedMark(COLLIDING_MARK_PKG_CWD)]);
+  });
+
+  it("两种 cwd 折完同形，且对 canonical 文本幂等", () => {
+    const fromPkg = canonicalizeRegionPaths(
+      artifactOf([COLLIDING_MARK_PKG_CWD]),
+      COLLIDING_PKG,
+      COLLIDING_PKG,
+    );
+    const fromAncestor = canonicalizeRegionPaths(
+      artifactOf([COLLIDING_MARK_ANCESTOR_CWD]),
+      COLLIDING_PKG,
+      WORKSPACE,
+    );
+    assert.equal(fromPkg, fromAncestor);
+    assert.equal(canonicalizeRegionPaths(fromPkg, COLLIDING_PKG, COLLIDING_PKG), fromPkg);
+  });
+
+  it("自有模块跨 cwd 同形；pkgDir 尾随分隔符不影响前缀", () => {
+    const fromPkg = canonicalizeRegionPaths(artifactOf(["lib/a.ts"]), COLLIDING_PKG, COLLIDING_PKG);
+    const fromAncestor = canonicalizeRegionPaths(
+      artifactOf(["plugins/foo/lib/a.ts"]),
+      COLLIDING_PKG,
+      WORKSPACE,
+    );
+    const fromAncestorTrailingSep = canonicalizeRegionPaths(
+      artifactOf(["plugins/foo/lib/a.ts"]),
+      `${COLLIDING_PKG}/`,
+      WORKSPACE,
+    );
+    assert.equal(fromAncestor, fromPkg);
+    assert.equal(fromAncestorTrailingSep, fromPkg);
+  });
+
+  it("同级依赖只收父目录前缀，依赖包名保留", () => {
+    const fromAncestor = canonicalizeRegionPaths(
+      artifactOf([`plugins/${DEP_HELPER}`]),
+      COLLIDING_PKG,
+      WORKSPACE,
+    );
+    const fromPkg = canonicalizeRegionPaths(
+      artifactOf([`../${DEP_HELPER}`]),
+      COLLIDING_PKG,
+      COLLIDING_PKG,
+    );
+    assert.deepEqual(regionLines(fromAncestor), [foldedMark(DEP_HELPER)]);
+    assert.equal(fromPkg, fromAncestor);
+  });
+
+  it("cwd = 包根父目录：自有模块收包名段，依赖与 node_modules 原样", () => {
+    const marks = ["lib/a.ts", DEP_HELPER, "node_modules/x/index.js"];
+    const folded = canonicalizeRegionPaths(artifactOf(marks), COLLIDING_PKG, "/repo/plugins");
+    assert.deepEqual(
+      regionLines(folded),
+      marks.map((mark) => `//#region ${mark}`),
+    );
+  });
+
+  it("cwd 在包根之下：行首相对段收掉后即 canonical", () => {
+    const marks = ["lib/a.ts", DEP_HELPER];
+    const folded = canonicalizeRegionPaths(
+      artifactOf(["../lib/a.ts", `../../${DEP_HELPER}`]),
+      COLLIDING_PKG,
+      `${COLLIDING_PKG}/sub`,
+    );
+    assert.deepEqual(
+      regionLines(folded),
+      marks.map((mark) => `//#region ${mark}`),
+    );
+  });
+
+  it("cwd = 包根的兄弟目录：行首相对段收掉后按剩余前缀收", () => {
+    const marks = ["lib/a.ts", DEP_HELPER];
+    const folded = canonicalizeRegionPaths(
+      artifactOf(["../plugins/foo/lib/a.ts", `../plugins/${DEP_HELPER}`]),
+      COLLIDING_PKG,
+      "/repo/other",
+    );
+    assert.deepEqual(
+      regionLines(folded),
+      marks.map((mark) => `//#region ${mark}`),
+    );
+  });
+
+  it("无关绝对路径（node_modules）与中段同名都不收", () => {
+    const marks = ["node_modules/webpack/plugins/index.js", "lib/plugins-helper.ts"];
+    const folded = canonicalizeRegionPaths(artifactOf(marks), COLLIDING_PKG, WORKSPACE);
+    assert.deepEqual(
+      regionLines(folded),
+      marks.map((mark) => `//#region ${mark}`),
+    );
+  });
+
+  it("盘符不同 ⇒ rel 无从算起，只收行首相对段", () => {
+    const marks = ["pkg/lib/a.ts", "pkg/lib/b.ts"];
+    const folded = canonicalizeRegionPaths(
+      artifactOf([BARE_PKG_MARK, `../${BARE_PKG_MARK.replace("a", "b")}`]),
+      String.raw`D:\repo\pkg`,
+      String.raw`C:\repo`,
+    );
+    assert.deepEqual(
+      regionLines(folded),
+      marks.map((mark) => `//#region ${mark}`),
+    );
+  });
+
+  it("一侧绝对一侧相对 ⇒ 同上，不收前缀", () => {
+    const folded = canonicalizeRegionPaths(artifactOf([BARE_PKG_MARK]), "/repo/pkg", "repo");
+    assert.deepEqual(regionLines(folded), [foldedMark(BARE_PKG_MARK)]);
+  });
+
+  it("裸名包根（无分隔符）也走精确档", () => {
+    const folded = canonicalizeRegionPaths(
+      artifactOf([BARE_PKG_MARK, `../${DEP_HELPER}`]),
+      "pkg",
+      ".",
+    );
+    assert.deepEqual(regionLines(folded), [foldedMark("lib/a.ts"), foldedMark(DEP_HELPER)]);
+  });
+});
+
+describe("旧签名档的父锚点边界", () => {
+  it("pkgDir 末段带分隔符 ⇒ 父锚点仍取整段而非被截断的残段", () => {
+    // 短包根加尾随分隔符是父锚点被截成残段的形状：残段匹配不到任何行首，父目录前缀会漏收。
+    const folded = canonicalizeRegionPaths(
+      artifactOf(["plugins/shared/lib/x.ts"]),
+      "/repo/plugins/foo/",
+    );
+    assert.deepEqual(regionLines(folded), ["//#region shared/lib/x.ts"]);
   });
 });

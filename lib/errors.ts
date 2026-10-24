@@ -49,15 +49,21 @@ function render(value: unknown, path: Set<unknown>): string {
       // 跨 realm 的 Error 走这一支：instanceof 判不出来，但它确实是带 message 的对象。
       if (typeof value === "object" && value !== null) {
         const owned = ownMessage(value);
-        if (owned !== undefined) {
+        // 空串不能算「读到了 message」：return "" 会让界面只拿到一片空白，与下方
+        // 「空 message 回退 name」同一条理由——这里改落 String()，交给原型上的 toString 兜底。
+        if (owned !== undefined && owned !== "") {
           return owned;
         }
       }
       return String(value);
     }
     const message = value.message === "" ? value.name : value.message;
+    // `AggregateError` 是 ES2021 才进全局的：裸引用它会在没有该全局的环境里抛
+    // ReferenceError，而下面 catch 会把它吞成 `<unrenderable value>`——整条 message 一起丢掉。
     const members =
-      value instanceof AggregateError && value.errors.length > 0
+      typeof globalThis.AggregateError === "function" &&
+      value instanceof AggregateError &&
+      value.errors.length > 0
         ? ` [${value.errors.map((member) => render(member, path)).join("; ")}]`
         : "";
     const causeText =
@@ -91,7 +97,8 @@ export function errorText(error: unknown): string {
  * 是不是「设置冲突」那一类失败（宿主在两个界面同时改同一份设置时抛的形）。
  *
  * 认两枚痕迹而不是 `instanceof`：跨 realm 抛过来的错误类不是同一个构造函数，而
- * `code`/`name` 是宿主两边都写的那两个值。经 `fieldOf` 读，免得在敌意形状上抛。
+ * `code`/`name` 是宿主两边都写的那两个值。经 `fieldOf` 读——它的探测出口把敌意
+ * getter / Proxy 陷阱的抛错塌成「取不到」，判定面因此天然只回答是/否，不外抛。
  * @param error 捕获到的值
  * @returns 该失败是否应当按「设置已被别处改动」处理
  */

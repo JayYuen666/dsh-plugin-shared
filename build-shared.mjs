@@ -18,6 +18,7 @@
 // （配置面吃的是消费方自备工具链）与 build-host 的 facets 清单都不是逐字同构的，合并即改行为。
 //
 // 不进 barrel、不进 exports、也不进 files：构建期专用，消费方拿不到也不需要。
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -40,8 +41,30 @@ function asRecord(raw) {
  * @returns {string[]}
  */
 function dependencyNames(pkgJson, field) {
-  const table = asRecord(asRecord(pkgJson)[field]);
+  const table = asRecord(pkgJson[field]);
   return Object.keys(table).filter((name) => typeof table[name] === "string");
+}
+
+/**
+ * 主模块判据：本模块是否被当作入口直接运行（而不是被 import）。
+ *
+ * 不能写 `process.argv[1] === import.meta.filename`：`import.meta.filename` 是解析后的真实
+ * 路径，而 argv[1] 保留调用方写的那一串——软链、`/tmp` → `/private/tmp` 这类符号链接、以及
+ * 大小写不同的盘符都会让两者不同形，于是判据恒假、脚本照常退出 0 却什么都没建。
+ * 不用 `import.meta.main`：本包 `engines.node` 是 `>=22.12.0`，那个属性在 Node 22 上不存在。
+ * @param moduleFile 调用方的 `import.meta.filename`
+ * @returns 是否直接运行
+ */
+export function isMainModule(moduleFile) {
+  // 取不到 argv[1] 时落空串，realpathSync("") 自己抛 ENOENT、走下面那条 false 分支。
+  const [, argvPath = ""] = process.argv;
+  try {
+    return realpathSync(argvPath) === realpathSync(moduleFile);
+  } catch {
+    // 取不到真实路径（被删、无权限）时按「不是入口」处理：判错的代价是脚本什么都不做，
+    // 与 import 场景同形，不会把别人的进程当成自己。
+    return false;
+  }
 }
 
 /**
@@ -65,13 +88,22 @@ function packageNameOf(id) {
  * @returns {Promise<(id: string) => boolean>}
  */
 export async function createIsExternal(root, extraNames = []) {
-  /** @type {unknown} */
-  const raw = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  const manifestPath = path.join(root, "package.json");
+  // 读不到或不是合法 JSON 时给一条点名文件的话：裸的 SyntaxError 只会说「Unexpected token」，
+  // 而这个函数是三条构建链的共同前置，报错不点名文件时排查方向会先错到 rolldown 上去。
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(`读不出 ${manifestPath}：${String(error)}`, { cause: error });
+  }
   const pkgJson = asRecord(raw);
+  // extraNames 也要过 packageNameOf：查询侧拿包名段比，若调用方传的是子路径说明符
+  // （如 vitest/config），原样放进 Set 就永远比不中——那一批会被静默打进产物。
   const externalNames = new Set([
     ...dependencyNames(pkgJson, "dependencies"),
     ...dependencyNames(pkgJson, "peerDependencies"),
-    ...extraNames,
+    ...extraNames.map((name) => packageNameOf(name)),
   ]);
   return (id) => externalNames.has(packageNameOf(id));
 }

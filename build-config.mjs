@@ -16,7 +16,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { rolldown } from "rolldown";
 import { canonicalizeRegionPaths } from "./lib/canonicalize-region-paths.ts";
-import { createIsExternal } from "./build-shared.mjs";
+import { createIsExternal, isMainModule } from "./build-shared.mjs";
 
 const root = import.meta.dirname;
 const outDir = path.join(root, "dist", "config");
@@ -40,6 +40,9 @@ const configFacets = ["oxlint.base", "vitest.base"];
  * @returns {Promise<Map<string, string>>}
  */
 export async function buildConfig() {
+  // mkdir 放在导出函数内而不是 main()：buildConfig 是导出面，被测试或别的脚本直接调用时
+  // 目录不存在会让 writeFile 报 ENOENT，而「产物落哪」是这个函数自己的契约。
+  await mkdir(outDir, { recursive: true });
   const bundle = await rolldown({
     input: configFacets.map((facet) => path.join(root, "config", `${facet}.ts`)),
     platform: "node",
@@ -55,27 +58,37 @@ export async function buildConfig() {
     // 对 oxlint 读取规则毫无影响——它读的是结构，不是排版。
     minify: true,
   });
+  // 与 build-host.mjs 同口径：bundle 持有 worker 与句柄，用完显式关掉。
+  await bundle.close();
   const chunks = output.filter((item) => item.type === "chunk");
   if (chunks.length === 0) {
     throw new Error("rolldown generate returned no chunk output");
   }
+  // 逐个 facet 校验入口 chunk 都在：只判 `chunks.length === 0` 时，两个入口里少一个也会照常
+  // 「构建成功」，而消费方按 ./config/oxlint 或 ./config/vitest.base 取用时才拿到
+  // ERR_MODULE_NOT_FOUND——一条构建期的可判事实被推迟到消费方的运行期。
+  for (const facet of configFacets) {
+    const present = chunks.some((chunk) => path.basename(chunk.fileName) === `${facet}.js`);
+    if (!present) {
+      throw new Error(`rolldown 没为 facet ${facet} 产出入口 chunk`);
+    }
+  }
   return new Map(
     chunks.map((chunk) => [
       path.join(outDir, chunk.fileName),
-      canonicalizeRegionPaths(chunk.code, root),
+      canonicalizeRegionPaths(chunk.code, root, process.cwd()),
     ]),
   );
 }
 
 async function main() {
-  await mkdir(outDir, { recursive: true });
   const built = await buildConfig();
   const artifacts = [...built.entries()];
   await Promise.all(artifacts.map(([file, code]) => writeFile(file, code, "utf8")));
   console.info("config built:", artifacts.length, "files -> dist/config/");
 }
 
-if (process.argv[1] === import.meta.filename) {
+if (isMainModule(import.meta.filename)) {
   try {
     await main();
   } catch (error) {

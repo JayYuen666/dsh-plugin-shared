@@ -4,5 +4,14 @@
 // 判 TS2591，并级联出 4 条 no-unsafe-*），而单源里的类型错误就没人检查了。
 {
   "extends": "./config/tsconfig.base.json",
-  "include": ["config/**/*.ts", "lib/**/*.ts", "test/**/*.ts"]
+  // 根级三条配置文件也收进来：它们经 definePackageConfig / definePluginConfig 用到 config/ 的
+  // 类型面，不收进程序面时选项写错（例如 coverageInclude 拼错）不会被 tsc 报出来。
+  "include": [
+    "config/**/*.ts",
+    "lib/**/*.ts",
+    "test/**/*.ts",
+    "vitest.config.ts",
+    "oxlint.config.ts",
+    "oxfmt.config.ts"
+  ]
 }

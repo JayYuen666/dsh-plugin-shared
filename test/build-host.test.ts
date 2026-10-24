@@ -7,7 +7,9 @@
 // 从此为官方实现的行为负责。两个坏方向都不报错、只在消费侧发作，故与兄弟包同批钉住。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { buildHost } from "../build-host.mjs";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
+import { buildHost, facets } from "../build-host.mjs";
 import { hostFreshnessEvidence } from "./host-freshness.ts";
 
 /** 把所有 chunk 的代码并成一段文本好做说明符判定。 */
@@ -75,5 +77,19 @@ describe("shared buildHost()", () => {
       !/from\s*["']@deepseek-ai\/dsh-shell/u.test(out),
       "dsh-shell 只能是类型面：产物里出现它的 from 说明符即值导入",
     );
+  });
+
+  it("facets 与 lib/ 下切面一一对应（barrel 类型面的同源清单不许漂移）", async () => {
+    // 新增切面只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，dist/index.d.ts 会
+    // 静默缺成员而其余门禁全绿——index.test.ts 管 barrel↔lib、publish-manifest 管
+    // exports↔lib，只有这份清单两边都搭不上。
+    const listed = await readdir(path.join(import.meta.dirname, "..", "lib"));
+    const onDisk = listed
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => name.replace(/\.ts$/u, ""))
+      .toSorted();
+    // 不进 facets 的两枚：barrel 自己，与只走子路径的 builder 期文本后处理件。
+    const expected = [...facets, "canonicalize-region-paths", "index"].toSorted();
+    assert.deepEqual(onDisk, expected);
   });
 });

@@ -100,4 +100,31 @@ describe("hasMethods（服务面校验）", () => {
   it("空清单只验「是个对象」——调用方据此把「没有方法要验」与「服务不在」分开", () => {
     assert.equal(hasMethods({}, []), true);
   });
+
+  it("原型链的默认成员（Object.prototype 一类）不算服务实现：普通对象冒充不了服务面", () => {
+    // 判据是身份（解析到的函数正是 Object.prototype 上那一枚才排除），不是「在原型链上」：
+    // 类/中间原型上的真实实现照常可识别，cordis 方法挂原型那条承重面不受影响。
+    assert.equal(hasMethods({}, ["toString"]), false);
+    assert.equal(hasMethods({}, ["constructor"]), false);
+    const proto = { toString: (): string => "ok" };
+    assert.equal(hasMethods(Object.create(proto), ["toString"]), true);
+  });
+
+  it("被测对象带抛错 getter / Proxy 陷阱 ⇒ 按「能力不存在」处理，异常不冒泡", () => {
+    // fieldOf / hasMethods 的调用点形如 `typeof fieldOf(x, "describe") === "function"`，
+    // 周围没有 try/catch：探测读一次抛错就会把整条表达式炸掉，把「能力不存在」升级成流程崩溃。
+    const hostile: unknown = new Proxy(
+      {},
+      {
+        get: (_target, key) => {
+          if (key === "boom") {
+            throw new Error("探测期间抛错");
+          }
+          return key;
+        },
+      },
+    );
+    assert.equal(fieldOf(hostile, "boom"), undefined);
+    assert.equal(hasMethods(hostile, ["boom"]), false);
+  });
 });

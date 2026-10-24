@@ -95,6 +95,15 @@ describe("truncateStart（后切，防首部孤立低代理）", () => {
     assert.equal(truncateStart("abc", Number.NaN), "");
     assert.equal(truncateStart("abc\u{1F600}", Number.NaN), "");
   });
+
+  it("不足一枚码元的正预算 ⇒ 空串（slice 的取整会把它变成 slice(0) 的整串）", () => {
+    // 0 < minChars < 1 是第三个"预算不可用"的形态：ToIntegerOrInfinity(-0.5) 得 -0，
+    // 于是 slice(-0.5) 等价 slice(0) 把整串吐回去。按比例算出来的预算就可能落进这一档。
+    assert.equal(truncateStart("0123456789abcdef", 0.5), "");
+    assert.equal(truncateStart("0123456789abcdef", 0.999999), "");
+    // 反向的一侧：够一枚码元时照常后切，不因这次收紧被误伤。
+    assert.equal(truncateStart("0123456789abcdef", 1), "f");
+  });
 });
 
 describe("两端拼接（failureDetail 的用法）", () => {

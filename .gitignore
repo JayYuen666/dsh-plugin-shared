@@ -1,3 +1,11 @@
 node_modules/
 dist/
 coverage/
+
+# 凭据面：本仓的 .npmrc 是**被跟踪**的（只有 @jayyuen66 的 registry 指向，没有 token），
+# 所以这里不能忽略它；但本地临时写进去的凭据文件、以及各种 .env / 私钥不应进仓。
+.env
+.env.*
+!.env.example
+*.pem
+*.key

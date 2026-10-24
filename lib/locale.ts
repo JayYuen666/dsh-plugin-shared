@@ -58,8 +58,9 @@ export type MessagesCatalog<Messages> = Record<
 >;
 
 /**
- * 把设置里的原始值归一成受支持的 locale：按**主语言子标签**判定（`en-US`、`zh-Hans-CN`
- * 都落位），与 client 半「先完整标签、再主语言子标签」的规则同源；判不出来一律退
+ * 把设置里的原始值归一成受支持的 locale：只取**主语言子标签**判定（`en-US`、`zh-Hans-CN`
+ * 都落位到 `en` / `zh`），没有「先按完整标签匹配」那一层——受支持的语言只有 `zh` 与 `en`
+ * 两个主标签，完整标签匹配不会多认出任何一个，反而要多维护一张表。判不出来一律退
  * DEFAULT_LOCALE——文案语言不该成为报错面。
  * @param raw - 设置里的原始值，类型不可信（来自用户文档）。
  * @returns 归一后的 locale。

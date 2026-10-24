@@ -49,13 +49,26 @@ function separatorRuns(sep: string): RegExp {
 const DRIVE_ROOT = /^[A-Za-z]:$/u;
 
 /**
- * Windows 的 UNC 共享根（`\\server\share`，可带尾反斜杠）。
+ * Windows 的 UNC 共享根（`\\server\share`，可带尾反斜杠，也可带 `\\?\` 长路径前缀）。
  *
  * 必须作用于**折分隔符之前**的串：折完它是 `/server/share`，与 POSIX 的 `/a/b` 无法区分，
- * 届时任何「两段即根」的判据都会误伤合法的 POSIX 目录。这里只匹配 UNC 自己的字形
- * （前导两个反斜杠），POSIX 路径与盘符路径都不命中。
+ * 届时任何「两段即根」的判据都会误伤合法的 POSIX 目录。这里只认 UNC 自己的字形（前导两个
+ * 反斜杠），POSIX 路径与盘符路径都不命中。
+ *
+ * 长路径前缀要先剥掉再判：`\\?\UNC\server\share` 的字面形是「`?` + 三段」，直接当
+ * 两段判会既不像 UNC 根也不像普通目录，于是给它造出一个假桶键。
+ * @param candidate - 折分隔符**之前**的绝对路径（可带尾分隔符）
+ * @returns 是否 UNC 共享根
  */
-const UNC_ROOT = /^\\\\[^\\]+\\[^\\]+$/u;
+function isUncRoot(candidate: string): boolean {
+  if (!candidate.startsWith(String.raw`\\`)) {
+    // 只认 UNC 自己的字形：`//server/share` 折完与合法的 POSIX `/a/b` 完全同形，
+    // 按两段判会把普通目录误伤成根。
+    return false;
+  }
+  const withoutPrefix = candidate.replace(/^\\\\[?.]\\(?:UNC\\)?/u, "").replace(/^\\\\/u, "");
+  return /^[^\\]+\\[^\\]+$/u.test(withoutPrefix);
+}
 
 /**
  * cwd → 项目桶键。非字符串 / trim 后为空 / 归一后落到根目录 → `"default"`
@@ -87,7 +100,7 @@ export function deriveProjectKey(cwd: unknown, opts?: ProjectKeyOptions): string
   // **之前**判，折完就再也认不出来（实测 `\\server\share` 原先落成 `share-<hash>` 而非 default）。
   const stripped = resolved.replace(/[/\\]+$/u, "");
   const norm = resolved.replaceAll(separatorRuns(sep), "/").replace(/\/+$/u, "");
-  if (norm === "" || DRIVE_ROOT.test(norm) || UNC_ROOT.test(stripped)) {
+  if (norm === "" || DRIVE_ROOT.test(norm) || isUncRoot(stripped)) {
     return "default";
   }
   // norm 已把分隔符折成单一 `/` 且非空、非盘符根 → 尾段必非空（无需"空尾段"兜底分支）。

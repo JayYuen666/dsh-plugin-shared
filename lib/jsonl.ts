@@ -41,7 +41,10 @@ export function shrinkJsonlTail(text: string, maxBytes: number): string {
       break;
     }
     const keep = lines.slice(Math.floor(lines.length / 2)).join("\n");
-    current = keep.startsWith("\n") ? keep.slice(1) : keep;
+    // 掐掉 keep 前面的空行：对半切在连续空行中间时会切出一串前导换行，只 slice(1) 只吃掉
+    // 一枚、结果仍以空行开头；CRLF 形态下 keep 以 `\r\n` 开头，`startsWith("\n")` 更是
+    // 一次都命中不了。这里整段收掉，判据同时覆盖两种行尾。
+    current = keep.replace(/^(?:\r?\n)+/u, "");
   }
   return current;
 }

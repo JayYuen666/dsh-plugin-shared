@@ -11,10 +11,38 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * 探测式读取的两种结局：成员值本身可能是任何东西（含 undefined），所以「读到了」与
+ * 「读取抛错」必须是可判别的两个形状，不能共用 undefined。
+ */
+type MemberRead = { readonly absent: true } | { readonly absent: false; readonly value: unknown };
+
+/** 读取抛错（敌意 getter / Proxy 的 get 陷阱）时的共同结局：按「该成员取不到」处理。 */
+const ABSENT_READ: MemberRead = { absent: true };
+
+/**
+ * 探测式读取。被测对象来自 `ctx.get(...)` 的 unknown，可能带 getter 或 Proxy 陷阱：
+ * 读取抛错在出口处塌成「取不到」而不是冒泡——本文件的两个出口都是能力探测，
+ * 一次抛错会把 `typeof fieldOf(x, "describe") === "function"` 这类表达式整个炸掉，
+ * 把「能力不存在」升级成流程崩溃。
+ */
+function readMember(value: Record<string, unknown>, key: string): MemberRead {
+  try {
+    return { absent: false, value: value[key] };
+  } catch {
+    return ABSENT_READ;
+  }
+}
+
+/**
  * 服务面校验：对象存在且**声明的每个方法**都可调用。
  *
  * 只做 `typeof value["shell"] === "object"` 的话，守卫声称的是「有这个服务」而实际证明的只是
  * 「有个对象」——运行到一半才炸。逐个点名方法，守卫才名副其实。
+ *
+ * `Object.prototype` 的默认成员不算服务实现：`hasMethods({}, ["toString"])` 若照单全收，
+ * 一个普通对象就能冒充服务面。判据是**身份**——解析到的函数正是 `Object.prototype` 上
+ * 那一枚才排除，所以类/中间原型上的真实实现（包括对原型成员的重写）照常可识别，
+ * cordis 方法挂在原型上的承重面不受影响。
  * @param value 待验证的服务候选（来自 `ctx.get(...)` 的 unknown）
  * @param methods 该服务面必须可调用的方法名
  * @returns 是否为可用的服务面
@@ -24,7 +52,12 @@ export function hasMethods(value: unknown, methods: readonly string[]): boolean 
     return false;
   }
   for (const method of methods) {
-    if (typeof value[method] !== "function") {
+    const read = readMember(value, method);
+    if (read.absent || typeof read.value !== "function") {
+      return false;
+    }
+    // Object.prototype 的成员都是自有属性（它的原型是 null），descriptor 的 value 位即成员本身。
+    if (read.value === Object.getOwnPropertyDescriptor(Object.prototype, method)?.value) {
       return false;
     }
   }
@@ -50,7 +83,11 @@ export function hasMethods(value: unknown, methods: readonly string[]): boolean 
  * ⚠ 本段刻意不点名兄弟包：**声明上的 JSDoc 会被 tsc 抄进 dist/types/record.d.ts 一起
  * 发出去**，包名会让装了这个包的消费方以为存在一个并不存在的依赖
  *（test/publish-manifest.test.ts 的产物面判据会红）。要写具体调用点就写在 test/ 里。
+ *
+ * 读取走的是探测式出口：被测对象带抛错 getter / Proxy 陷阱时按「取不到」交回
+ * `undefined`，异常不冒泡（能力探测不该把流程炸掉）。
  */
 export function fieldOf(value: unknown, key: string): unknown {
-  return isRecord(value) ? value[key] : undefined;
+  const read = isRecord(value) ? readMember(value, key) : ABSENT_READ;
+  return read.absent ? undefined : read.value;
 }

@@ -53,6 +53,15 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
     assert.equal(errorText(accessor), OBJECT_STRING);
   });
 
+  it("非 Error 对象 message 是空串时落 String()，不留一片空白", () => {
+    // 空串不能算「读到了 message」：直接 return "" 会让界面只拿到空白，
+    // 与「Error 的 message 为空串时回退 name」是同一个理由。
+    assert.equal(errorText({ message: "" }), OBJECT_STRING);
+    assert.equal(errorText({ message: "", code: 1 }), OBJECT_STRING);
+    // 非空串照常取
+    assert.equal(errorText({ message: "有内容" }), "有内容");
+  });
+
   it("cause 链按由外到内拼接", () => {
     const root = new Error("根因");
     const middle = new Error("中层", { cause: root });
@@ -162,5 +171,41 @@ describe("isSettingsConflict（设置冲突那一类失败）", () => {
   it("两形都不是则否，敌意形状不从这里抛", () => {
     assert.equal(isSettingsConflict(new Error("boom")), false);
     assert.equal(isSettingsConflict(null), false);
+  });
+
+  it("敌意 getter 与 Proxy 陷阱都不外抛，一律判否", () => {
+    // `fieldOf` 走原型链读属性，所以这两个形状都会真的触发 get 陷阱；读取抛错由
+    // fieldOf 的探测出口塌成「取不到」（lib/record.ts），判定面因此只回答是/否。
+    // 调用点全在 catch 之后拿它决定要不要走「设置冲突」那一支。
+    assert.equal(
+      isSettingsConflict({
+        get code(): string {
+          throw new Error("取不到");
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      isSettingsConflict(
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("陷阱");
+            },
+          },
+        ),
+      ),
+      false,
+    );
+    // 对照：同一形状交给 errorText 也不抛（两条出口契约一致）
+    assert.equal(
+      errorText({
+        get code(): string {
+          throw new Error("取不到");
+        },
+      }),
+      OBJECT_STRING,
+    );
   });
 });
