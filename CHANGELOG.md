@@ -2,6 +2,14 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.9
+
+0.1.8 is the newest version on the registry, and this section is one fix to the build facet shipped in it.
+
+### Fixed
+
+- **`collapseStorePaths` now folds the `// ` module-banner form, not only `//#region` lines** (`lib/build-client.ts`). When this package is installed from the registry, rolldown annotates the inlined dependency modules with `// node_modules/.pnpm/<name>@<version>_<peer-suffix>/node_modules/...` banners; the region-only fold left those untouched, and the whole-output leftover guard then failed the consumer's client build on every clean install — exactly the shape a repository's CI runs (`pnpm install --frozen-lockfile` → `prepare`) and the workspace's `verify:published` rehearsal. A workspace-link install never produces a `.pnpm` segment, which is why every local check stayed green through the 0.1.8 release. The fold now recognises both comment forms — `//#region` markers and `// ` banners, each keeping its own prefix — after backslash normalisation and with the same `../`-prefix allowance; the leftover check is unchanged, and an occurrence on a non-comment line still fails the build. Verified by re-running a consumer's client build inside a preserved registry-shaped install tree with the patched facet: the build goes green and the banners come out as `// node_modules/@jayyuen66/dsh-plugin-shared/dist/...`, byte-stable across install shapes.
+
 ## 0.1.8
 
 0.1.7 is the newest version on the registry, and this section covers everything in the working tree since it. The headline is the build-orchestration unification: the four new subpaths below absorb the build logic that the plugin repositories used to carry as drifting near-copies in their root `build-*.mjs` scripts, and the seven JavaScript plugin repositories move to thin configuration layers in the same round. Two smaller items ride along: the license holder line is unified, and the host development line moves to `0.2.1-rc.3`.

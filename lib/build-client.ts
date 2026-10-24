@@ -29,33 +29,40 @@ export const REACT_RUNTIME_MODULES: readonly string[] = [
 ];
 
 /**
- * 把 `//#region` 行里的 pnpm 内容寻址段（store 目录里带「名@版_哈希」的那一层）折成
- * 普通的 `node_modules/` 一层。
+ * 把注释行里的 pnpm 内容寻址段（store 目录里带「名@版_哈希」的那一层）折成普通的
+ * `node_modules/` 一层。
  *
  * 为什么 client 侧需要而 host 侧不需要：host 把依赖全外部化，产物里没有依赖的模块标记；
  * client 必须把共享库的模块**内联**（浏览器解析不了裸说明符），于是 rolldown 写下的标记里
  * 烙着依赖版本与本机 store 哈希。带着它发布，同一份源码在不同机器上产出不同字节（跨机器
  * 不可复现），还把安装布局公开进公共 tarball。
  *
+ * 两种注释形态都要折：workspace 软链安装下共享库模块标成 `//#region` 行；从 registry 安装时
+ * （消费仓 CI 的 frozen 安装正是这个形状）同一批模块标成 `// node_modules/…` 横幅，路径里带
+ * `.pnpm/<名>@<版>_<peer 后缀>` 那一层。只折前者时，后者的 store 段原样留在产物里，下面的
+ * 兜底判据把整次构建判红——0.1.8 就是在这个形状上红的，而伞内软链安装碰不到 `.pnpm`，
+ * 所以本地检查与发布前的全量门都看不见它。
+ *
  * 折叠必须覆盖整段而不是只换中段：store 段之上还可能带着 `../` 前缀（依赖落在工作区根
  * 一侧时就是这样），只换中段会留下 `../../node_modules/<包名>/…`，产物字节仍然随检出
- * 深度变，等于没折。所以判据锚在 `//#region ` 之后、允许任意个相对段。
+ * 深度变，等于没折。所以判据锚在行首、允许任意个相对段。
  *
  * 反斜杠先归一：Windows 上 rolldown 可能写 `\`，而这行是注释、整行只有路径，归一不会
  * 误伤代码。折叠完再验一遍「整份产物里不剩 `.pnpm` 段」——静默未命中是这条折法最坏的
- * 失效形态：判据锚在 region 行的形状上，而 rolldown 一旦改写成别的行形态，折叠会一处都
+ * 失效形态：判据锚在注释行的形状上，而 rolldown 一旦改写成别的行形态，折叠会一处都
  * 不命中，兜底若也跟着只用同一套形状假设，就会一起静默失明。`node_modules/.pnpm/`
  * 这个子串与行形态无关。
  * @param code - chunk 正文
  * @returns 折叠后的正文
  */
 export function collapseStorePaths(code: string): string {
-  const collapsed = code.replaceAll(/^\/\/#region .*$/gmu, (line) =>
+  const collapsed = code.replaceAll(/^\/\/(?:#region .*| .*)$/gmu, (line) =>
     line
       .replaceAll("\\", "/")
       .replace(
-        /^\/\/#region (?:(?:\.\.?\/)+)?node_modules\/\.pnpm\/[^/]+\/node_modules\//u,
-        "//#region node_modules/",
+        /^\/\/(?:#region | )?(?:(?:\.\.?\/)+)?node_modules\/\.pnpm\/[^/]+\/node_modules\//u,
+        (matched) =>
+          matched.startsWith("//#region") ? "//#region node_modules/" : "// node_modules/",
       ),
   );
   const leftover = /node_modules\/\.pnpm\//u.exec(collapsed);

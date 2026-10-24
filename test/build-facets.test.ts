@@ -538,6 +538,30 @@ describe("buildClientBundle", () => {
     assert.equal(collapseStorePaths(clean), clean);
   });
 
+  it("collapseStorePaths 单测：`// ` 模块横幅的 store 段同样折叠（registry 安装形态）", () => {
+    const banner =
+      "// node_modules/.pnpm/@scope+pkg@1.0.0_peer@2.0.0/node_modules/@scope/pkg/dist/a.js";
+    assert.equal(collapseStorePaths(banner), "// node_modules/@scope/pkg/dist/a.js");
+  });
+
+  it("collapseStorePaths 单测：横幅与 region 各保其前缀；`../` 前缀与反斜杠同样处理", () => {
+    assert.equal(
+      collapseStorePaths("// ../node_modules/.pnpm/x@1.2.3_a/node_modules/x/b.js"),
+      "// node_modules/x/b.js",
+    );
+    assert.equal(
+      collapseStorePaths(String.raw`//#region ..\node_modules\.pnpm\x@1.2.3_a\node_modules\x\b.js`),
+      "//#region node_modules/x/b.js",
+    );
+  });
+
+  it("collapseStorePaths 单测：非注释行携带 .pnpm 串仍然判红（兜底不因扩面放松）", () => {
+    assert.throws(
+      () => collapseStorePaths("const p = 'node_modules/.pnpm/x@1/node_modules/x';"),
+      /未折叠/u,
+    );
+  });
+
   it("包名缺失 / 空串 / 字符集不合法：构建前失败，rolldown 不被调用", async () => {
     const missing = await fixtureRoot({});
     const empty = await fixtureRoot({ name: "" });
