@@ -27,6 +27,28 @@
 import type { ShellProcess } from "@deepseek-ai/dsh-shell";
 import type { JobOutcome } from "@deepseek-ai/dsh-jobs";
 
+/** thenable 判据：`kill()` 的返回值只会被丢弃或被收掉，不需要 Promise 的其余面。 */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  // 判据必须直接写在 value 上：把 typeof 结果存进变量不产生收窄，Reflect.get 会收到 unknown。
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return false;
+  }
+  return typeof Reflect.get(value, "then") === "function";
+}
+
+/**
+ * 把 `kill()` 返回的 Promise 的拒绝收掉。单独成函数是因为 `killProc` 自己必须同步返回：
+ * 写成 `async` 会让调用点拿到一个没人 await 的 Promise，问题只是换了条路逃出去。
+ * @param settled `kill()` 的返回值
+ */
+async function drainFailure(settled: PromiseLike<unknown>): Promise<void> {
+  try {
+    await settled;
+  } catch {
+    // 忽略：见 killProc 的 JSDoc
+  }
+}
+
 /**
  * 官方结局类型在这里再出一个具名出口。`jobOutcomeOf` 的返回类型就是它，消费方把它写进自己的
  * 签名（生产者回调、测试断言）时若没有具名出口，只能把结构重述一遍——而重述正是本包要收敛掉的。
@@ -49,28 +71,40 @@ export function jobOutcomeOf(proc: SettledProcess): JobOutcome {
       detail: proc.signal === null ? "killed before exit" : `signal: ${proc.signal}`,
     };
   }
+  // `exitCode === null` 只在「被信号终止」或「还在跑」时出现；走到这一支说明 status 是
+  // completed，故按宿主的 `processOutcome` 口径记 0（宿主对「跑完了但没报退出码」同样记 0）。
+  // 卡片侧不受影响：消费方投影时直接读 `proc.exitCode` 原样下发，这里只决定名册里那行理由。
   return { status: "completed", detail: `exit code: ${String(proc.exitCode ?? 0)}` };
 }
 
 /**
- * 只用得到的那一个成员。**不按 `ShellProcess` 整型收**：本函数丢弃 `kill()` 的返回值，
- * 把官方的返回类型写进签名等于要求每个调用方（含测试替身）都得交回一个 boolean，
- * 而这里真正需要的只是「有一个可以试着调的 kill」。
+ * 只用得到的那一个成员。**不按 `ShellProcess` 整型收**：官方的 `kill` 返回 `Promise<boolean>`，
+ * 把那个返回类型写进签名等于要求每个调用方（含测试替身）都得交回一个 Promise，
+ * 而这里真正需要的只是「有一个可以试着调的 kill」——返回值要么被丢弃，要么被收掉拒绝。
  */
 export interface KillableProcess {
   kill: () => unknown;
 }
 
 /**
- * 收掉子进程，**忽略抛错**：进程可能已自然退出或已被系统回收，此时 kill 失败不是本包的失败。
+ * 收掉子进程，**忽略失败**：进程可能已自然退出或已被系统回收，此时 kill 失败不是本包的失败。
  *
  * 为什么不向调用方通报：调用点都在清理臂（卸载、被拒、超时）上，那里没有可行动的下一步；
  * 把异常抛出去只会让清理链半途而废，留下更难的现场。
+ *
+ * 同步抛错与**异步拒绝**都要收：官方句柄的 `kill` 返回 `Promise<boolean>`，同步 try/catch
+ * 只拦得住前者，返回的 Promise 拒绝会一路逃到进程级 unhandledRejection——清理臂不该有能力
+ * 把宿主进程的未处理拒绝计数器推高。
  * @param proc 待收的句柄
  */
 export function killProc(proc: KillableProcess): void {
   try {
-    proc.kill();
+    const settled = proc.kill();
+    if (isThenable(settled)) {
+      // 出口在这个 Promise 自己身上：await 一下就把它标记为已处理。拒绝内容不进日志——
+      // 清理臂的失败没有可行动的下一步，记下来只会污染宿主输出。
+      void drainFailure(settled);
+    }
   } catch {
     // 忽略
   }

@@ -60,6 +60,15 @@ const explodingSink = (): never => {
   throw new Error("onFailure 自己炸了");
 };
 
+/**
+ * 失败收口自己**异步**失败。签名 `(reason) => void` 拦不住它：TypeScript 允许把
+ * 返回 Promise<void> 的函数赋给 `() => void`，而本模块的典型收口正是异步落库/降级。
+ */
+const asyncExplodingSink = async (): Promise<void> => {
+  await Promise.resolve();
+  throw new Error("async onFailure 也炸了");
+};
+
 describe("settleLessonCall", () => {
   it("调用同步抛错 ⇒ onFailure 收到那个原因", () => {
     const sink = collector();
@@ -129,6 +138,34 @@ describe("settleLessonCall", () => {
       expect(record.text).toContain("onFailure threw:");
       // 实参里带着收口自己抛的那个 Error（它不在拼平的首参里）。
       expect((record.extra[0] as Error).message).toBe("onFailure 自己炸了");
+    }
+  });
+
+  it("onFailure 是 async 且自己失败 ⇒ 也只剩一条日志，不留未处理拒绝", async () => {
+    // 这条护的是「收口自己异步失败」那条路：report 若不接管返回值，rejection 会逃逸成
+    // 进程级未处理拒绝，而本模块存在的理由恰恰是消灭这一类。两条失败面都走一遍。
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      settleLessonCall(() => {
+        throw new Error("call down");
+      }, asyncExplodingSink);
+      settleLessonCall(() => Promise.reject(new Error(ASYNC_DOWN)), asyncExplodingSink);
+      await flushMicrotasks();
+      await flushMicrotasks();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toStrictEqual([]);
+    const records = logged();
+    expect(records).toHaveLength(2);
+    for (const record of records) {
+      expect(record.level).toBe("error");
+      expect(record.text).toContain("onFailure threw:");
+      expect((record.extra[0] as Error).message).toBe("async onFailure 也炸了");
     }
   });
 

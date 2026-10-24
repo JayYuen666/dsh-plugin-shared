@@ -1,7 +1,7 @@
 # 自动生成：catalog 键值与 overrides 取值来自根 pnpm-workspace.yaml，改根不改这里。
 autoInstallPeers: false
 catalog:
-  "@jayyuen66/dsh-plugin-shared": ^0.1.5
+  "@jayyuen66/dsh-plugin-shared": ^0.1.6
   "@types/node": 26.6.5
   "@types/react": 19.3.0
   "@types/react-dom": 19.3.0

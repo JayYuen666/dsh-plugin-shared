@@ -27,4 +27,46 @@ describe("diffTouched", () => {
     expect(diffTouched({ temp: null }, {})).toStrictEqual([]);
     expect(diffTouched({ temp: null }, { temp: 0 })).toStrictEqual(["temp"]);
   });
+
+  // 下面几条钉的是「为什么不能用 JSON.stringify 比较」：序列化在三个方向上给出错答案。
+  it("对象的键序不影响判定：同内容、不同插入序不算改动", () => {
+    expect(diffTouched({ nested: { x: 1, y: 2 } }, { nested: { y: 2, x: 1 } })).toStrictEqual([]);
+  });
+
+  it("NaN 与 null 不等价，NaN 与 NaN 等价（序列化会把两者都渲染成 null）", () => {
+    expect(diffTouched({ temp: Number.NaN }, { temp: null })).toStrictEqual(["temp"]);
+    expect(diffTouched({ temp: Number.NaN }, { temp: Number.NaN })).toStrictEqual([]);
+    expect(diffTouched({ temp: Number.POSITIVE_INFINITY }, { temp: null })).toStrictEqual(["temp"]);
+  });
+
+  it("数组按逐项比较，长度或元素不同才进差异", () => {
+    expect(diffTouched({ model: [1, 2] }, { model: [1, 2] })).toStrictEqual([]);
+    expect(diffTouched({ model: [1, 2] }, { model: [2, 1] })).toStrictEqual(["model"]);
+    expect(diffTouched({ model: [1, 2] }, { model: [1] })).toStrictEqual(["model"]);
+  });
+
+  it("bigint 与循环引用都不抛（序列化在这两种值上直接抛 TypeError / RangeError）", () => {
+    expect(diffTouched({ count: 1n }, { count: 2n })).toStrictEqual(["count"]);
+    const left: Record<string, unknown> = {};
+    left["self"] = left;
+    const right: Record<string, unknown> = {};
+    right["self"] = right;
+    expect(diffTouched({ cyclic: left }, { cyclic: right })).toStrictEqual([]);
+  });
+
+  it("对象的键集不同即算改动：少一个键、或同数量但换了键名", () => {
+    expect(diffTouched({ nested: { x: 1, y: 2 } }, { nested: { x: 1 } })).toStrictEqual(["nested"]);
+    expect(diffTouched({ nested: { x: 1, y: 2 } }, { nested: { x: 1, z: 2 } })).toStrictEqual([
+      "nested",
+    ]);
+  });
+
+  it("同一对对象出现在两个字段里时，各字段独立判定（不能共用一个已访问表）", () => {
+    const pair: Record<string, unknown> = { level: 1 };
+    const other: Record<string, unknown> = { level: 2 };
+    expect(diffTouched({ alpha: pair, beta: pair }, { alpha: other, beta: other })).toStrictEqual([
+      "alpha",
+      "beta",
+    ]);
+  });
 });

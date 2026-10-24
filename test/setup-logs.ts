@@ -8,24 +8,35 @@
 // 用例要看日志内容时用 logged()/loggedText() 取，断言写在用例里。
 //
 // 本包与兄弟包（danger-guard / quality-gate / lesson-loop / session-rescue /
-// dir-prep-organize）共用这一份形状；prefix 少了收尾的 `]`——本包的标签带模块后缀
-// （`[shared/lesson-bus]`），写成 `[shared]` 会连自己那一枚都匹配不上。
+// dir-prep-organize）共用这一份形状。本包的标签**带模块后缀**（`[shared/lesson-bus]`），
+// 所以认领判据必须允许「包名之后直接是 `/` 或收尾 `]`」这两种继续，而不是写死整串标签。
 import { afterEach, beforeEach } from "vitest";
 import assert from "node:assert/strict";
 
 import { LOG_TEMPLATES } from "./log-templates.ts";
 
-/** 本包标签前缀，如 `[shared/lesson-bus]`。 */
-const PKG_PREFIX = "[shared";
+/**
+ * 本包标签的判据：`[shared]`、`[shared/lesson-bus]` 都算本包，`[shared-utils]` 不算。
+ *
+ * 不用 `startsWith("[shared")`：那个前缀会把 `[shared-utils]` 这类别家标签一起认成本包，
+ * 于是真正的「装配范围错了」被放过，而未认领判据又对着别人的日志报红。
+ */
+const PKG_PREFIX = /^\[shared(?:[/\]]|$)/u;
 
-/** 插件会用到的四个 console 级别（联合类型取属性，避免以字符串索引 Console）。 */
-export type LogLevel = "info" | "warn" | "error" | "log";
-const LEVELS: readonly LogLevel[] = ["info", "warn", "error", "log"];
+/** 插件会用到的 console 级别（联合类型取属性，避免以字符串索引 Console）。 */
+export type LogLevel = "info" | "warn" | "error" | "log" | "debug" | "trace";
+const LEVELS: readonly LogLevel[] = ["info", "warn", "error", "log", "debug", "trace"];
 
-/** 一次接管到的调用：拼平的首参 + 其余实参（堆栈通常就藏在其余实参里）。 */
+/** 一次接管到的调用：拼平的首参 + 拼平的全部实参 + 其余实参（堆栈通常就藏在其余实参里）。 */
 export interface LogRecord {
   level: LogLevel;
+  /** 只由首参拼成，供 `logged()` 与用例的正文断言使用。 */
   text: string;
+  /**
+   * 全部实参拼平后的正文。模板认领要读这一份：源码里有不少日志把文案拆成两个实参
+   * （`console.error("[shared/x] 失败:", cause)`），只比首参会把合法日志判成未认领。
+   */
+  full: string;
   extra: unknown[];
 }
 
@@ -39,11 +50,22 @@ function spyLevel(level: LogLevel): void {
   originals.set(level, console[level]);
   console[level] = (...args: unknown[]) => {
     const [first, ...rest] = args;
-    records.push({ level, text: String(first).replaceAll(/\s+/gu, " "), extra: rest });
+    records.push({
+      level,
+      text: String(first).replaceAll(/\s+/gu, " "),
+      full: args.map(String).join(" ").replaceAll(/\s+/gu, " "),
+      extra: rest,
+    });
   };
 }
 
 function install(): void {
+  // 幂等：重复 install 会把**上次的 spy** 当成原始实现存进 originals，uninstall 之后
+  // console 上留下的仍是 spy，后续用例的日志就再也进不了账本。这里先就地还原一遍。
+  for (const [level, fn] of originals) {
+    console[level] = fn;
+  }
+  originals.clear();
   for (const level of LEVELS) {
     spyLevel(level);
   }
@@ -57,8 +79,8 @@ function uninstall(): void {
   originals.clear();
 }
 
-function containsTemplate(text: string): boolean {
-  return LOG_TEMPLATES.some((fragment) => text.includes(fragment));
+function containsTemplate(record: LogRecord): boolean {
+  return LOG_TEMPLATES.some((fragment) => record.full.includes(fragment));
 }
 
 beforeEach(() => {
@@ -68,13 +90,13 @@ beforeEach(() => {
 
 afterEach(() => {
   uninstall();
-  const ours = records.filter((record) => record.text.startsWith(PKG_PREFIX));
+  const ours = records.filter((record) => PKG_PREFIX.test(record.text));
   const strangers = records
     .filter((record) => record.text.startsWith("["))
-    .filter((record) => !record.text.startsWith(PKG_PREFIX))
+    .filter((record) => !PKG_PREFIX.test(record.text))
     .map((record) => record.text.slice(0, 120));
   const unclaimed = ours
-    .filter((record) => !containsTemplate(record.text))
+    .filter((record) => !containsTemplate(record))
     .map((record) => record.text.slice(0, 120));
 
   assert.deepEqual(strangers, [], "本包测试里出现了别家插件的日志：装配范围错了");
@@ -83,11 +105,14 @@ afterEach(() => {
     [],
     "这些日志对不上本包源码里的任何模板片段：新增 console.* 没有用例认领，或消息是临时拼的",
   );
+  // 收尾清一次：本用例里起的异步任务可能在 afterEach 之后才落日志，那一条若留到下一用例
+  // 的断言里，就会以「别人写的日志」陷害下一条用例，而真正的责任人已无处可查。
+  records.length = 0;
 });
 
 /** 本条用例产生的插件日志，按调用顺序。 */
 export function logged(): readonly LogRecord[] {
-  return records.filter((record) => record.text.startsWith(PKG_PREFIX));
+  return records.filter((record) => PKG_PREFIX.test(record.text));
 }
 
 /** 拼平的日志正文，便于 match 断言。 */

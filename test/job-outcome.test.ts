@@ -5,6 +5,7 @@
 // （zvec-grep 的重建、ocr-review 的后台评审）交进同一枚注册表的结局必须与宿主的 bash
 // 作业同形，否则同一个 job_list 里会出现两套说法。
 
+import { setImmediate as yieldToMacrotask } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { jobOutcomeOf, killProc } from "../lib/job-outcome.ts";
 import type { SettledProcess } from "../lib/job-outcome.ts";
@@ -82,5 +83,24 @@ describe("killProc（清理臂的收进程）", () => {
         },
       });
     }).not.toThrow();
+  });
+
+  it("kill 返回被拒绝的 Promise 时不留未处理拒绝", async () => {
+    // 官方句柄的 kill 是 `() => Promise<boolean>`：同步 try/catch 拦不住异步拒绝，
+    // 那条 rejection 会一路逃到进程级 unhandledRejection。清理臂不该有这种能力。
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      killProc({ kill: () => Promise.reject(new Error("kill boom")) });
+      // 必须让出一个**宏任务**：未处理拒绝是在 microtask 队列排空之后的检查点才上报的，
+      // 只 await 几次 Promise.resolve() 时 old/new 两种实现都收不到事件（此用例会假装通过）。
+      await yieldToMacrotask();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toStrictEqual([]);
   });
 });

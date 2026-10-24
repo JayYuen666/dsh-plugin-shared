@@ -9,19 +9,6 @@
     "rewriteRelativeImportExtensions": true,
     "types": ["node"]
   },
-  "include": [
-    "lib/tool-events.ts",
-    "lib/card-apply.ts",
-    "lib/card-diff.ts",
-    "lib/project-key.ts",
-    "lib/locale.ts",
-    "lib/lesson-bus.ts",
-    "lib/text.ts",
-    "lib/record.ts",
-    "lib/errors.ts",
-    "lib/jsonl.ts",
-    "lib/job-outcome.ts",
-    "lib/canonicalize-region-paths.ts"
-  ],
+  "include": ["lib/**/*.ts"],
   "exclude": ["test/**/*.ts", "lib/index.ts"]
 }

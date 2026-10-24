@@ -44,6 +44,18 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
     assert.equal(shrinkJsonlTail("aaaa\nbbbb\n\ncccc\n", 3), "cccc\n");
   });
 
+  it("keep 前有连续空行时整段收掉，不留下以空行开头的首行", () => {
+    // 对半切可能落在连续空行的中间：只 slice(1) 吃一枚，结果仍以空行开头。
+    assert.equal(shrinkJsonlTail("aaaa\n\n\n\nbbbb", 8), "bbbb");
+    // 收紧到只剩两行时停手，也不会因为前导空行把内容让出去
+    assert.equal(shrinkJsonlTail("aaaa\n\nbbbb\ncccc", 5), "bbbb\ncccc");
+  });
+
+  it("行尾是 CRLF 时同样收掉前导空行：旧实现只认 LF 前缀，遇到 CR 一次都命中不了", () => {
+    // "aaaa\r\n" + 三个空行 + "bbbb"：keep 以 CR+LF 开头。
+    assert.equal(shrinkJsonlTail("aaaa\r\n\r\n\r\n\r\nbbbb\r\ncccc", 12), "bbbb\r\ncccc");
+  });
+
   it("判据是 UTF-8 字节数而不是字符数", () => {
     const text = `${"汉".repeat(50)}\nsecond\nthird`;
     assert.equal(text.length, 63);

@@ -9,5 +9,13 @@ import path from "node:path";
 
 const outDir = path.join(import.meta.dirname, "dist");
 
-await rm(outDir, { recursive: true, force: true });
+// force 只吞「不存在」，不吞 EPERM/EBUSY（被占用、权限不足）：那时 dist 没清干净，
+// 上一代产物会作为孤儿留在 files 覆盖的目录里被发出去，所以这一支必须判红而不是崩在栈里。
+try {
+  await rm(outDir, { recursive: true, force: true });
+} catch (error) {
+  console.error("dist 清理失败", outDir, error);
+  process.exitCode = 1;
+  throw error;
+}
 console.info("dist cleaned:", outDir);
