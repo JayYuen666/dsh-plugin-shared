@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 /// <reference types="node" />
-// 校验 dist/types 的声明产物：相对模块说明符必须已被改写成 `.js`/`.mjs`/`.cjs`，不得残留
-// `.ts`/`.mts`/`.cts`。为什么是构建链上的独立一步：`rewriteRelativeImportExtensions` 的
-// 主战场是 JS 产物，声明阶段是否同步重写取决于 tsc 的版本行为——不设门，残留说明符会让
-// 消费方在运行期以 ERR_MODULE_NOT_FOUND 撞上，且只在解析到那个文件时才炸。
-import { readdir, readFile } from "node:fs/promises";
+// 规范化并校验 dist/types 的声明产物：先改写，再验残余。
+//
+// 为什么有改写这半步：本包切面之间此前互不引用，声明里不会出现相对 `.ts` 说明符；构建编排
+// 切面（lib/build-*.ts）互相引用后，tsc 的声明产物会把 `./build-artifacts.ts` 原样抄进
+// .d.ts，而包里没有那个文件（只有同名 .d.ts）——消费方解析类型面时 ERR_MODULE_NOT_FOUND。
+// 改写件与各消费方 build-types.mjs 同源：lib/build-types.ts 的 canonicalizeDeclarationSpecifiers。
+//
+// 为什么改写之后还要校验：改写判据锚在句法位置上，rolldown/tsc 改了声明写法时可能整段
+// 不命中——那时残余说明符必须被这道门红出来，而不是带着 `.ts` 发布出去。
+// `rewriteRelativeImportExtensions` 的主战场是 JS 产物，声明阶段是否同步重写取决于
+// tsc 的版本行为，不能依赖它。
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { canonicalizeDeclarationSpecifiers } from "./lib/build-types.ts";
 
 const typesDir = path.join(import.meta.dirname, "dist", "types");
 
@@ -29,6 +37,15 @@ async function declarationFiles(dir) {
 }
 
 const files = await declarationFiles(typesDir);
+await Promise.all(
+  files.map(async (file) => {
+    const content = await readFile(file, "utf8");
+    const rewritten = canonicalizeDeclarationSpecifiers(content);
+    if (rewritten !== content) {
+      await writeFile(file, rewritten, "utf8");
+    }
+  }),
+);
 const inspected = await Promise.all(
   files.map(async (file) => {
     const content = await readFile(file, "utf8");

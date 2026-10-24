@@ -22,6 +22,9 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
 const RUNTIME_BUDGET_BYTES = 13_000;
 /** 配置面预算（取实测值上浮后的整数档）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。 */
 const CONFIG_BUDGET_BYTES = 30_000;
+/** 构建编排切面预算（dist/build/，各包 build-*.mjs 构建期取用）。与配置面同一记账理由：
+ *  不占插件运行期装载成本，但整目录随 tarball 发布。 */
+const BUILD_BUDGET_BYTES = 22_000;
 
 /**
  * 某目录下所有 .js 的字节合计（**不递归**）。
@@ -52,5 +55,13 @@ describe("dist 体积闸门", () => {
   it("配置面总量在预算内", () => {
     const bytes = jsBytesUnder("dist/config");
     assert.ok(bytes <= CONFIG_BUDGET_BYTES, `配置面 ${bytes} B 超预算 ${CONFIG_BUDGET_BYTES} B。`);
+  });
+
+  it("构建编排切面总量在预算内", () => {
+    const bytes = jsBytesUnder("dist/build");
+    assert.ok(
+      bytes <= BUILD_BUDGET_BYTES,
+      `构建编排切面 ${bytes} B 超预算 ${BUILD_BUDGET_BYTES} B。`,
+    );
   });
 });

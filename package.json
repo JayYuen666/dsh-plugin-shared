@@ -1,6 +1,6 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
   "keywords": [
     "cordis",
@@ -81,6 +81,22 @@
       "types": "./dist/types/canonicalize-region-paths.d.ts",
       "default": "./dist/canonicalize-region-paths.js"
     },
+    "./lib/build-artifacts": {
+      "types": "./dist/types/build-artifacts.d.ts",
+      "default": "./dist/build/build-artifacts.js"
+    },
+    "./lib/build-host": {
+      "types": "./dist/types/build-host.d.ts",
+      "default": "./dist/build/build-host.js"
+    },
+    "./lib/build-client": {
+      "types": "./dist/types/build-client.d.ts",
+      "default": "./dist/build/build-client.js"
+    },
+    "./lib/build-types": {
+      "types": "./dist/types/build-types.d.ts",
+      "default": "./dist/build/build-types.js"
+    },
     "./config/oxlint": {
       "types": "./dist/types/config/oxlint.base.d.ts",
       "default": "./dist/config/oxlint.base.js"
@@ -110,15 +126,15 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-brand": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-scope": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-shell": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-brand": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
@@ -132,13 +148,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh": "^0.2.1-rc.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-shell": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+    "@deepseek-ai/dsh": "^0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-output-retention": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-shell": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -168,7 +184,7 @@
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": "^0.2.1-rc.2",
+    "dsh": "^0.2.1-rc.3",
     "node": ">=22.12.0"
   }
 }

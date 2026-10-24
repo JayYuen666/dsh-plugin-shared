@@ -11,4 +11,5 @@
 // 而账本一旦被测试中途改过，后续用例的认领判据就跟着变了。
 export const LOG_TEMPLATES: readonly string[] = Object.freeze([
   "[shared/lesson-bus] onFailure threw:",
+  "释放 rolldown bundle 失败（不影响上面那条构建错因）:",
 ]);

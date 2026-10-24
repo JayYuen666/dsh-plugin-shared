@@ -88,8 +88,17 @@ describe("shared buildHost()", () => {
       .filter((name) => name.endsWith(".ts"))
       .map((name) => name.replace(/\.ts$/u, ""))
       .toSorted();
-    // 不进 facets 的两枚：barrel 自己，与只走子路径的 builder 期文本后处理件。
-    const expected = [...facets, "canonicalize-region-paths", "index"].toSorted();
+    // 不进 facets 的：barrel 自己、只走子路径的 builder 期文本后处理件，与构建编排切面
+    // （它们同样只走子路径、由各包 build-*.mjs 消费，产物落 dist/build/）。
+    const expected = [
+      ...facets,
+      "canonicalize-region-paths",
+      "build-artifacts",
+      "build-host",
+      "build-client",
+      "build-types",
+      "index",
+    ].toSorted();
     assert.deepEqual(onDisk, expected);
   });
 });

@@ -32,10 +32,17 @@ const pkgDir = path.join(import.meta.dirname, "..");
 const BARREL_FILE = "index.ts";
 
 /**
- * 不进 barrel 的切面：`canonicalize-region-paths.ts` 按设计只给子路径（构建期件，
- * 运行期消费方不该为它付一次导入）——同一条限制由 `test/publish-manifest.test.ts` 钉着。
+ * 不进 barrel 的切面：构建期件按设计只给子路径（`canonicalize-region-paths` 是产物正典化，
+ * `build-*` 四枚是各包 build-*.mjs 的统一编排）——运行期消费方不该为它们付一次导入。
+ * 同一条限制由 `test/publish-manifest.test.ts` 钉着。
  */
-const BARREL_EXEMPT = new Set(["canonicalize-region-paths.ts"]);
+const BARREL_EXEMPT = new Set([
+  "canonicalize-region-paths.ts",
+  "build-artifacts.ts",
+  "build-host.ts",
+  "build-client.ts",
+  "build-types.ts",
+]);
 
 describe("lib/index 聚合导出", () => {
   it("根 barrel 把每一面的公开成员都作为函数导出", () => {

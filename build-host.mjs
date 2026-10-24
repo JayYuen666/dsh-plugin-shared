@@ -48,6 +48,11 @@ const entries = [
   "lib/canonicalize-region-paths.ts",
 ];
 
+/** 构建编排切面：各包 build-*.mjs 的统一实现（host / client / types 编排与通用机械件）。
+ *  消费方是构建脚本而不是插件运行时，故产物单独落 dist/build/——test/dist-size.test.ts 的
+ *  运行期预算只量 dist/ 一层，混进去会让「运行期装载成本」这把尺子量到构建期的字节。 */
+export const buildFacets = ["build-artifacts", "build-host", "build-client", "build-types"];
+
 /** barrel 的类型文件文本（指向 tsc 产出的各切面 d.ts）。 */
 function barrelTypes() {
   return [
@@ -69,56 +74,77 @@ function artifact(file, code) {
 
 /**
  * 打出全部入口，返回「落盘绝对路径 → 文件文本」。多入口由 rolldown 自动
- * code-split，共用实现只落一份 chunk。
+ * code-split，共用实现只落一份 chunk；构建编排切面另起一组 rolldown，产物落 dist/build/
+ * （两组之间不共享 chunk，运行期切面不会为构建编排件付一个共享 chunk 的字节）。
  * @returns {Promise<Map<string, string>>}
  */
 export async function buildHost() {
   // entryFileNames 用的是 `[name]`：两个入口若解析出同一个 name（如不同目录下的 index.ts），
   // rolldown 会让后一个覆盖前一个，而 find 出去的是 Map 的键（落盘路径），构造时后写覆盖先写
   // ⇒ 静默少一件产物。入口清单是手写的，这类重名在改名时才会出现，故显式判一次。
-  const entryNames = entries.map((entry) => path.basename(entry).replace(/\.[^.]+$/u, ""));
+  const allEntries = [...entries, ...buildFacets.map((facet) => `lib/${facet}.ts`)];
+  const entryNames = allEntries.map((entry) => path.basename(entry).replace(/\.[^.]+$/u, ""));
   const duplicates = entryNames.filter((name, index) => entryNames.indexOf(name) !== index);
   if (duplicates.length > 0) {
     throw new Error(`入口名重复，[name] 占位符会互相覆盖：${duplicates.join(", ")}`);
   }
-  const bundle = await rolldown({
-    input: entries.map((entry) => path.join(root, entry)),
-    platform: "node",
-    external: isExternal,
-    resolve: { extensions: [".ts", ".mjs", ".js"] },
-  });
-  const { output } = await bundle.generate({
-    format: "esm",
-    entryFileNames: "[name].js",
-    chunkFileNames: "[name]-[hash].js",
-    // 压缩：实测同一批入口压后只有未压缩态的一小截。本包的 dist 就是发布形态，
-    // 消费方把它当 external 直接 import（不再二次打包），所以这些字节是真实装载成本。
-    // 官方根 tsdown.config.ts 同样没开 minify，但那是 monorepo 内消费，与这里的处境不同。
-    // 唯一变大的入口是 barrel：oxc 会把 re-export 的具名清单展开。
-    // 它多出的那几个字节远小于整批的缩减，划算。
-    minify: true,
-  });
-  // rolldown 的 bundle 持有 worker 与文件句柄：不 close 时循环里反复建实例会把它们攒到进程退出。
-  await bundle.close();
-  const chunks = output.filter((item) => item.type === "chunk");
-  if (chunks.length === 0) {
-    throw new Error("rolldown generate returned no chunk output");
+
+  /**
+   * 打一组入口。
+   * @param {readonly string[]} inputEntries 入口源码清单
+   * @param {string} entryFileNames 产物名模板（构建编排组带 `build/` 前缀落子目录）
+   * @param {string} chunkFileNames 共享 chunk 名模板
+   * @returns {Promise<[string, string][]>}
+   */
+  async function bundleGroup(inputEntries, entryFileNames, chunkFileNames) {
+    const bundle = await rolldown({
+      input: inputEntries.map((entry) => path.join(root, entry)),
+      platform: "node",
+      external: isExternal,
+      resolve: { extensions: [".ts", ".mjs", ".js"] },
+    });
+    const { output } = await bundle.generate({
+      format: "esm",
+      entryFileNames,
+      chunkFileNames,
+      // 压缩：实测同一批入口压后只有未压缩态的一小截。本包的 dist 就是发布形态，
+      // 消费方把它当 external 直接 import（不再二次打包），所以这些字节是真实装载成本。
+      // 官方根 tsdown.config.ts 同样没开 minify，但那是 monorepo 内消费，与这里的处境不同。
+      // 唯一变大的入口是 barrel：oxc 会把 re-export 的具名清单展开。
+      // 它多出的那几个字节远小于整批的缩减，划算。
+      minify: true,
+    });
+    // rolldown 的 bundle 持有 worker 与文件句柄：不 close 时循环里反复建实例会把它们攒到进程退出。
+    await bundle.close();
+    const chunks = output.filter((item) => item.type === "chunk");
+    if (chunks.length === 0) {
+      throw new Error("rolldown generate returned no chunk output");
+    }
+    // `//#region` 行的路径由 rolldown 按 process.cwd() 算出 ⇒ 同一份源码有两种字节。折 canonical
+    // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两侧），写盘那一侧不再是
+    // 唯一的正典化点。
+    //
+    // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测本批 chunk 里
+    // 仍含 "//#region" 字样的那一个只是 canonicalize-region-paths.js 里正则的字面量，不是标记。
+    // 保留调用是因为它无成本、且各兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
+    // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。
+    return chunks.map((chunk) =>
+      artifact(
+        path.join(outDir, chunk.fileName),
+        canonicalizeRegionPaths(chunk.code, root, process.cwd()),
+      ),
+    );
   }
-  // `//#region` 行的路径由 rolldown 按 process.cwd() 算出 ⇒ 同一份源码有两种字节。折 canonical
-  // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两侧），写盘那一侧不再是
-  // 唯一的正典化点。
-  //
-  // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测本批 chunk 里
-  // 仍含 "//#region" 字样的那一个只是 canonicalize-region-paths.js 里正则的字面量，不是标记。
-  // 保留调用是因为它无成本、且各兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
-  // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。
-  const files = chunks.map((chunk) =>
-    artifact(
-      path.join(outDir, chunk.fileName),
-      canonicalizeRegionPaths(chunk.code, root, process.cwd()),
-    ),
-  );
-  files.push(artifact(path.join(outDir, "index.d.ts"), barrelTypes()));
+
+  const files = [
+    ...(await bundleGroup(entries, "[name].js", "[name]-[hash].js")),
+    ...(await bundleGroup(
+      buildFacets.map((facet) => `lib/${facet}.ts`),
+      "build/[name].js",
+      "build/[name]-[hash].js",
+    )),
+    artifact(path.join(outDir, "index.d.ts"), barrelTypes()),
+  ];
   return new Map(files);
 }
 
@@ -126,7 +152,13 @@ async function main() {
   await mkdir(outDir, { recursive: true });
   const built = await buildHost();
   const artifacts = [...built.entries()];
-  await Promise.all(artifacts.map(([file, code]) => writeFile(file, code, "utf8")));
+  await Promise.all(
+    artifacts.map(async ([file, code]) => {
+      // 产物名可能带子目录（dist/build/…），逐文件建目录而不是只建 dist/ 一层。
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, code, "utf8");
+    }),
+  );
   console.info("host built:", artifacts.length, "files -> dist/");
 }
 
