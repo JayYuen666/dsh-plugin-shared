@@ -1,8 +1,8 @@
-// test/build-artifacts.test.ts —— 构建机械件（lib/build-artifacts.ts）的行为面。
+// test/build-artifacts.test.ts —— 构建机械代码（lib/build-artifacts.ts）的行为面。
 //
-// 这些件此前散在各包 build-utils.mjs 的近似副本里，各仓只测自己那半；收进 shared 之后
-// 判据在这里一份测全：输出守卫的负形状、原子落盘的失败与重试路径、直跑守卫的两种失败
-// 分工，以及 bundle 释放不让清理噪音顶掉错因。
+// 这些代码此前散在各包 build-utils.mjs 的近似副本里，各仓只测自己那一半；收进 shared 之后
+// 判断在这里一份测全：输出检查的负形状、原子写入的失败与重试路径、直跑判断的两种失败
+// 分工，以及 bundle 释放不让清理日志盖掉错因。
 import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -86,7 +86,7 @@ async function withArgv1(
   }
 }
 
-/** 造一个最小 chunk；判据只看 type/fileName/isEntry/code。 */
+/** 造一个最小 chunk；判断只看 type/fileName/isEntry/code。 */
 function chunk(extra: Partial<OutputItem> = {}): OutputItem {
   return { type: "chunk", fileName: "a.js", isEntry: true, code: "export {};", ...extra };
 }
@@ -230,7 +230,7 @@ describe("writeArtifact", () => {
 
   it("退避耗尽后抛出，草稿已清", async () => {
     resetPlan();
-    // 初次 + 三次退避重试 = 四次 rename 都失败，第四次已无退避档可等。
+    // 初次 + 三次退避重试 = 四次 rename 都失败，第四次已无退避时间可等。
     writePlan.renameFailures.push(
       { code: "EACCES" },
       { code: "EACCES" },
@@ -282,7 +282,7 @@ describe("writeArtifact", () => {
         writeArtifact(path.join(dir, "host.js"), "x"),
         /synthetic write failure/u,
       );
-      // 复位再交还 finally：清理本身也要用 rm，故障开着会误伤夹具删除。
+      // 复位再交还 finally：清理本身也要用 rm，故障开着会误伤测试数据的删除。
       resetPlan();
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-// lib/lesson-bus.ts 单测：两条失败面（同步抛错 / 异步拒绝）都要落到同一个出口，
+// lib/lesson-bus.ts 单测：两条失败路径（同步抛错 / 异步拒绝）都要落到同一个出口，
 // 而「成功」「返回非对象」「返回没有 then 的对象」都不该被当成失败。
 import { setImmediate as yieldToMacrotask } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
@@ -11,7 +11,7 @@ interface Sink {
   readonly take: (reason: unknown) => void;
 }
 
-/** 收集 onFailure 收到的原因（不用 vi.fn：它推断成值返回，会撞 strict-void-return）。 */
+/** 收集 onFailure 收到的原因（不用 vi.fn：它推断成值返回，会被 strict-void-return 判违规）。 */
 function collector(): Sink {
   const reasons: unknown[] = [];
   const take = (reason: unknown): void => {
@@ -23,13 +23,13 @@ function collector(): Sink {
 /** 异步拒绝面共用的失败文案，避免同一字面量散在多处。 */
 const ASYNC_DOWN = "async down";
 
-/** 没给 onRejected 时的兜底出口：await 只接 fulfil 一路，拒绝路得自己造。 */
+/** 没给 onRejected 时的回退出口：await 只接 fulfil 一路，拒绝路要自己造。 */
 const rejectDirectly = (reason: unknown): never => {
   throw reason;
 };
 
 /**
- * 放完整条微任务链再回来。`await` 一个 thenable 要经三跳：排队调用 `then` → 拒绝 → catch 里
+ * 放完整条微任务链再回来。`await` 一个 thenable 要经三步：排队调用 `then` → 拒绝 → catch 里
  * 交给出口。固定次数的 `await Promise.resolve()` 数不准，用一个宏任务边界把队列排空。
  */
 async function flushMicrotasks(): Promise<void> {
@@ -42,7 +42,7 @@ const callableShell = (): void => {
 };
 
 /**
- * 一个**函数**同时也是 thenable。函数型 thenable 是脚手架事故的高发形状，本仓 lint 默认禁它
+ * 一个**函数**同时也是 thenable。函数型 thenable 是脚手架生成代码里容易出现的形态，本仓 lint 默认禁它
  * （本包已就这一个用例文件按文件收窄关闭，见 oxlint.config.ts）。但 `isThenable` 必须认它——
  * 漏判的方向是不安全的：不挂出口的 rejection 会变成进程级未处理拒绝。
  */
@@ -55,14 +55,14 @@ function functionThenable(): (() => void) & PromiseLike<never> {
   return thenable as (() => void) & PromiseLike<never>;
 }
 
-/** 失败收口自己抛错——用来验证它不会把异常分叉到调用方或变成未处理拒绝。 */
+/** 失败处理自己抛错——用来验证它不会把异常分叉到调用方或变成未处理拒绝。 */
 const explodingSink = (): never => {
   throw new Error("onFailure 自己炸了");
 };
 
 /**
- * 失败收口自己**异步**失败。签名 `(reason) => void` 拦不住它：TypeScript 允许把
- * 返回 Promise<void> 的函数赋给 `() => void`，而本模块的典型收口正是异步落库/降级。
+ * 失败处理自己**异步**失败。签名 `(reason) => void` 拦不住它：TypeScript 允许把
+ * 返回 Promise<void> 的函数赋给 `() => void`，而本模块的典型失败处理正是异步落库/回退。
  */
 const asyncExplodingSink = async (): Promise<void> => {
   await Promise.resolve();
@@ -128,22 +128,22 @@ describe("settleLessonCall", () => {
       settleLessonCall(() => Promise.reject(new Error(ASYNC_DOWN)), explodingSink);
     }).not.toThrow();
     await flushMicrotasks();
-    // 两条失败面都必须**出声**：收口自己抛错若被静默吞掉，排查时连"它炸过"都看不到。
-    // 账本（test/setup-logs.ts）把 console 接管成记录，所以这里既断言得到、又不会把栈
-    // 喷进测试报告——那正是这条用例当初留下的噪点。
+    // 两条失败路径都必须**留下记录**：失败处理自己抛错若被静默丢弃，排查时连"它抛过"都看不到。
+    // 记录清单（test/setup-logs.ts）把 console 接管成记录，所以这里既断言得到、又不会把栈
+    // 打印进测试报告——那正是这条用例当初留下的干扰输出。
     const records = logged();
     expect(records).toHaveLength(2);
     for (const record of records) {
       expect(record.level).toBe("error");
       expect(record.text).toContain("onFailure threw:");
-      // 实参里带着收口自己抛的那个 Error（它不在拼平的首参里）。
+      // 实参里带着失败处理自己抛的那个 Error（它不在拼接的首参里）。
       expect((record.extra[0] as Error).message).toBe("onFailure 自己炸了");
     }
   });
 
   it("onFailure 是 async 且自己失败 ⇒ 也只剩一条日志，不留未处理拒绝", async () => {
-    // 这条护的是「收口自己异步失败」那条路：report 若不接管返回值，rejection 会逃逸成
-    // 进程级未处理拒绝，而本模块存在的理由恰恰是消灭这一类。两条失败面都走一遍。
+    // 这条护的是「失败处理自己异步失败」那条路：report 若不接管返回值，rejection 会逃逸成
+    // 进程级未处理拒绝，而本模块存在的理由恰恰是消灭这一类。两条失败路径都走一遍。
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);
@@ -190,7 +190,7 @@ describe("settleLessonCall", () => {
   });
 
   it("另一份 realm 的 Promise 拒绝也接得住（判据认 then，不认 instanceof）", async () => {
-    // 模块注释点名的成因：宿主给的 Promise 可能来自 iframe / worker / vm 上下文，
+    // 模块注释写明的成因：宿主给的 Promise 可能来自 iframe / worker / vm 上下文，
     // 那时 instanceof Promise 恒为 false，isThenable 若靠它判就会漏挂出口。
     const sink = collector();
     const foreign: unknown = runInNewContext("Promise.reject(new Error(1))");

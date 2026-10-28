@@ -1,14 +1,14 @@
-// test/fixtures/events.ts —— 官方 `SessionEvent` 夹具构造器。
+// test/fixtures/events.ts —— 官方 `SessionEvent` 测试数据构造器。
 //
-// 生产面（lib/tool-events.ts）绑官方判别联合后，夹具必须满足本地投影曾一笔带过的三条
+// 生产面（lib/tool-events.ts）绑官方判别联合后，测试数据必须满足本地投影曾一笔带过的三条
 // 真约束（都是这一轮由编译器逼出来的，写在这里备忘）：
-//   1. 信封必填位齐全：`seq`（且它是 `SessionSeq = BrandedNumber<'SessionSeq'>`，不是
+//   1. 事件必填位齐全：`seq`（且它是 `SessionSeq = BrandedNumber<'SessionSeq'>`，不是
 //      number）、`time`，以及 `data.turn` / `data.step`；
-//   2. `callId` / `subCallId` 是 `ToolCallId` 品牌串，`tool/result.message.id` 是
-//      `MessageId` 品牌串——裸字符串不能直接书写；
+//   2. `callId` / `subCallId` 是官方标识类型 `ToolCallId`，`tool/result.message.id` 是
+//      `MessageId`——裸字符串不能直接书写；
 //   3. `tool/result` 属官方 `SurfaceEventType`：消息生产事件**必须**自带 `surfaceOp`，
 //      `Session.append` 对缺它的写入直接拒收。这条在本地投影里完全看不见。
-// 三件事集中在本文件做一次，而不是让每个用例各自抄信封、或在成百处字面量上散 _cast。
+// 三件事集中在本文件做一次，而不是让每个用例各自抄事件结构、或在成百处字面量上散 _cast。
 // 要测「宿主真送来畸形事件」的用例仍显式走 badEvent()——那是用例明说的意图，不是把
 // 生产类型放宽成可选换来的。
 
@@ -16,7 +16,7 @@ import { brandNumber, brandString } from "@deepseek-ai/dsh-brand";
 import type { MessageId, ToolCallId } from "@deepseek-ai/dsh-llm";
 import type { SessionEvent, SessionSeq } from "@deepseek-ai/dsh-session";
 
-/** 夹具事件的下标即扫描器看到的流序；递增器保证与书写顺序一致。 */
+/** 测试事件的下标即扫描器看到的流序；递增器保证与书写顺序一致。 */
 let nextSeq = 0;
 
 /** 每个用例开头调用，令 seq 从流首计起。 */
@@ -32,7 +32,7 @@ function bump(): void {
   nextSeq += 1;
 }
 
-/** 裸串 → 官方品牌串（`brandString` 是 dsh-brand 的正规入口）。 */
+/** 裸串 → 官方标识类型（`brandString` 是 dsh-brand 的正规入口）。 */
 export function toolCallId(id: string): ToolCallId {
   return brandString<ToolCallId>(id);
 }

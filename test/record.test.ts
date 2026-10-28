@@ -1,13 +1,13 @@
-// lib/record 单元测试：unknown → Record 的窄化判据与单字段投影。
-// 为什么单独测：这两个判据是从各包逐字同构的重复定义里收敛出来的**唯一真源**，
+// lib/record 单元测试：unknown → Record 的窄化判断与单字段投影。
+// 为什么单独测：这两个判断是从各包逐字相同的重复定义里统一出来的**唯一来源**，
 // 一旦这里的短路顺序被改动，波及面是全仓的 unknown 投影链，
-// 而各包自己的测试只会间接经过它——四阈值 100 要求三个拒绝子句各被判过一次假。
+// 而各包自己的测试只会间接经过它——四项 100% 阈值要求三个拒绝子句各被判过一次假。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { fieldOf, hasMethods, isRecord } from "../lib/record.ts";
 
-/** 可调用样本：不用 `() => undefined`，基线的 unicorn(no-useless-undefined) 判红那个字面量。 */
+/** 可调用样本：不用 `() => undefined`，基线的 unicorn(no-useless-undefined) 会判违规那个字面量。 */
 const callable = (): string => "ok";
 
 describe("isRecord（unknown → Record 的窄化判据）", () => {
@@ -60,10 +60,10 @@ describe("fieldOf（从 unknown 投影单个字段）", () => {
     assert.equal(typeof fieldOf(service, "describe"), "function", "能力探测必须仍然成立");
     assert.equal(typeof fieldOf({}, "toString"), "function");
 
-    // 代价照实钉住：键名指向原型成员时取到的就是原型成员，调用方不得默认那是数据字段。
+    // 代价如实固定：键名指向原型成员时取到的就是原型成员，调用方不得默认那是数据字段。
     assert.equal(fieldOf({}, "__proto__"), Object.prototype);
     assert.equal(fieldOf({}, "constructor"), Object);
-    // 自有键优先于原型键（这才是 JSON 载荷真正携带的那一枚）。
+    // 自有键优先于原型键（这才是 JSON 载荷真正携带的那一个）。
     assert.equal(fieldOf(JSON.parse('{"__proto__":1}'), "__proto__"), 1);
     // 没有原型的对象取不到原型成员，如实给 undefined。
     assert.equal(fieldOf(Object.create(null), "__proto__"), undefined);
@@ -102,8 +102,8 @@ describe("hasMethods（服务面校验）", () => {
   });
 
   it("原型链的默认成员（Object.prototype 一类）不算服务实现：普通对象冒充不了服务面", () => {
-    // 判据是身份（解析到的函数正是 Object.prototype 上那一枚才排除），不是「在原型链上」：
-    // 类/中间原型上的真实实现照常可识别，cordis 方法挂原型那条承重面不受影响。
+    // 判断是身份（解析到的函数正是 Object.prototype 上那一个才排除），不是「在原型链上」：
+    // 类/中间原型上的真实实现照常可识别，cordis 方法挂原型那条关键读取不受影响。
     assert.equal(hasMethods({}, ["toString"]), false);
     assert.equal(hasMethods({}, ["constructor"]), false);
     const proto = { toString: (): string => "ok" };
@@ -112,7 +112,7 @@ describe("hasMethods（服务面校验）", () => {
 
   it("被测对象带抛错 getter / Proxy 陷阱 ⇒ 按「能力不存在」处理，异常不冒泡", () => {
     // fieldOf / hasMethods 的调用点形如 `typeof fieldOf(x, "describe") === "function"`，
-    // 周围没有 try/catch：探测读一次抛错就会把整条表达式炸掉，把「能力不存在」升级成流程崩溃。
+    // 周围没有 try/catch：探测读一次抛错就会让整条表达式抛错，把「能力不存在」放大成流程崩溃。
     const hostile: unknown = new Proxy(
       {},
       {

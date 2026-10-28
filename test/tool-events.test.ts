@@ -1,9 +1,9 @@
-// test/tool-events.test.ts —— tool 事件流记账骨架单测。
-// 契约与 quality-gate collectEdits / danger-guard scanToolCalls+resolveResultLedger
+// test/tool-events.test.ts —— tool 事件流记录单测。
+// 约定与 quality-gate collectEdits / danger-guard scanToolCalls+resolveResultLedger
 // 对齐（callId 串联、arguments 双形态、view 只读语义）。
 //
-// 事件一律经 ./fixtures/events.ts 的构造器产出：生产面绑官方 SessionEvent 后，信封必填
-// 位与 ToolCallId/MessageId/SessionSeq 品牌都得补齐。类型面不可表示的畸形形状（缺 callId、
+// 事件一律经 ./fixtures/events.ts 的构造器产出：生产面绑官方 SessionEvent 后，事件必填
+// 位与 ToolCallId/MessageId/SessionSeq 这些官方标识类型都得补齐。类型面不可表示的畸形形状（缺 callId、
 // 缺 subCallId、retired 的 content[0].isError……）显式走 badEvent()——那是用例明说的意图。
 
 import { describe, expect, it } from "vitest";
@@ -32,7 +32,7 @@ function isErrorOf(event: SessionEvent): boolean | undefined {
   return toolEventRowsOf(event, 0).result?.isError;
 }
 
-/** 经公开折叠面读一次 arguments 归一结果（`badArguments` 只标记"字符串 JSON 语法非法"）。 */
+/** 经公开的增量折叠入口读一次 arguments 归一结果（`badArguments` 只标记"字符串 JSON 语法非法"）。 */
 function argsOf(
   raw: unknown,
 ): { arguments: Record<string, unknown>; badArguments: boolean } | undefined {
@@ -43,13 +43,13 @@ function argsOf(
 }
 
 describe("arguments 归一（经 toolEventRowsOf 这条公开面）", () => {
-  it("string JSON 解析；非法字符串回空对象并标记为坏参", () => {
+  it("string JSON 解析；非法字符串回空对象并标记为无效参数", () => {
     expect(argsOf('{"a":1}')).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
     expect(argsOf("{bad")).toStrictEqual({ arguments: {}, badArguments: true });
     expect(argsOf("42")).toStrictEqual({ arguments: {}, badArguments: false });
   });
 
-  it("对象直用；null/undefined/数组/数字回空对象但不标坏参", () => {
+  it("对象直用；null/undefined/数组/数字回空对象但不标无效参数", () => {
     expect(argsOf({ a: 1 })).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
     expect(argsOf(null)).toStrictEqual({ arguments: {}, badArguments: false });
     expect(argsOf(undefined)).toStrictEqual({ arguments: {}, badArguments: false });
@@ -82,7 +82,7 @@ describe("scanToolEvents", () => {
   it("形状不合规的事件静默跳过", () => {
     resetSeq();
     // 只测「type 齐但 data 不可用 / 类型不认识」两类；数组空洞（undefined 元素）在
-    // 下面的「坏事件容忍」里单独钉，那儿本就要造稀疏数组。
+    // 下面的「坏事件容忍」里单独固定，那里本就要造稀疏数组。
     const events = [
       badEvent({ type: "tool/call" }),
       badEvent({ type: "weird/type", data: { name: "x" } }),
@@ -94,7 +94,7 @@ describe("scanToolEvents", () => {
 
   it("无 callId 的 tool/call 保留 undefined（调用方造 nc: 键）", () => {
     resetSeq();
-    // 官方 `tool/call.callId` 必选，故这条坏契约只能经 badEvent 表达。
+    // 官方 `tool/call.callId` 必选，故这条坏数据只能经 badEvent 表达。
     const { calls } = scanToolEvents([
       badEvent({
         type: "tool/call",
@@ -184,8 +184,8 @@ describe("成败位读取（经 toolEventRowsOf 这条公开面）", () => {
   it("retired 形状（块级 content[0].isError）不再被读：按成功计", () => {
     resetSeq();
     // 成败位曾放在 message.content[0]，v4 上移到 message 级。
-    // 本模块只认 v4 位置、不做 content[] 兜底——若宿主仍发旧形状，这里就是
-    // fail-open 的显式指纹：isError:true 也判成功。改回兜底会让本断言变红。
+    // 本模块只认 v4 位置、不做 content[] 回退——若宿主仍发旧形状，这里就是
+    // fail-open 的显式特征：isError:true 也判成功。改回回退会让本断言失败。
     const retired = badEvent({
       type: RESULT_TYPE,
       data: { message: { content: [{ isError: true }] } },
@@ -261,7 +261,7 @@ describe("scanToolEvents 坏事件容忍", () => {
     // validateSessionEventData 自述不校验完整载荷，所以缺 name 的 tool/call 真的能进日志。
     const { calls } = scanToolEvents([
       badEvent({ type: "tool/call", data: { turn: 1, step: 1, callId: "c1", arguments: "{}" } }),
-      // name 是空串同样不算（与 usableCallId 的空串口径一致）
+      // name 是空串同样不算（与 usableCallId 对空串的处理一致）
       badEvent({
         type: "tool/call",
         data: { turn: 1, step: 1, callId: "c2", name: "", arguments: "{}" },
@@ -280,7 +280,7 @@ describe("scanToolEvents 坏事件容忍", () => {
   it("数组里的 null 元素同样静默跳过（官方元素记为非可空，只有坏数据才有）", () => {
     resetSeq();
     // 曾按 `event?.data` 读，改写为判别联合时丢了这层：null 会在读 .data 时抛 TypeError，
-    // 把「零星坏事件不抛错」的契约打断在门禁热路径上。此用例钉住它。
+    // 把「零星坏事件不抛错」的约定打断在检查路径上。此用例固定它。
     const withNull = [
       null,
       call("n1", "edit", '{"file_path":"/n.ts"}'),
@@ -317,18 +317,18 @@ describe("scanToolEvents 坏事件容忍", () => {
 });
 
 describe("规模面：万级事件流", () => {
-  /** 规模用例的事件对数。1 万条事件在 20s 超时下留足余量，同时足以让任何二次方写法露馅。 */
+  /** 规模用例的事件对数。1 万条事件在 20s 超时下留足余量，同时足以让任何二次方复杂度的写法暴露出来。 */
   const SCALE = 5000;
 
   it("逐项同解：两张表行数、串联键与事件位都不随规模改口径", () => {
     // 这条不是计时断言（那会变成 flaky），而是**规模下的等价性**：扫描器每条事件只读
     // 一遍常数次，两张表各自有序、seq 就是事件位。消费方（quality-gate 的 collectEdits、
-    // danger-guard 的台账折叠）在长会话上跑的就是这条路径，口径不能因为事件多就变。
+    // danger-guard 的记录折叠）在长会话上跑的就是这条路径，行为不能因为事件多就变。
     const evs: SessionEvent[] = [];
     for (let i = 0; i < SCALE; i += 1) {
       const id = `c${String(i)}`;
       evs.push(call(id, "read", `{"file_path":"/a/f${String(i)}.ts"}`), result(id));
-      // 每十轮插一条非工具事件：顺带钉住「不进表的行照占事件位、后面的 seq 不塌陷」。
+      // 每十轮插一条非工具事件：顺带固定「不进表的行照占事件位、后面的 seq 不塌陷」。
       if (i % 10 === 0) {
         evs.push(unrelated());
       }
@@ -344,14 +344,14 @@ describe("规模面：万级事件流", () => {
       expect(scanned.calls[i]!.seq).toBeGreaterThan(scanned.calls[i - 1]!.seq);
       expect(scanned.results[i]!.seq).toBeGreaterThan(scanned.results[i - 1]!.seq);
     }
-    // 结算与调用一一对应：第 i 次调用与第 i 次结算挂在同一枚 callId 上。
+    // 结算与调用一一对应：第 i 次调用与第 i 次结算挂在同一个 callId 上。
     for (let i = 0; i < SCALE; i += 1) {
       expect(scanned.results[i]?.callId).toBe(scanned.calls[i]?.callId);
     }
   });
 
   it("规模下缺 name 的调用仍被整条滤掉（滤除不是抽样）", () => {
-    // 与上面那条并置才有意义：小样本里滤对一条是巧合，1 万条里还滤对才是口径。
+    // 与上面那条并置才有意义：小样本里滤对一条是巧合，1 万条里还滤对才是稳定的保证。
     const evs: SessionEvent[] = [];
     for (let i = 0; i < SCALE; i += 1) {
       evs.push(badEvent({ type: CALL_TYPE, data: { arguments: "{}" } }));

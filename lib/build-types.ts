@@ -4,7 +4,7 @@
 // 为什么需要后处理：源码按 NodeNext 约定写 `./lib/x.ts` 这种显式 `.ts` 后缀（基线 tsconfig
 // 的 allowImportingTsExtensions + verbatimModuleSyntax 都要求它），而 tsc 的**声明**产物会把
 // 说明符原样抄进 .d.ts——于是 `types/host.d.ts` 里留着 `from "./lib/x.ts"`，而包里根本没有
-// 那个文件（只有 `types/lib/x.d.ts`）。`rewriteRelativeImportExtensions` 救不了：它只作用于
+// 那个文件（只有 `types/lib/x.d.ts`）。`rewriteRelativeImportExtensions` 解决不了这里的问题：它只作用于
 // JS 产物，不动声明。改成 `.js` 才是对的：TypeScript 把 `.js` 说明符解析到同名 `.d.ts`，
 // 消费方因此解析到本包发出去的那份声明。
 //
@@ -37,9 +37,9 @@ export interface TypesBuildOptions {
 /**
  * 说明符位置的三种句法锚点：`… from "…"`、`import("…")` 与 `declare module "…"`。
  *
- * 判据必须锚在关键字上，不能按「引号里像路径」来认：`export type P = "./lib/foo.ts"` 里
+ * 判断必须锚在关键字上，不能按「引号里像路径」来认：`export type P = "./lib/foo.ts"` 里
  * 的字符串是一个字面量类型，它的值就是那串字符，改成 `.js` 等于悄悄改掉类型；JSDoc 示例
- * 里的路径同理。裸说明符（`node:fs`、`@deepseek-ai/…`）不命中相对段判据，一概不碰。
+ * 里的路径同理。裸说明符（`node:fs`、`@deepseek-ai/…`）不命中相对段判断，一概不碰。
  *
  * 字符类不含 `\n`（跨行匹配会把两个相邻说明符并成一个）；后缀认 `mts`/`cts`（它们同样
  * 要改成对侧产物后缀）；`(?<!\.d)` 把 `.d.ts` 排除在外（那是声明文件自己的后缀）。
@@ -87,7 +87,7 @@ export function canonicalizeDeclarationSpecifiers(text: string): string {
  *
  * `execFileSync` 不给 `encoding` 时两路都是 Buffer；按形态显式分支：文本原样用、Buffer
  * 按 UTF-8 解、其余形态返回空串。写成 `String(stream)` 会把 Buffer 送进默认字符串化，
- * 类型检查也会因为「可能是任意对象」而判红。
+ * 类型检查也会因为「可能是任意对象」而判定失败。
  * @param stream - 子进程的一路输出
  * @returns 文本
  */
@@ -105,7 +105,7 @@ export function textOf(stream: unknown): string {
  * 跑一条命令；失败时抛出的信息取子进程自己的诊断文本，而不是包装层的壳。
  *
  * 用同步版：这是构建步骤，阻塞等 tsc 跑完完全够用，异步包装在这里只会为了一个用不上
- * 的并发度引入回调与 Promise 两种形态。两路都得收：tsc 把编译诊断写 **stdout**，工具
+ * 的并发度引入回调与 Promise 两种形态。两路都得读：tsc 把编译诊断写 **stdout**，工具
  * 自身崩溃与 node 的用法错误写在 stderr，任取一路都会丢一半。
  * @param file - 可执行文件（用 `process.execPath` 跑入口 JS，不经 npx：Windows 上 `npx`
  * 实际是 `npx.cmd`，`execFileSync` 不带 `shell` 不按 PATHEXT 解析，一律 ENOENT）
@@ -132,8 +132,8 @@ export function runTool(file: string, args: readonly string[], cwd: string): voi
  * 递归列出目录下的声明文件（`/` 分隔，路径相对 `dir`）。
  *
  * 文件与目录分成两支再汇总：混在一个 map 里时，只有文件的那一支会变成一个没有 `await`
- * 的 `async` 回调；拆开后两支各自理由完整。导出而非私藏：调用方的声明门禁要按同一口径
- * 列 types/，在调用方重写一份遍历逻辑只会让两边的目录形状悄悄分叉。
+ * 的 `async` 回调；拆开后两支各自理由完整。导出而非私藏：调用方的声明检查要按同一规则
+ * 列 types/，在调用方重写一份遍历逻辑只会让两边的目录清单悄悄分叉。
  * @param dir - 当前目录绝对路径
  * @param prefix - 已走过的相对前缀（顶层调用传空串）
  * @returns 命中的文件清单

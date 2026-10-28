@@ -1,8 +1,8 @@
-// lib/jsonl 单元测试：JSONL 尾部对半收缩的**纯**决策件。
-// 为什么单独测：SP-D 把两份逐字符同义的写盘实现（ctx-observe 的 metrics 分片、lesson-loop 的
-// lessons 落库）收敛成这一份决策，而两家的**触发策略与错误出口刻意不同、不能统一**
+// lib/jsonl 单元测试：JSONL 尾部对半收缩的**纯**决策逻辑。
+// 为什么单独测：SP-D 把两份逐字符同义的磁盘写入实现（ctx-observe 的 metrics 分片、lesson-loop 的
+// lessons 落库）统一成这一份决策，而两家的**触发策略与错误处理刻意不同、不能统一**
 // （lesson-loop 出厂 maxBytes=0 = 永不截断，那是写进它 README 的承诺）。
-// ⇒ 这里只钉"该留什么"，磁盘与异常归各包；期望值由实测算出而非手推。
+// 因此这里只固定"该留什么"，磁盘与异常归各包；期望值由实测算出而非手推。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { shrinkJsonlTail } from "../lib/jsonl.ts";
@@ -12,9 +12,9 @@ function rows(count: number, width = 30): string {
   return Array.from({ length: count }, (_row, index) => `${"k".repeat(width)}${index}`).join("\n");
 }
 
-/** 八行样本（23 字节 = 8×2 + 7 枚换行）：规模与收缩步进的共用底本。 */
+/** 八行样本（23 字节 = 8×2 + 7 个换行）：规模与收缩步进的共用底本。 */
 const EIGHT_LINES = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8";
-/** 上面对半一次之后的四行样本（11 字节 = 4×2 + 3 枚换行）。 */
+/** 上面对半一次之后的四行样本（11 字节 = 4×2 + 3 个换行）。 */
 const FOUR_LINES = "l5\nl6\nl7\nl8";
 /** 再对半一次之后的两行样本（5 字节）。 */
 const TWO_LINES = "l7\nl8";
@@ -45,9 +45,9 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
   });
 
   it("keep 前有连续空行时整段收掉，不留下以空行开头的首行", () => {
-    // 对半切可能落在连续空行的中间：只 slice(1) 吃一枚，结果仍以空行开头。
+    // 对半拆分可能落在连续空行的中间：只 slice(1) 只去掉一个，结果仍以空行开头。
     assert.equal(shrinkJsonlTail("aaaa\n\n\n\nbbbb", 8), "bbbb");
-    // 收紧到只剩两行时停手，也不会因为前导空行把内容让出去
+    // 收紧到只剩两行时停手，也不会因为前导空行丢掉内容
     assert.equal(shrinkJsonlTail("aaaa\n\nbbbb\ncccc", 5), "bbbb\ncccc");
   });
 
@@ -65,22 +65,22 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
 
   it("配额 0 与负数照样收缩到 ≤2 行为止——「0 = 永不截断」是调用方的触发策略，不是本函数的语义", () => {
     // lesson-loop 的出厂默认 maxBytes = 0 之所以表现为"永不截断"，是因为**它在调用前**
-    // 就判了 `maxBytes > 0`（写进它 README 的承诺）。本函数只认循环判据：
-    // 23 > 0 成立 ⇒ 一直对半到行数 ≤ 2 停手。这条把职责边界钉死，防止有人以为
+    // 就判了 `maxBytes > 0`（写进它 README 的承诺）。本函数只看循环条件：
+    // 23 > 0 成立，于是一直对半到行数 ≤ 2 停手。这条把职责边界固定住，防止有人以为
     // "传 0 给它" 就等于关掉收缩——那会把 lesson-loop 的承诺写成一个假象。
     assert.equal(Buffer.byteLength(EIGHT_LINES, "utf8"), 23);
     assert.equal(shrinkJsonlTail(EIGHT_LINES, 0), TWO_LINES);
     assert.equal(shrinkJsonlTail(EIGHT_LINES, -1), TWO_LINES, "负数同样进循环，不是提前退出");
-    // 两行的输入则原地停手（行数 ≤ 2 的兜底），所以同一个 0 在不同输入上表现不同——
+    // 两行的输入则原地停手（行数 ≤ 2 的停止条件），所以同一个 0 在不同输入上表现不同——
     // 这正是"不裁"必须由调用方保证的原因。
     assert.equal(shrinkJsonlTail("a\nb", 0), "a\nb");
   });
 
   it("非有限配额让比较恒假 ⇒ 整份原样返回；这一档由调用方保证", () => {
-    // 任何数与 NaN / +Infinity 比较都是 false，所以循环一次都不进。这不是本函数该自作主张
-    // 修的：这边不设限只是「这次不裁」，不像读请求体那样会同时放开内存上限，因此没有必须
-    // 拒收的那条失败模型。抛错会把一条清晰的预算错误塞进两个消费方各自的 catch（ctx-observe
-    // 上抛、lesson-loop 内部吞），反而更难排查。
+    // 任何数与 NaN / +Infinity 比较都是 false，所以循环一次都不进。这不是本函数该擅自处理
+    // 的：这边不设限只是「这次不裁」，不像读请求体那样会同时放开内存上限，因此没有必须
+    // 拒收的那类失败。抛错会把一条清晰的预算错误送进两个消费方各自的 catch（ctx-observe
+    // 向外抛、lesson-loop 内部捕获），反而更难排查。
     //
     // 两个真实消费方都不会把这种值传进来——具体调用点（本文件不会被发布，所以包名可以写
     // 在这儿；lib/jsonl.ts 的声明 JSDoc 里不能写，会随 .d.ts 发出去）：
@@ -88,27 +88,27 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
     //                             —— 固定常量作默认实参，非有限值进不来；
     //   lesson-loop/lib/jsonl-fuse.ts  trimJsonl(file, maxBytes)
     //     由 lesson-loop/lib/lesson-jsonl.ts 的 `maxBytes > 0` 把关，而它的 maxBytes
-    //     在 lib/lesson-store.ts 的配额归一里已把非有限值与负数落成 0。
-    // 但那道归一在消费方，本包不强制：新增消费方时没有东西会提醒它。契约写进 JSDoc 了，
-    // 这里把它钉成用例，免得有人以为它已被处理。
+    //     在 lib/lesson-store.ts 的配额归一里已把非有限值与负数归一成 0。
+    // 但那次归一在消费方，本包不强制：新增消费方时没有东西会提醒它。约定写进 JSDoc 了，
+    // 这里把它固定成用例，免得有人以为它已被处理。
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
       assert.equal(shrinkJsonlTail(EIGHT_LINES, bad), EIGHT_LINES, `配额 ${String(bad)} 不得收缩`);
       assert.equal(shrinkJsonlTail("a\nb", bad), "a\nb");
     }
-    // 负无穷不是这一档：它让判据恒真，照常一路收缩到 ≤2 行为止。
+    // 负无穷不属于这一类：它让比较恒为 true，照常一路收缩到 ≤2 行为止。
     assert.equal(shrinkJsonlTail(EIGHT_LINES, Number.NEGATIVE_INFINITY), TWO_LINES);
   });
 
   it("反复对半只丢整行，任何一轮都不会把一行切成两半", () => {
-    // 恰好等于字节数（8×2 + 7 = 23）时判据 `>` 不成立 ⇒ 一行都不丢，这条等号侧也要钉。
+    // 恰好等于字节数（8×2 + 7 = 23）时判断 `>` 不成立，一行都不丢，这条等号侧也要固定。
     assert.equal(shrinkJsonlTail(EIGHT_LINES, 23), EIGHT_LINES);
-    // 少一个字节才动：8 行 → 4 行 → 2 行，两轮之后停，每一步都落在整行边界上。
+    // 少一个字节才触发：8 行 → 4 行 → 2 行，两轮之后停，每一步都落在整行边界上。
     assert.equal(shrinkJsonlTail(EIGHT_LINES, 22), FOUR_LINES);
-    // 四行 = 4×2 + 3 枚换行 = 11 字节：限额 11 时等号侧不成立，原样返回；10 才再对半一次。
+    // 四行 = 4×2 + 3 个换行 = 11 字节：限额 11 时等号侧不成立，原样返回；10 才再对半一次。
     assert.equal(Buffer.byteLength(FOUR_LINES, "utf8"), 11);
     assert.equal(shrinkJsonlTail(FOUR_LINES, 11), FOUR_LINES);
     assert.equal(shrinkJsonlTail(FOUR_LINES, 10), TWO_LINES);
-    // 结果恒 ≤ 限额：限额 12 落在 11 字节那一档，不会为了凑满而多留半行。
+    // 结果恒 ≤ 限额：限额 12 对应 11 字节的结果，不会为了凑满而多留半行。
     assert.equal(shrinkJsonlTail(EIGHT_LINES, 12), FOUR_LINES);
     assert.equal(shrinkJsonlTail(EIGHT_LINES, 10), TWO_LINES);
   });
@@ -123,7 +123,7 @@ describe("shrinkJsonlTail（按字节上限对半保留尾部行段）", () => {
   it("尾随换行算一格空行：行数比肉眼看多一行，收缩结果保留那个换行", () => {
     // "l1\nl2\nl3\n".split("\n") 是 4 段（末段为空串），所以 3 行的文件按 4 行收缩。
     assert.equal(shrinkJsonlTail("l1\nl2\nl3\n", 8), "l3\n");
-    // 结果不带前导换行（那会让文件凭空多出一格空行），但保留末行的换行。
+    // 结果不带前导换行（那会让文件凭空多出一个空行），但保留末行的换行。
     const kept = shrinkJsonlTail("l1\nl2\nl3\n", 8);
     assert.ok(kept.endsWith("\n"), "末行换行要留着，写盘后仍是合法的行尾");
     assert.ok(!kept.startsWith("\n"), "不得凭空造出空首行");

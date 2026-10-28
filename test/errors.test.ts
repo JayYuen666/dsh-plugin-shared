@@ -1,16 +1,16 @@
 // lib/errors 单元测试：把 unknown 错误归一成界面文本。
-// 这里逐条钉住 errorChain 的五条语义：cause 链、AggregateError 成员、空 message 回退 name、
-// 跨 realm 取自有 message、敌意 getter 降级。任何一条退化都会让界面上丢掉真实失败原因。
+// 这里逐条固定 errorChain 的五条语义：cause 链、AggregateError 成员、空 message 回退 name、
+// 跨 realm 取自有 message、恶意 getter 改用占位文本。任何一条偏离都会让界面上丢掉真实失败原因。
 import vm from "node:vm";
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { errorText, isSettingsConflict } from "../lib/errors.ts";
 
-/** 敌意对象/toString 拿不到值时的统一占位文本。 */
+/** 恶意对象/toString 拿不到值时的统一占位文本。 */
 const UNRENDERABLE = "<unrenderable value>";
 /** cause 环上回访时的占位文本。 */
 const CIRCULAR = "<circular cause>";
-/** 无可读 message 的普通对象被 String() 兜底后的样子。 */
+/** 无可读 message 的普通对象由 String() 处理后的样子。 */
 const OBJECT_STRING = "[object Object]";
 
 describe("errorText（unknown 错误的界面文本归一）", () => {
@@ -42,9 +42,9 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
 
   it("非 Error 但带可读 message 属性的对象取该属性", () => {
     assert.equal(errorText({ message: "from object" }), "from object");
-    // 无可读 message ⇒ 回到 String()，不返回 undefined
+    // 无可读 message 时回到 String()，不返回 undefined
     assert.equal(errorText({ code: 1 }), OBJECT_STRING);
-    // message 是访问器而非数据属性时同样取不到 ⇒ 回到 String()
+    // message 是访问器而非数据属性时同样取不到，回到 String()
     const accessor = {
       get message(): string {
         throw new Error("不该被调用");
@@ -87,7 +87,7 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
     const members = [new Error("e1"), new Error("e2")];
     assert.equal(errorText(new AggregateError(members, "multi")), "multi [e1; e2]");
     assert.equal(errorText(new AggregateError([], "none")), "none");
-    // 非 aggregate 的错误没有成员面 ⇒ 无成员段
+    // 非 aggregate 的错误没有成员列表，因此没有成员段
     assert.equal(errorText(new Error("plain")), "plain");
   });
 
@@ -109,7 +109,7 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
 
   it("敌意 message getter 降级为占位文本", () => {
     // Error 构造器建的是**自有** message 数据属性，会遮蔽原型上的 getter，
-    // 所以敌意 getter 必须自己 defineProperty 到实例上才读得到
+    // 所以恶意 getter 必须自己 defineProperty 到实例上才读得到
     const hostile = new Error("x");
     Object.defineProperty(hostile, "message", {
       configurable: true,
@@ -131,9 +131,9 @@ describe("errorText（unknown 错误的界面文本归一）", () => {
 
   it("超深的 cause 链撞上栈上限时降级成占位文本，而不是把 RangeError 抛给调用方", () => {
     // `path` 那个 Set 只拦**环**，不拦深度：一条 5 万层的链是有限无环的，递归会一路走到
-    // 爆栈。爆栈抛出的 RangeError 恰好落在每个 render 帧自己的 try 里，于是最深那一节
-    // 塌成占位文本、外层照样拼完——实测 5 万层输出 35708 字、耗时 52ms、不抛。
-    // 这条要钉的是"不抛"：errorText 的调用点全在 catch 之后（通知、面板、日志），
+    // 栈溢出。栈溢出抛出的 RangeError 恰好落在每个 render 帧自己的 try 里，于是最深那一节
+    // 变成占位文本、外层照样拼完——实测 5 万层输出 35708 字、耗时 52ms、不抛。
+    // 这条要固定的是"不抛"：errorText 的调用点全在 catch 之后（通知、面板、日志），
     // 一旦它自己抛，宿主就再也拿不到那句人读文本了。
     let deep: Error = new Error("leaf");
     for (let level = 0; level < 50_000; level += 1) {
@@ -174,9 +174,9 @@ describe("isSettingsConflict（设置冲突那一类失败）", () => {
   });
 
   it("敌意 getter 与 Proxy 陷阱都不外抛，一律判否", () => {
-    // `fieldOf` 走原型链读属性，所以这两个形状都会真的触发 get 陷阱；读取抛错由
-    // fieldOf 的探测出口塌成「取不到」（lib/record.ts），判定面因此只回答是/否。
-    // 调用点全在 catch 之后拿它决定要不要走「设置冲突」那一支。
+    // `fieldOf` 走原型链读属性，所以这两种写法都会真的触发 get trap；读取抛错由
+    // fieldOf 的带保护出口变成「取不到」（lib/record.ts），判定因此只回答是/否。
+    // 调用点全在 catch 之后，拿它决定要不要走「设置冲突」那一支。
     assert.equal(
       isSettingsConflict({
         get code(): string {
@@ -198,7 +198,7 @@ describe("isSettingsConflict（设置冲突那一类失败）", () => {
       ),
       false,
     );
-    // 对照：同一形状交给 errorText 也不抛（两条出口契约一致）
+    // 对照：同一种输入交给 errorText 也不抛（两条出口约定一致）
     assert.equal(
       errorText({
         get code(): string {

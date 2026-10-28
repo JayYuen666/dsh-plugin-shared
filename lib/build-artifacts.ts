@@ -1,12 +1,12 @@
-// lib/build-artifacts.ts —— 插件包构建脚本的通用机械件。
+// lib/build-artifacts.ts —— 插件包构建脚本的通用机械代码。
 //
-// 为什么收进 shared：这些件此前在各插件的 build-utils.mjs / build-*.mjs 里各带一份近似副本，
-// 而副本的失效方式是「只修一侧」——原子落盘、输出守卫或直跑判据改在一处，其余仓仍是旧行为，
-// 各仓测试又只覆盖自己那半，没有任何门会红。收敛之后，判据只有一处可改。
+// 为什么收进 shared：这些代码此前在各插件的 build-utils.mjs / build-*.mjs 里各带一份近似副本，
+// 而副本的失效方式是「只修一侧」——原子写入、输出检查或直跑判断改在一处，其余仓仍是旧行为，
+// 各仓测试又只覆盖自己那一半，没有任何检查会失败。统一之后，判断只有一处可改。
 //
-// 这里只放与具体产物形态无关的机械件；host / client / types 三条构建链各自的领域判断在
+// 这里只放与具体产物形态无关的机械代码；host / client / types 三条构建链各自的领域判断在
 // 同目录的 build-host.ts / build-client.ts / build-types.ts。不进 barrel：构建期专用，
-// 运行期消费方不该为它付导入（与 canonicalize-region-paths 同一条收录判据）。
+// 运行期消费方不该为它多一次导入（与 canonicalize-region-paths 同一条收录标准）。
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -24,7 +24,7 @@ export function isRecord(raw: unknown): raw is Record<string, unknown> {
 }
 
 /**
- * 从 JSON.parse 的 unknown 投影为 Record（非对象 → 空对象兜底），避免 any 索引。
+ * 从 JSON.parse 的 unknown 投影为 Record（非对象 → 空对象回退），避免 any 索引。
  * @param raw - JSON.parse 之后的任意值
  * @returns 普通对象；输入不是对象时为空对象
  */
@@ -37,7 +37,7 @@ export function asRecord(raw: unknown): Record<string, unknown> {
  *
  * 惰性（调用时才读）而不是在消费方模块顶层读：顶层一次 JSON 语法错误会以未捕获的顶层
  * await 错误 + 裸 SyntaxError 收场，读者看不出是哪个文件坏了；而测试 import 构建模块时
- * 只为拿构建函数，不该连带付一次磁盘 I/O。
+ * 只为拿构建函数，不该连带做一次磁盘 I/O。
  * @param root - 包根绝对路径
  * @returns 解析后的 manifest
  */
@@ -60,7 +60,7 @@ export async function readManifest(root: string): Promise<unknown> {
 export function packageNameOf(id: string): string {
   // 按「第几个 `/`」取值而不是取 `split` 的下标：`noUncheckedIndexedAccess` 下
   // `segments[0]` 的类型是 `string | undefined`，为了过类型检查就得补一个永不求值的
-  // 兜底，而那个兜底会让人以为空 id 有专门处理。
+  // 回退，而那个回退会让人以为空 id 有专门处理。
   const firstSlash = id.indexOf("/");
   if (!id.startsWith("@")) {
     return firstSlash === -1 ? id : id.slice(0, firstSlash);
@@ -71,7 +71,7 @@ export function packageNameOf(id: string): string {
 
 /**
  * rolldown 输出项的最小投影：单文件产物只关心这几项。
- * `moduleIds` 之类不进投影——本类型只判形状，多一层声明就多一处与 rolldown 版本耦合的面，
+ * `moduleIds` 之类不进投影——本类型只判形状，多一层声明就多一处与 rolldown 版本耦合的地方，
  * 而调用方拿到的仍是原始输出项，不缺字段。
  */
 export interface OutputItem {
@@ -85,7 +85,7 @@ export interface OutputItem {
 /**
  * 单文件产物只接受一个带正文的 entry chunk。
  *
- * 正文还必须非空白：`typeof code === "string"` 会放行空串与纯空白，而那两态落盘后是
+ * 正文还必须非空白：`typeof code === "string"` 会放行空串与纯空白，而那两种状态写入磁盘后是
  * 一份语法上能解析、跑起来什么都不做的产物——构建报成功，宿主那条路静默不渲染。
  * @param item - 输出项
  * @returns 是否为带正文的 entry chunk
@@ -102,10 +102,10 @@ function isEntryChunk(
 }
 
 /**
- * 单文件产物只允许一个 entry chunk：多余 chunk / asset 不落盘，产物要到运行时才因缺模块而炸。
+ * 单文件产物只允许一个 entry chunk：多余 chunk / asset 不写入磁盘，产物要到运行时才因缺模块而报错。
  * 这是「静默不渲染」同一类难查故障，所以在构建期就失败。
  * @param output - rolldown 的 generate 输出清单
- * @param source - 入口源码名（错误信息点名用）
+ * @param source - 入口源码名（供错误信息指出出处）
  * @returns 唯一的那个 entry chunk
  */
 export function singleEntryChunk(
@@ -136,7 +136,7 @@ const RENAME_RETRY_DELAYS_MS = [50, 100, 200];
  * POSIX 上 rename 换目录项是原子的，失败即真失败；Windows 上目标文件被其它进程持有
  * （Electron / dev server 正 require 产物、杀毒或索引服务短暂占用）时会给 EPERM/EBUSY，
  * 而占用通常在几十毫秒内释放。不重试的话这条失败是**间歇性**的：同一棵树连着构建两次，
- * 一次红一次绿。其余错误码照旧立即抛出——真的没权限时重试只是拖慢失败。
+ * 一次失败一次成功。其余错误码照旧立即抛出——真的没权限时重试只是拖慢失败。
  * @param from - 草稿文件
  * @param to - 目标文件
  * @param attempt - 已重试次数
@@ -165,7 +165,7 @@ async function renameWithRetry(from: string, to: string, attempt = 0): Promise<v
 }
 
 /**
- * 原子落盘：目标目录下 `.tmp/` 草稿 + rename；失败时清掉草稿再抛。
+ * 原子写入：目标目录下 `.tmp/` 草稿 + rename；失败时清掉草稿再抛。
  *
  * 草稿落在**目标文件所在目录**下的 `.tmp/`，不是 `os.tmpdir()`，也不是产物旁边的裸名：
  *   - 不用 `os.tmpdir()`：rename 只在同一文件系统内原子，跨设备会以 EXDEV 失败，而系统临时
@@ -176,7 +176,7 @@ async function renameWithRetry(from: string, to: string, attempt = 0): Promise<v
  *     统一忽略的目录，不需要为构建残留单独扩忽略规则。
  *
  * 失败信息带上两个路径并保留 cause：裸 `ENOENT … open '…/<uuid>.tmp'` 把注意力引到草稿名上，
- * 读者还得自己剥出真正的产物路径。
+ * 读者还得自己从中找出真正的产物路径。
  * @param target - 目标文件绝对路径
  * @param text - 产物正文
  */
@@ -191,8 +191,8 @@ export async function writeArtifact(target: string, text: string): Promise<void>
     await writeFile(scratch, text, "utf8");
     await renameWithRetry(scratch, target);
   } catch (error) {
-    // 清草稿本身可能失败（Windows 上 EBUSY/EPERM，`force` 只吞 ENOENT），那一下抛出去会把
-    // 真正的写盘错因盖掉。随机后缀保证残留草稿不会与下一次构建撞名。
+    // 清草稿本身可能失败（Windows 上 EBUSY/EPERM，`force` 只忽略 ENOENT），那一下抛出去会把
+    // 真正的写入错因盖掉。随机后缀保证残留草稿不会与下一次构建撞名。
     try {
       await rm(scratch, { force: true });
     } catch {
@@ -202,12 +202,12 @@ export async function writeArtifact(target: string, text: string): Promise<void>
   }
 }
 
-/** 异常路径上释放 rolldown bundle 的最小形状。 */
+/** 异常路径上释放 rolldown bundle 的最小接口。 */
 export interface CloseableBundle {
   readonly close: () => Promise<void>;
 }
 
-/** generate 交给调用方的最小输出形状（属性式签名，真实 bundle 结构满足）。 */
+/** generate 交给调用方的最小输出结构（属性式签名，真实 bundle 结构满足）。 */
 export interface RolldownBundle extends CloseableBundle {
   readonly generate: (options: {
     format: "esm" | "cjs";
@@ -229,8 +229,8 @@ export type RolldownFactory = (options: InputOptions) => Promise<RolldownBundle>
  * 异常路径上释放 rolldown bundle：close 失败只记日志，不覆盖调用方正在抛的原始错因。
  *
  * bundle 持有原生资源，generate 或输出守卫抛错时同样要释放；但那时唯一有价值的日志是
- * 「构建为什么失败」，让一条关于资源释放的噪音顶掉它，排障就从「读一行」变成「猜」。
- * 成功路径不要用本函数：那里 close 失败仍应判红，资源没释放是构建器的问题。
+ * 「构建为什么失败」，让一条与错因无关的资源释放日志盖过它，排障就从「读一行」变成「猜」。
+ * 成功路径不要用本函数：那里 close 失败仍应判定失败，资源没释放是构建器的问题。
  * @param bundle - 待释放的 bundle
  */
 export async function closeQuietly(bundle: CloseableBundle): Promise<void> {

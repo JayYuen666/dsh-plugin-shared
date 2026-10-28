@@ -1,7 +1,7 @@
 // test/build-types-facet.test.ts —— 声明产物编排（lib/build-types.ts）的行为面。
 //
 // 说明符改写是纯函数，负形状（字符串字面量类型、.d.ts 自身后缀、跨行、mts/cts 对侧）逐条
-// 钉住；buildDeclarations 用真 tsc 跑一遍最小夹具（成功换目录、失败保住上一轮产物），
+// 固定；buildDeclarations 用真 tsc 跑一遍最小测试数据（成功换目录、失败保住上一轮产物），
 // 子进程诊断透传（runTool）用真 node 进程造正负两路。
 import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
@@ -144,10 +144,10 @@ describe("listDeclarations", () => {
   });
 });
 
-/** 最小夹具应产出的声明清单（多处共用，避免字面量重复面）。 */
+/** 最小测试数据应产出的声明清单（多处共用，避免字面量重复）。 */
 const EXPECTED_DECLS = ["host.d.ts", "lib/a.d.ts"] as const;
 
-/** 造一个最小声明夹具：host.ts 从 ./lib/a.ts 值导入。 */
+/** 造一个最小声明测试数据：host.ts 从 ./lib/a.ts 值导入。 */
 async function typesFixture(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "build-types-"));
   await mkdir(path.join(root, "lib"));

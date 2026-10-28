@@ -1,8 +1,8 @@
 // test/build-facets.test.ts —— host / client 两条统一构建编排（lib/build-host.ts 与
 // lib/build-client.ts）的行为面。
 //
-// rolldown 用受控桩代替：这里测的是**编排**（外部化口径、传给 rolldown 的选项、输出守卫、
-// 正典化与外壳拼装），不是打包器本身；桩可以精确交出坏形状（多 chunk、空正文、缺
+// rolldown 用受控 stub 代替：这里测的是**编排**（外部化规则、传给 rolldown 的选项、输出检查、
+// 规范化与外壳拼装），不是打包器本身；stub 可以精确交出坏形状（多 chunk、空正文、缺
 // moduleIds），那正是各包脚本此前各自漏测的负形状。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ import type { HostEntry } from "../lib/build-host.ts";
 import type { ClientNameContext } from "../lib/build-client.ts";
 import type { OutputItem, RolldownBundle, RolldownFactory } from "../lib/build-artifacts.ts";
 
-/** 复用的高频字面量（sonarjs/no-duplicate-string 的去重面）。 */
+/** 复用的高频字面量（sonarjs/no-duplicate-string 的去重范围）。 */
 const HEADER = "// h";
 const HOST_HEADER = "// GENERATED-header\n";
 const HOST_ENTRY_SOURCE = "host.ts";
@@ -28,7 +28,7 @@ const MODULE_IDS = ["/pkg/lib/a.ts"] as const;
 const FIXTURE_NAME = "@jayyuen66/fixture";
 const CLOSE_BOOM = "close boom";
 
-/** 桩记录到的 rolldown 选项视图（只列断言要读的键；写死形状避免索引签名上的访问规则冲突）。 */
+/** stub 记录到的 rolldown 选项视图（只列断言要读的键；写死形状避免索引签名上的访问规则冲突）。 */
 interface RolldownOptionsView {
   input?: string | string[];
   platform?: string;
@@ -45,7 +45,7 @@ interface RolldownCall {
   closed: boolean;
 }
 
-/** 桩工厂的行为配置。 */
+/** stub 工厂的行为配置。 */
 interface StubPlan {
   /** 每次 rolldown 调用各交回的输出清单（按调用序取用；取尽后重复末项）。 */
   readonly outputs: readonly (readonly OutputItem[])[];
@@ -55,7 +55,7 @@ interface StubPlan {
 
 /**
  * 取唯一一次调用的记录。
- * @param calls - 桩的调用记录
+ * @param calls - stub 的调用记录
  * @returns 那一条记录
  */
 function soleCall(calls: readonly RolldownCall[]): RolldownCall {
@@ -67,7 +67,7 @@ function soleCall(calls: readonly RolldownCall[]): RolldownCall {
 }
 
 /**
- * 取记录里的外部化判据。
+ * 取记录里的外部化判定函数。
  * @param call - 桩的调用记录
  * @returns external 函数
  */
@@ -80,7 +80,7 @@ function externalOf(call: RolldownCall): (id: string) => boolean {
 }
 
 /**
- * 造一个记录型的 rolldown 桩。
+ * 造一个记录型的 rolldown stub。
  * @param plan - 行为配置
  * @returns 工厂与调用记录
  */
@@ -132,7 +132,7 @@ async function fixtureRoot(manifest: Record<string, unknown>): Promise<string> {
   return dir;
 }
 
-/** 默认夹具 manifest：一条普通依赖 + 一条可选依赖。 */
+/** 默认测试数据 manifest：一条普通依赖 + 一条可选依赖。 */
 const BASE_MANIFEST = {
   name: FIXTURE_NAME,
   dependencies: { "@jayyuen66/dsh-plugin-shared": "0.1.7" },
@@ -149,7 +149,7 @@ function storeLine(prefix: string, sep: string): string {
   return `//#region ${prefix}node_modules${sep}.pnpm${sep}@scope+pkg@1.0.0_h1${sep}node_modules${sep}@scope/pkg/lib/a.js`;
 }
 
-/** 用完即弃的夹具包根清理。 */
+/** 用完即弃的测试包根清理。 */
 async function cleanup(...roots: readonly string[]): Promise<void> {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 }

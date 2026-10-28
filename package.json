@@ -1,11 +1,12 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.1.9",
-  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
+  "version": "0.2.0",
+  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
   "keywords": [
     "cordis",
     "dsh",
     "plugin",
+    "settings-card",
     "tool-events"
   ],
   "homepage": "https://github.com/JayYuen666/dsh-plugin-shared#readme",
@@ -44,6 +45,10 @@
     "./lib/card-diff": {
       "types": "./dist/types/card-diff.d.ts",
       "default": "./dist/card-diff.js"
+    },
+    "./lib/card-ui": {
+      "types": "./dist/types/card-ui.d.ts",
+      "default": "./dist/card-ui.js"
     },
     "./lib/project-key": {
       "types": "./dist/types/project-key.d.ts",
@@ -136,11 +141,16 @@
     "@deepseek-ai/dsh-shell": "0.2.1-rc.3",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
+    "happy-dom": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.1",
     "rolldown": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
@@ -154,7 +164,8 @@
     "@deepseek-ai/dsh-output-retention": "0.2.1-rc.3",
     "@deepseek-ai/dsh-session": "0.2.1-rc.3",
     "@deepseek-ai/dsh-shell": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3"
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+    "react": "^19.3.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -179,6 +190,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "react": {
       "optional": true
     }
   },

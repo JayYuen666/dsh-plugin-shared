@@ -167,6 +167,11 @@ jobs:
           # 自备的工具链（本包不再声明为 peer，见 README 的 config 段），探针侧必须先装，
           # 否则缺包报的是 execNotFound 那种形状，会把「清单漏了入口」伪装成别的故障。
           npm install -D oxlint vitest --no-audit --no-fund
+          # `./lib/card-ui` 是客户端子面，产物的顶层静态 import `react`；react 是 optional peer，
+          # npm 不会自动装。探针按消费者实际提供的宿主运行时装上它，否则这一条子路径会以
+          # ERR_MODULE_NOT_FOUND 假红，看起来像发布面缺入口。
+          react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
+          npm install -D "react@${react_range}" --no-audit --no-fund
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
           // 名单取自装进来的那份产物自己的 exports，不在这里再抄一份：抄来的清单与发布面是
@@ -210,6 +215,9 @@ jobs:
           set -euo pipefail
           cd /tmp/probe
           npm install -D typescript@7.0.2 @types/node@26.6.3 --no-audit --no-fund
+          # `./lib/card-ui` 的 .d.ts 引 `react` 类型；react 包不自带 .d.ts，类型面必须另装
+          # @types/react，否则 surface.ts 会对这份声明报 TS2307。
+          npm install -D @types/react@19.3.0 --no-audit --no-fund
           # 类型面的 peer 必须现量装齐再判：本包把 5 个只承载类型的 @deepseek-ai/* 声明为
           # optional peer，npm 于是不装它们，而 dist/**/*.d.ts 直接引它们的类型 ⇒ 裸装下 ① 收到
           # 7 条指向**本包自己** .d.ts 的 TS2307（"dsh-plugin-shared"这三个词命中的是文件路径，
@@ -315,6 +323,9 @@ jobs:
           mkdir -p /tmp/probe-pn && cd /tmp/probe-pn
           npm init -y >/dev/null
           pnpm add "$tarball"
+          # 客户端子面静态 import `react`；optional peer 在 pnpm 下同样不会自动装。
+          react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
+          pnpm add -D "react@${react_range}"
           # 不能只停在「装上了」：publish.yml 真正用的发布器是 pnpm，npm 侧那套逐子路径
           # import 与消费方类型探针在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
           node --input-type=module -e '

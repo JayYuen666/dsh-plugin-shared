@@ -1,13 +1,13 @@
-// test/project-key.test.ts —— 项目桶键派生单测。
+// test/project-key.test.ts —— 项目键生成单测。
 //
-// 两条主断言分别钉住两个方向：
-//   1. 兼容：绝对且已规范的路径，键与"纯字符串归一"的旧实现逐字节相同（存量桶不迁移，
+// 两条主断言分别固定两个方向：
+//   1. 兼容：绝对且已规范的路径，键与"纯字符串归一"的旧实现逐字节相同（存量键不迁移，
 //      与记忆网关对照用的 agent_id 关系不破）；
-//   2. 修复：相对路径 / `..` 冗余段 / 软链（macOS /tmp ↔ /private/tmp）归一到同一桶。
+//   2. 修复：相对路径 / `..` 冗余段 / 软链接（macOS /tmp ↔ /private/tmp）归一到同一个键。
 // realpath 与 sep 都经 opts 注入，测试不碰真实文件系统（node/no-sync 底线，也不依赖 runner
-// 环境）。`sep` 现在定的是整条臂（字形 + 解析），所以 POSIX 与 Windows 两条臂在任一 runner
-// 上都同样可判定——只注入字形时，POSIX 那几条在 Windows runner 上会拿到拼过 cwd 的原生解析
-// 结果，字面量键当场漂移（实测 windows-latest 四条红）。
+// 环境）。`sep` 现在定的是整条路径语义分支（字形 + 解析），所以 POSIX 与 Windows 两条分支在任一
+// runner 上都同样可判定——只注入字形时，POSIX 那几条在 Windows runner 上会拿到拼过 cwd 的原生
+// 解析结果，字面量键立即漂移（实测 windows-latest 四条失败）。
 
 import { describe, expect, it } from "vitest";
 import path from "node:path";
@@ -28,8 +28,8 @@ function legacyKey(cwd: string): string {
 const noFs = { realpath: (target: string): string => target };
 
 /**
- * 恒等 realpath + POSIX 那一侧的整条臂。字面量键锚的是消费方在 POSIX 上落下的桶，
- * 所以判据必须显式要 POSIX 解析，否则 runner 一换平台就不是同一件事了。
+ * 恒等 realpath + POSIX 那一侧的整条分支。字面量键锚的是消费方在 POSIX 上生成的键，
+ * 所以判断必须显式要求 POSIX 解析，否则 runner 一换平台就不是同一件事了。
  */
 const posixKey = { ...noFs, sep: path.posix.sep };
 
@@ -42,7 +42,7 @@ function winPath(...segments: string[]): string {
   return segments.join(path.win32.sep);
 }
 
-/** Windows 那一侧的整条臂：恒等 realpath + win32 字形与解析。 */
+/** Windows 那一侧的整条分支：恒等 realpath + win32 字形与解析。 */
 const winKey = { ...noFs, sep: path.win32.sep };
 
 /** 字面量断言里重复出现的两个入参路径（同一条键的多次求值，不是两个不同用例）。 */
@@ -57,7 +57,7 @@ const ABSENT_PATH = "/w/proj/backend";
 
 describe("deriveProjectKey", () => {
   it("绝对已规范路径：与旧实现逐字节相同（存量桶不迁移）", () => {
-    // 字面量断言：这两个串是跨系统契约的锚点，任何改动都会立刻红在这里。
+    // 字面量断言：这两个串是跨系统约定的锚点，任何改动都会立即在这里失败。
     expect(deriveProjectKey(DEV_PROJ_PATH, posixKey)).toBe("proj-75ff31d9");
     expect(deriveProjectKey("/repo/proj/src", posixKey)).toBe("src-86c69f49");
     expect(deriveProjectKey(DEV_PROJ_PATH, posixKey)).toBe(legacyKey(DEV_PROJ_PATH));
@@ -146,23 +146,23 @@ describe("deriveProjectKey", () => {
   });
 
   it("Windows UNC 共享根 → default（折完与 POSIX 两段目录同形，只能在折之前判）", () => {
-    // 回归钉的是判据的**位置**：UNC 根折完是 `/server/share`，与合法的 `/a/b` 无法区分，
-    // 所以判据必须作用于折分隔符之前的串。原先漏判时它落成 `share-<hash>`。
+    // 回归固定的是判断的**位置**：UNC 根合并后是 `/server/share`，与合法的 `/a/b` 无法区分，
+    // 所以判断必须作用于合并分隔符之前的串。原先漏判时它生成了 `share-<hash>`。
     const shareRoot = `${path.win32.sep}${path.win32.sep}server${path.win32.sep}share`;
     expect(deriveProjectKey(shareRoot, winKey)).toBe("default");
-    // 带尾分隔符是同一件事的另一种写法，一并钉住。
+    // 带尾分隔符是同一件事的另一种写法，一并固定。
     expect(deriveProjectKey(`${shareRoot}${path.win32.sep}`, winKey)).toBe("default");
-    // 共享根下的真目录不受影响：判据不该把「两段」一刀切，也不该吃掉合法子目录。
+    // 共享根下的真目录不受影响：判断不该把「两段」一刀切，也不该误伤合法子目录。
     const under = `${shareRoot}${path.win32.sep}proj`;
     expect(deriveProjectKey(under, winKey)).toMatch(/^proj-[0-9a-f]{8}$/u);
   });
 
   it("共享根带长路径前缀时也落 default，不造假桶键", () => {
-    // 字形是「两个反斜杠 + 问号 + UNC + 两段」，两段判据直接比会既不像根也不像目录，
-    // 于是落成一个看起来合法的假键。
+    // 形态是「两个反斜杠 + 问号 + UNC + 两段」，两段判断直接比较会既不像根也不像目录，
+    // 于是生成一个看起来合法的假键。
     const longShareRoot = `${path.win32.sep}${path.win32.sep}?${path.win32.sep}UNC${path.win32.sep}server${path.win32.sep}share`;
     expect(deriveProjectKey(longShareRoot, winKey)).toBe("default");
-    // 共享根下的真目录仍按末段出键，判据不该把整条长路径一刀切。
+    // 共享根下的真目录仍按末段出键，判断不该把整条长路径一刀切。
     const under = `${longShareRoot}${path.win32.sep}proj`;
     expect(deriveProjectKey(under, winKey)).toMatch(/^proj-[0-9a-f]{8}$/u);
   });

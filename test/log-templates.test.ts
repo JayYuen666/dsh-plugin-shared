@@ -1,11 +1,11 @@
-// test/log-templates.test.ts —— 账本的反向校验：登记的片段必须还在源码里，源码里的
+// test/log-templates.test.ts —— 记录清单的反向校验：登记的片段必须还在源码里，源码里的
 // console.* 也必须被某个片段认领。
 //
-// 为什么需要它：正向判据（test/setup-logs.ts 的「未认领」断言）只在**多**的时候响——
-// 新增日志忘了登记会判红。反过来，源码里删掉一条日志后留下的陈旧片段没有任何东西会红，
-// 而陈旧片段会继续把别的日志「认领」掉，等于把那条守卫悄悄放宽。
+// 为什么需要它：正向判断（test/setup-logs.ts 的「未认领」断言）只在**多**的时候响——
+// 新增日志忘了登记会判失败。反过来，源码里删掉一条日志后留下的陈旧片段没有任何东西会失败，
+// 而陈旧片段会继续把别的日志「认领」掉，等于把那条检查悄悄放宽。
 //
-// 扫描面只有 lib/：build-*.mjs 的 console 是构建脚本的输出，不进插件账本。
+// 扫描范围只有 lib/：build-*.mjs 的 console 是构建脚本的输出，不进插件记录清单。
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -40,10 +40,10 @@ function loggedFirstArgs(texts: readonly string[]): string[] {
   );
 }
 
-describe("日志模板账本", () => {
+describe("日志模板记录清单", () => {
   it("登记的每条片段都还在源码的 console 调用里", async () => {
     const logged = loggedFirstArgs(await libSources());
-    // 空集不打勾：一条都扫不到时下面那条 some() 恒假，但前一条会很可疑地通过。
+    // 空集不算通过：一条都扫不到时下面那条 some() 恒假，但前一条会很可疑地通过。
     expect(logged.length, "lib/ 下没扫到任何 console 调用").toBeGreaterThan(0);
     for (const fragment of LOG_TEMPLATES) {
       expect(

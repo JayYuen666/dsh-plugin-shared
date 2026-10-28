@@ -1,18 +1,18 @@
 // lib/text 单元测试：截断不得把代理对切成半。
 // 为什么单独测：宿主把工具结果持久化进会话日志，一个孤立高代理会让该会话之后的
-// 每次 Messages 请求都失败（上游同缺陷见 dsh PR #4827）。这里用字面量钉死两端的切法。
+// 每次 Messages 请求都失败（上游同缺陷见 dsh PR #4827）。这里用字面量固定两端的截断行为。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { truncateEnd, truncateStart } from "../lib/text.ts";
 
-// 四枚边界即代理区：高代理 0xD800–0xDBFF、低代理 0xDC00–0xDFFF（按升序）。写十进制是因为
-// oxfmt 小写 hex 数字、oxlint 又要求大写，两条 gate 在 hex 字面量上互斥（实测）。
+// 四个边界即代理区：高代理 0xD800–0xDBFF、低代理 0xDC00–0xDFFF（按升序）。写十进制是因为
+// oxfmt 小写 hex 数字、oxlint 又要求大写，两条检查在 hex 字面量上互斥（实测）。
 const LONE_HIGH = 55_296;
 const HIGH_CE = 56_319;
 const LOW_START = 56_320;
 const LOW_CE = 57_343;
-// BMP 上界 0xFFFF：合法代理对被 codePointAt 合成一枚越过它的码点，逐枚扫时要连下半枚一起
-// 跳过，否则那枚正常的低代理会被读成"孤立低代理"而假红。
+// BMP 上界 0xFFFF：合法代理对被 codePointAt 合成一个越过它的码点，逐个扫描时要连下半个一起
+// 跳过，否则那个正常的低代理会被读成"孤立低代理"而误判失败。
 const BMP_CE = 65_535;
 
 describe("truncateEnd（前切，防尾部孤立高代理）", () => {
@@ -31,7 +31,7 @@ describe("truncateEnd（前切，防尾部孤立高代理）", () => {
   });
 
   it("切点落在合法位置 ⇒ 保留完整代理对", () => {
-    // 切点 4 正落在代理对**之后**（原文 6 码元 ⇒ 确实动了刀），完整对原样保留。
+    // 切点 4 正落在代理对**之后**（原文 6 码元，确实发生了截断），完整对原样保留。
     assert.equal(truncateEnd("ab\u{1F600}cd", 4), "ab\u{1F600}");
   });
 
@@ -39,11 +39,11 @@ describe("truncateEnd（前切，防尾部孤立高代理）", () => {
     assert.equal(truncateEnd("abc", 0), "");
     assert.equal(truncateEnd("abc", -5), "");
     assert.equal(truncateEnd("", 0), "");
-    // 下面三条里只有前两条是换装守卫的探针：官方裸函数实测
+    // 下面三条里只有前两条是改用官方件后的守卫检查：官方裸函数实测
     // truncate("abcdefgh", -5) === "abc"、(-1) === "abcdefg"（slice 把负数解释成
-    // "从尾部倒数"），摘掉 Math.max(0, ·) 这两条当场转红。第三条不是探针——
-    // 实测 off("abcdefgh", -Infinity) === ""，与契约同值，摘守卫也不红；
-    // 它钉的是"负无穷预算与负有限预算同口径落空串"这条契约边界，别把它当证据。
+    // "从尾部倒数"），去掉 Math.max(0, ·) 后这两条立即失败。第三条不是检查点——
+    // 实测 off("abcdefgh", -Infinity) === ""，与约定值相同，去掉守卫也不失败；
+    // 它固定的是"负无穷预算与负有限预算同样返回空串"这条约定边界，别把它当证据。
     assert.equal(truncateEnd("abcdefgh", -5), "");
     assert.equal(truncateEnd("abcdefgh", -1), "");
     assert.equal(truncateEnd("abcdefgh", Number.NEGATIVE_INFINITY), "");
@@ -51,7 +51,7 @@ describe("truncateEnd（前切，防尾部孤立高代理）", () => {
 
   it("NaN 预算 ⇒ 空串（与 truncateStart 同口径，文件头那句声明靠这一条成立）", () => {
     // 调用方把预算算成 `余量 - 已用量` 就可能交出 NaN（0/0、Infinity-Infinity）。
-    // 这里不是钻空子：NaN 走不进 `text.length <= maxChars`，也不走 `slice(0, 0)`，
+    // 这里不是在找规则漏洞：NaN 走不进 `text.length <= maxChars`，也不走 `slice(0, 0)`，
     // 它是**第三条**通路；两端必须逐条对上。
     assert.equal(truncateEnd("abc", Number.NaN), "");
     assert.equal(truncateEnd("abc\u{1F600}", Number.NaN), "");
@@ -70,12 +70,12 @@ describe("truncateStart（后切，防首部孤立低代理）", () => {
       !(first !== undefined && first >= LOW_START && first <= LOW_CE),
       `首部仍是孤立低代理: 0x${first?.toString(16)}`,
     );
-    // 钉住"确实保留了尾部内容"，而不是只验证没坏
+    // 这条固定"确实保留了尾部内容"的断言，而不是只验证没坏
     assert.ok(out.includes("尾部内容"), `应保留尾部可见内容，实得 ${JSON.stringify(out)}`);
   });
 
   it("切点落在合法位置 ⇒ 预算原样保住", () => {
-    // 与 truncateEnd 的合法切点用例对称：切点没切开代理对时一枚也不少削。
+    // 与 truncateEnd 的合法截断位置用例对称：截断位置没切开代理对时一个码元也不少。
     assert.equal(truncateStart("前置内容\u{1F468}‍\u{1F469}尾部内容", 4), "尾部内容");
   });
 
@@ -91,25 +91,25 @@ describe("truncateStart（后切，防首部孤立低代理）", () => {
 
   it("NaN 预算 ⇒ 空串，与 truncateEnd(text, NaN) 同口径", () => {
     // 改动前这里是"整串"：`NaN <= 0` 为 false 走不进守卫，`slice(-NaN)` 即 `slice(0)`。
-    // 牙齿：把守卫写成 `minChars <= 0` 就这条红（两端"同口径"那句话又变成假话）。
+    // 判定力度：把守卫写成 `minChars <= 0` 这条就会失败（两端"行为相同"那句话又变成假话）。
     assert.equal(truncateStart("abc", Number.NaN), "");
     assert.equal(truncateStart("abc\u{1F600}", Number.NaN), "");
   });
 
   it("不足一枚码元的正预算 ⇒ 空串（slice 的取整会把它变成 slice(0) 的整串）", () => {
     // 0 < minChars < 1 是第三个"预算不可用"的形态：ToIntegerOrInfinity(-0.5) 得 -0，
-    // 于是 slice(-0.5) 等价 slice(0) 把整串吐回去。按比例算出来的预算就可能落进这一档。
+    // 于是 slice(-0.5) 等价 slice(0)，返回整串。按比例算出来的预算就可能落进这一类。
     assert.equal(truncateStart("0123456789abcdef", 0.5), "");
     assert.equal(truncateStart("0123456789abcdef", 0.999999), "");
-    // 反向的一侧：够一枚码元时照常后切，不因这次收紧被误伤。
+    // 反向的一侧：够一个码元时照常后切，不因这次收紧被误伤。
     assert.equal(truncateStart("0123456789abcdef", 1), "f");
   });
 });
 
 describe("两端拼接（failureDetail 的用法）", () => {
-  // 周期 24 枚码元的串，预算取 41 与 55：41 的正切点落在高代理上、55 的落在低代理上，
-  // 两端都得被削掉一枚。旧的 40/40 两个切点都落在合法边界上，对**没截断过的原串**同样
-  // 成立 ⇒ 把被测实现换成空操作，下面那条扫描也照样绿，根本咬不住。
+  // 周期 24 个码元的串，预算取 41 与 55：41 的截断位置落在高代理上、55 的落在低代理上，
+  // 两端都得被削掉一个。旧的 40/40 两个截断位置都落在合法边界上，对**没截断过的原串**同样
+  // 成立，把被测实现换成空操作，下面那条扫描也照样通过，完全约束不住实现。
   const detail = "错误：路径 /repo 校验失败\u{1F6D1}请修正后重试".repeat(30);
 
   it("预算各切进一枚半代理 ⇒ 两端长度各少 1（钉住确实动了刀）", () => {
@@ -133,13 +133,13 @@ describe("两端拼接（failureDetail 的用法）", () => {
   });
 
   it("两端在无限预算下同口径：整串原样返回（而不是空串）", () => {
-    // NaN 那一侧两条路径已经各有用例钉着；Infinity 是另一侧的"预算不可用"形态：
+    // NaN 那一侧两条路径已经各有用例固定；Infinity 是另一侧的"预算不可用"形态：
     // truncateStart 走 `text.length <= Infinity` 直接交回整串，truncateEnd 交给官方件
     // 的 slice(0, Infinity) 也交回整串。两者必须同向，否则"预算取自配置"时两端会分叉。
     const text = "abc\u{1F600}def";
     assert.equal(truncateStart(text, Number.POSITIVE_INFINITY), text);
     assert.equal(truncateEnd(text, Number.POSITIVE_INFINITY), text);
-    // 负无穷归到"预算 ≤ 0"那一档 ⇒ 空串，与零预算同口径。
+    // 负无穷归入"预算 ≤ 0"一类，返回空串，与零预算行为相同。
     assert.equal(truncateStart(text, Number.NEGATIVE_INFINITY), "");
     assert.equal(truncateEnd(text, Number.NEGATIVE_INFINITY), "");
   });
@@ -150,7 +150,7 @@ describe("两端拼接（failureDetail 的用法）", () => {
     assert.equal(truncateStart("", 5), "");
     assert.equal(truncateEnd("abc", 3), "abc");
     assert.equal(truncateStart("abc", 3), "abc");
-    // 超出一格才动，且切点落在合法位置时保留量不塌陷。
+    // 只有超出时才截断，且截断位置落在合法位置时保留量不受影响。
     assert.equal(truncateEnd("abcd", 3), "abc");
     assert.equal(truncateStart("abcd", 3), "bcd");
   });
@@ -159,14 +159,14 @@ describe("两端拼接（failureDetail 的用法）", () => {
 describe("兼容面：truncateEnd 依赖的官方件仍在装着的 DSH 里", () => {
   it("官方 truncateWithoutSplittingSurrogatePair 存在且可调用", async () => {
     // lib/text.ts 的文件头记着：官方件在 0.2.0-rc.2 存在、在 0.1.7-alpha.1 不存在。
-    // 类型面挡得住"导出被删"（tsc 会红），但挡不住**运行期拿到 undefined**——例如
+    // 类型检查挡得住"导出被删"（tsc 会报错），但挡不住**运行期拿到 undefined**——例如
     // 消费插件装在另一份更老的 DSH 上。那种情况下 truncateEnd 会在第一次调用时抛
     // TypeError，而它的调用点全在把工具结果写进会话日志的路径上。
-    // 本包把 DSH 依赖钉成精确版本（0.2.0-rc.2），但 9 个消费插件各自的 DSH 由宿主决定，
-    // 所以这里把"符号存在且是函数"当成一条要钉的契约。
+    // 本包把 DSH 依赖锁成精确版本（0.2.0-rc.2），但 9 个消费插件各自的 DSH 由宿主决定，
+    // 所以这里把"符号存在且是函数"当成一条要固定的约定。
     const official = await import("@deepseek-ai/dsh-output-retention");
     assert.equal(typeof official.truncateWithoutSplittingSurrogatePair, "function");
-    // 顺带钉住它确实是我们以为的那件事：切点切开代理对时丢的是尾部那枚孤立高代理。
+    // 顺带固定它确实是我们以为的那件事：截断位置切开代理对时丢的是尾部那个孤立高代理。
     assert.equal(official.truncateWithoutSplittingSurrogatePair("a\u{1F600}", 1), "a");
     assert.equal(official.truncateWithoutSplittingSurrogatePair("a\u{1F600}b", 3), "a\u{1F600}");
   });

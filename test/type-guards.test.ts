@@ -1,19 +1,19 @@
-// test/type-guards.test.ts —— 编译期护栏：这些断言由 tsc 判定，不由 vitest 判定。
+// test/type-guards.test.ts —— 编译期保护：这些断言由 tsc 判定，不由 vitest 判定。
 //
 // 为什么需要独立一个文件：config/vitest.base.ts 的四项 100% 覆盖率只看得到「某行跑过没有」，
-// 看不到「某个非法调用编不过」。lib/locale.ts 的值域洞就是这样活下来的——它零错误通过，
+// 看不到「某个非法调用编不过」。lib/locale.ts 的值域漏洞就是这样漏掉的——它零错误通过，
 // 覆盖率却是满的。@ts-expect-error 是 TS 自带的负向断言：约束还在时它压住一条真错误；
-// 约束一旦被撤掉，那行不再报错，tsc 立刻报 unused directive，本文件转红。
+// 约束一旦被撤掉，那行不再报错，tsc 立刻报 unused directive，本文件判定失败。
 //
 // 每条负向断言都配一条正向断言：正向负责「别把合法的也挡了」，负向负责「非法的还在挡」。
-// 只写负向的话，一个把 Messages 约束成 never 的过改也会让它全绿。
+// 只写负向的话，一次把 Messages 约束改成 never 的误改也会让它全部通过。
 
 import { describe, expect, it } from "vitest";
 import { messagesFor } from "../lib/locale.ts";
 import type { MessagesCatalog } from "../lib/locale.ts";
 
 // 消费方的标准写法：interface + readonly。映射类型约束必须对它成立——
-// extends Record<string, string> 会在这里炸（interface 拿不到隐式索引签名）。
+// extends Record<string, string> 会在这里失败（interface 拿不到隐式索引签名）。
 interface Messages {
   readonly greeting: string;
 }

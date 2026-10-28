@@ -1,15 +1,14 @@
 # 自动生成：catalog 键值与 overrides 取值来自根 pnpm-workspace.yaml，改根不改这里。
 autoInstallPeers: false
 catalog:
-  "@jayyuen66/dsh-plugin-shared": 0.1.8
   "@types/node": 26.6.5
   "@types/react": 19.3.0
   "@types/react-dom": 19.3.0
   "@vitest/coverage-v8": 5.0.5
   "eslint-plugin-sonarjs": 4.2.2
   happy-dom: 21.0.4
-  oxfmt: 0.74.0
-  oxlint: 1.89.0
+  oxfmt: 0.75.0
+  oxlint: 1.90.0
   "oxlint-tsgolint": 7.0.2005
   rolldown: 1.2.15
   typescript: 7.0.2

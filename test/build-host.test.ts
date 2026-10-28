@@ -1,10 +1,10 @@
 // build-host 防回归：shared 的 dist 里，值导入的官方件必须是**外部化裸说明符**。
 //
-// 为什么值得一条测试：本包是发布件，消费方 `npm i` 之后躺在 node_modules 里的是 dist/，
-// **没有源码可走**——"本机运行面走源码不走 dist"这句理由只对本地 workspace 成立。
+// 为什么值得一条测试：本包是发布件，消费方 `npm i` 之后位于 node_modules 里的是 dist/，
+// **没有源码可用**——"本机运行走源码不走 dist"这句理由只对本地 workspace 成立。
 // 少了 external 选项，rolldown 就把 `truncateWithoutSplittingSurrogatePair` 的函数体复制进
-// shared 的 chunk：同一进程里官方截断件有两份身份（宿主一份 + shared dist 一份），而本包
-// 从此为官方实现的行为负责。两个坏方向都不报错、只在消费侧发作，故与兄弟包同批钉住。
+// shared 的 chunk：同一进程里官方截断实现有两份身份（宿主一份 + shared dist 一份），而本包
+// 从此为官方实现的行为负责。两个坏方向都不报错、只在消费侧发作，故与兄弟包同批固定。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
@@ -23,8 +23,8 @@ async function chunkText(): Promise<string> {
 
 describe("shared buildHost()", () => {
   it("dist 全部产物与最新构建逐字节一致（改 lib/*.ts 后必须 node build-host.mjs）", async () => {
-    // 本包不产 host.js：buildHost() 交回「落盘路径 → 正文」的清单（多入口 + code-split
-    // chunk），门禁两侧都折成按路径排序的摘要清单再比（判据见 test/host-freshness.ts）。
+    // 本包不产 host.js：buildHost() 交回「待写入路径 → 正文」的清单（多入口 + code-split
+    // chunk），检查两侧都转换成按路径排序的摘要清单再比（判断依据见 test/host-freshness.ts）。
     const { pkgName, pkgDir, onDisk, built } = await hostFreshnessEvidence(import.meta.url);
     assert.equal(
       onDisk,
@@ -38,15 +38,15 @@ describe("shared buildHost()", () => {
   it("产物：@deepseek-ai/dsh-output-retention 保持裸说明符（未内联）", async () => {
     const out = await chunkText();
     // 说明符匹配必须容得下 minify：压缩产物里是 from"..."（from 后无空格），写死
-    // `from "..."` 会在开压缩那天假报红。同一个文件下面那条判据本来就用 /from\s+/u，
-    // 这里按同口径写成 \s*（星号：压缩后一个空格都不剩）。
+    // `from "..."` 会在开启压缩那天误报。同一个文件下面那条判断本来就用 /from\s+/u，
+    // 这里按同一规则写成 \s*（星号：压缩后一个空格都不剩）。
     assert.ok(
       /from\s*["']@deepseek-ai\/dsh-output-retention["']/u.test(out),
       "官方截断件必须以裸说明符留在 dist 里（口径 A：值导入的官方件一律外部化）",
     );
     // 「没有被内联」由上面那条完整表达：一旦内联，这条 import 就不复存在。
     // 原先那条 /^function truncateWithoutSplittingSurrogatePair\(/mu 在压缩后恒不成立
-    //（标识符被改名），是一条永远不会红的空判据——换成对「同一份身份只有一条导入」的正面计数，
+    //（标识符被改名），是一条永远不会失败的空检查——换成对「同一份身份只有一条导入」的正面计数，
     // 也就是本用例开头要防的那件事。
     assert.equal(
       [...out.matchAll(/from\s*["']@deepseek-ai\/dsh-output-retention["']/gu)].length,
@@ -67,8 +67,8 @@ describe("shared buildHost()", () => {
     const out = await chunkText();
     // lib/job-outcome 只 import type：注册表实例由宿主注入，本包连 dsh-jobs 都不该在
     // dependencies 里（它只在 devDependencies，供 tsc 解析声明）。哪天有人值导入，
-    // dist 就会多出一条消费方解析不到的说明符——那是发布件才发作的坑。
-    // 判据只看 `from "…"` 位置：源码注释会随产物一起留下，整串匹配会被注释误伤。
+    // dist 就会多出一条消费方解析不到的说明符——那是发布件才发作的问题。
+    // 判断只看 `from "…"` 位置：源码注释会随产物一起留下，整串匹配会被注释误伤。
     assert.ok(
       !/from\s*["']@deepseek-ai\/dsh-jobs/u.test(out),
       "dsh-jobs 只能是类型面：产物里出现它的 from 说明符即值导入",
@@ -80,15 +80,15 @@ describe("shared buildHost()", () => {
   });
 
   it("facets 与 lib/ 下切面一一对应（barrel 类型面的同源清单不许漂移）", async () => {
-    // 新增切面只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，dist/index.d.ts 会
-    // 静默缺成员而其余门禁全绿——index.test.ts 管 barrel↔lib、publish-manifest 管
+    // 新增模块只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，dist/index.d.ts 会
+    // 静默缺成员而其余检查全部通过——index.test.ts 管 barrel↔lib、publish-manifest 管
     // exports↔lib，只有这份清单两边都搭不上。
     const listed = await readdir(path.join(import.meta.dirname, "..", "lib"));
     const onDisk = listed
       .filter((name) => name.endsWith(".ts"))
       .map((name) => name.replace(/\.ts$/u, ""))
       .toSorted();
-    // 不进 facets 的：barrel 自己、只走子路径的 builder 期文本后处理件，与构建编排切面
+    // 不进 facets 的：barrel 自己、只走子路径的 builder 期文本后处理代码，与构建编排模块
     // （它们同样只走子路径、由各包 build-*.mjs 消费，产物落 dist/build/）。
     const expected = [
       ...facets,
@@ -97,6 +97,8 @@ describe("shared buildHost()", () => {
       "build-host",
       "build-client",
       "build-types",
+      // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
+      "card-ui",
       "index",
     ].toSorted();
     assert.deepEqual(onDisk, expected);

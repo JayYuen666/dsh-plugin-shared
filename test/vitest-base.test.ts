@@ -1,8 +1,8 @@
-// test/vitest-base.test.ts —— definePackageConfig 的合并契约。
+// test/vitest-base.test.ts —— definePackageConfig 的合并行为。
 //
-// 覆盖率公共面是四项 100% 阈值的承重墙：覆盖项必须逐键合并、`test` 里不许塞 `coverage`，
-// 这两条一旦松动，某个包的一次局部改配就会静默变成整片门禁失效。这里把两条钉在运行期；
-// 统计面的单源约束（include 只由 coverageInclude 供给）钉在文末的编译期负向断言上。
+// 覆盖率公共配置是四项 100% 阈值的关键保障：覆盖项必须逐键合并、`test` 里不许塞 `coverage`，
+// 这两条一旦松动，某个包的一次局部改配就会静默变成整组检查失效。这里把两条固定在运行期；
+// 统计范围的单源约束（include 只由 coverageInclude 供给）固定在文末的编译期负向断言上。
 
 import { describe, expect, it } from "vitest";
 import { definePackageConfig } from "../config/vitest.base.ts";
@@ -14,8 +14,8 @@ const testBlockOf = (
   options: PackageVitestOptions,
 ): ReturnType<typeof definePackageConfig>["test"] => definePackageConfig(options).test;
 
-describe("definePackageConfig 的合并契约", () => {
-  it("公共面完整：v8 provider、include 来自 coverageInclude、四项 100% 阈值", () => {
+describe("definePackageConfig 的合并行为", () => {
+  it("公共配置完整：v8 provider、include 来自 coverageInclude、四项 100% 阈值", () => {
     expect(testBlockOf({ coverageInclude: SHARED_INCLUDE })?.coverage).toMatchObject({
       provider: "v8",
       include: SHARED_INCLUDE,
@@ -57,23 +57,23 @@ describe("definePackageConfig 的合并契约", () => {
   });
 
   it("用例形态放宽：spec 命名与 tsx/mts/cts 扩展位不再被静默漏跑，目录仍收在 test/ 下", () => {
-    // 旧口径只认 test/**/*.test.ts：.spec.ts 与其余扩展位写了也不跑，vitest 对此不报错，
+    // 旧规则只认 test/**/*.test.ts：.spec.ts 与其余扩展位写了也不跑，vitest 对此不报错，
     // 套件可能以「无测试」通过。目录范围刻意不放宽——与源码同目录的用例不是本工作区的约定。
     expect(testBlockOf({ coverageInclude: SHARED_INCLUDE })?.include).toStrictEqual([
       "test/**/*.{test,spec}.{ts,tsx,mts,cts}",
     ]);
   });
 
-  it("排除表补齐声明文件与嵌套的测试/依赖树（声明文件无可执行语句，不进统计面）", () => {
+  it("排除表补齐声明文件与嵌套的测试/依赖树（声明文件无可执行语句，不进统计范围）", () => {
     const exclude = testBlockOf({ coverageInclude: SHARED_INCLUDE })?.coverage?.exclude ?? [];
-    // 空数组不打勾：排除表读不到时下面的循环什么都没量。
+    // 空数组不算通过：排除表读不到时下面的循环什么都没量。
     expect(exclude.length, "覆盖率排除表是空的").toBeGreaterThan(0);
     for (const pattern of ["**/*.d.ts", "**/*.d.mts", "**/test/**", "**/node_modules/**"]) {
       expect(exclude, `排除表缺 ${pattern}`).toContain(pattern);
     }
   });
 
-  it("coverageInclude 为空数组即抛：统计面塌成空集后四项 100% 照常通过，是假绿灯", () => {
+  it("coverageInclude 为空数组即抛：统计范围塌成空集后四项 100% 照常通过，看似达标", () => {
     expect(() => definePackageConfig({ coverageInclude: [] })).toThrow(/coverageInclude/u);
   });
 
@@ -94,9 +94,9 @@ describe("definePackageConfig 的合并契约", () => {
 });
 
 // 编译期负向断言：覆盖项不接受 include。约束一旦撤掉，下面这行不再报错，
-// tsc 报 unused directive，本文件转红。指令只压紧邻一行，所以目标必须单行。
+// tsc 报 unused directive，本文件判定失败。指令只压紧邻一行，所以目标必须单行。
 export const rejectsIncludeInCoverage: PackageVitestOptions = {
   coverageInclude: [],
-  // @ts-expect-error include 不在覆盖项形状里：统计面由 coverageInclude 单源供给
+  // @ts-expect-error include 不在覆盖项形状里：统计范围由 coverageInclude 单独供给
   coverage: { include: ["x"] },
 };

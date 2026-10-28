@@ -3,5 +3,5 @@
 // 由 main() 统一写盘（多入口 + code-split，chunk 名带 hash 故不能在类型里写死文件名）。
 export function buildHost(): Promise<Map<string, string>>;
 
-/** 各切面子路径名（barrel 与 dist/index.d.ts 的成员表来源）。 */
+/** 各模块子路径名（barrel 与 dist/index.d.ts 的成员表来源）。 */
 export const facets: string[];

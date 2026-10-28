@@ -18,8 +18,10 @@ import path from "node:path";
 
 const pkgDir = path.resolve(import.meta.dirname, "..");
 
-/** 运行期切面预算（取实测值上浮后的整数档）。消费方按子路径 external 取用，这些字节是真实装载成本。 */
-const RUNTIME_BUDGET_BYTES = 13_000;
+/** 运行期切面预算（取实测值上浮后的整数档）。消费方按子路径 external 取用，这些字节是真实装载成本。
+ *  card-ui 是客户端组件子面（含统一样式表），按消费方 external 取用；本轮实测 25956 B，
+ *  预算按 +25% 登记为 33000 B。 */
+const RUNTIME_BUDGET_BYTES = 33_000;
 /** 配置面预算（取实测值上浮后的整数档）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。 */
 const CONFIG_BUDGET_BYTES = 30_000;
 /** 构建编排切面预算（dist/build/，各包 build-*.mjs 构建期取用）。与配置面同一记账理由：

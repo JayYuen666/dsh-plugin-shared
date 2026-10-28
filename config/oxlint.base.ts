@@ -15,26 +15,26 @@ function pointsAtSonarjs(entry: ExternalPluginEntry): boolean {
 
 /**
  * 一条规则能被关掉的**全部**合法理由。写不进这六类的，就不该有关掉它的选项。
- * 每类的判据来自 oxlint/eslint 官方文档、上游 recommended 集合的归属，加上本仓的实测。
+ * 每类的判断依据来自 oxlint/eslint 官方文档、上游 recommended 集合的归属，加上本仓的实测。
  */
 export type OffReason =
-  /** 规则的判据与官方契约方向相反，开了等于判官方写法违规。 */
-  | "契约冲突"
-  /** 与本仓已启用的对侧规则互斥（开一侧就判另一侧死刑）。 */
-  | "对侧互斥"
-  /** 按它的意思改代码会把代码改坏，有实测的编译/运行后果。 */
-  | "实测否证"
-  /** 判据只在某种文体（用例文件 / 构建脚本）里成立，按文件种类收窄。 */
-  | "文体作用域"
-  /** 纯口味规则，上游不放进 recommended，开启只带来语义无关的重写。 */
+  /** 规则的判断标准与官方代码形态相反，开启等于判定官方写法违规。 */
+  | "与官方形态冲突"
+  /** 与本仓已启用的另一条规则互相排除（开一侧就判另一侧全部违规）。 */
+  | "与已启用规则互斥"
+  /** 按它的意思改代码会把代码改坏，有实测的编译或运行后果。 */
+  | "实测有害"
+  /** 判断标准只在某类文件（用例文件、构建脚本）里成立，按文件种类收窄。 */
+  | "仅限特定文件"
+  /** 纯风格偏好类规则，上游不放进 recommended，开启只带来语义无关的重写。 */
   | "上游不推荐"
-  /** 旧 `.oxlintrc.json` 继承下来、实测开了是 0 条 —— 没有存在的理由，直接作废。 */
-  | "零代价作废";
+  /** 旧 `.oxlintrc.json` 继承下来、实测开启后零命中——没有存在的理由，直接作废。 */
+  | "零命中作废";
 
 export interface OffJustification {
   /** 关它的理由类别。 */
   kind: OffReason;
-  /** 打开它在全仓产生的条数（口径见 OFF_JUSTIFICATIONS 的头注释）。 */
+  /** 打开它在全仓产生的条数（测量方法见 OFF_JUSTIFICATIONS 的头注释）。 */
   measured: number;
   /** 一句话依据；配置加载只要求这个字段非空。 */
   note: string;
@@ -44,15 +44,15 @@ export interface OffJustification {
 const NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS = "同 no-unsafe-member-access";
 
 /**
- * 实测口径：临时把基线里每条 `off`（rules 与 override 层都算）翻成 `error` 再跑 15 个成员、
- * 与基线取差数 `::error` 行，按路径分成 prod / test / scripts 三桶。`--deny=<rule>` 盖不住
+ * 实测方法：临时把基线里每条 `off`（rules 与 override 层都算）翻成 `error` 再跑 15 个成员、
+ * 与基线取差数 `::error` 行，按路径分成 prod / test / scripts 三类。`--deny=<rule>` 盖不住
  * `off`，最早一轮用它在 13 个包目录上量出的数因此全偏小（`vitest/no-hooks` 用 `-D` 量出来是
  * 0，实际是 181），整批作废重测。
  *
  * 键支持插件级通配（`vitest/*`），作用于该插件下没有更具体键的全部规则。
  */
 export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
-  // ===== 文体作用域：vitest 的用例结构类判据只对 `*.test.ts` 成立 =====
+  // ===== 仅限特定文件：vitest 的用例结构类判断只对 `*.test.ts` 成立 =====
   // oxlint 的 `plugins` 与 `categories` 都是全局作用域，没有 per-files 的插件开关，所以
   // 「只在测试文件里生效」只能这样实现：基线整族 off，再由 TEST_FILE_OVERRIDES 在用例文件上 on。
   // 抄的是 eslint-plugin-vitest 官方 recommended 的 files 作用域，规则一条不丢。
@@ -60,115 +60,115 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   // 被 require-hook 判成「setup 没进 hook」（3 条）、注释里出现官方设置 API 名 `describe()`
   // 被 no-commented-out-tests 判成「注释掉了用例」（3 条）、
   // dir-prep-organize 的 client-entry.ts 同类 1 条。
-  "vitest/*": { kind: "文体作用域", measured: 7, note: "用例结构类判据在非用例文件上无从计算" },
+  "vitest/*": { kind: "仅限特定文件", measured: 7, note: "用例结构类判断在非用例文件上无从计算" },
   "vitest/no-hooks": {
     kind: "上游不推荐",
     measured: 181,
     note: "禁用 hook 本身；本仓按官方 vitest 用法大量使用 before*/after*",
   },
   "vitest/no-conditional-in-test": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 523,
-    note: "平台/宿主版本分支是刻意的（macOS 与 Linux 的家目录形状、0.1.7 与 0.1.6 的 API 面）",
+    note: "平台/宿主版本分支是刻意的（macOS 与 Linux 的家目录形态、0.1.7 与 0.1.6 的 API 差异）",
   },
   "vitest/max-expects": {
     kind: "上游不推荐",
     measured: 163,
-    note: "给单条用例的断言条数设上限属口味，不指向缺陷",
+    note: "给单条用例的断言条数设上限属风格偏好，不指向缺陷",
   },
   "vitest/prefer-expect-assertions": {
     kind: "上游不推荐",
     measured: 2902,
-    note: "要求每个 async 用例手写 expect.assertions(n)，是与断言强度无关的计数仪式",
+    note: "要求每个 async 用例手写 expect.assertions(n)，是与断言强度无关的计数要求",
   },
   "vitest/require-test-timeout": {
     kind: "上游不推荐",
     measured: 2892,
-    note: "要求每条用例显式 timeout；本仓用泵式假时钟，超时由 13 份 vitest 配置统一给",
+    note: "要求每条用例显式 timeout；本仓用泵式假时钟，超时由 13 份 vitest 配置统一给出",
   },
   "vitest/prefer-importing-vitest-globals": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 0,
-    note: "autofix 方向是删掉显式 import 改回裸全局；13 份 vitest 配置都没开 globals:true，应用后当场 3605 处 TS2593、测试全废",
+    note: "autofix 方向是删掉显式 import 改回裸全局；13 份 vitest 配置都没开 globals:true，应用后立即出现 3605 处 TS2593、测试全部失效",
   },
   "vitest/no-importing-vitest-globals": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 133,
-    note: "与上一条同族、方向相反，两条同时开就是把两种写法都判死",
+    note: "与上一条同族、方向相反，两条同时开启就是把两种写法都判违规",
   },
   "vitest/prefer-import-in-mock": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 6,
-    note: "动态形态按完整模块面校验工厂返回值，而 @types/node 的 os、@types/react 都是 `export =` 形状、类型面上没有 default；实测三处 TS2769+TS2740/2741，react 那处无论怎么 spread 都补不出 default",
+    note: "动态形态按完整模块导出校验工厂返回值，而 @types/node 的 os、@types/react 都是 `export =` 形状、类型上没有 default；实测三处 TS2769+TS2740/2741，react 那处无论怎么展开都补不出 default",
   },
   "vitest/prefer-lowercase-title": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 171,
-    note: "只在用例文件里生效：它带 autofix，实测一轮 oxlint --fix 静默小写化了 260 条标题（含 nO_VERIFY 这种坏名）。包级 titlePrefixes 只留真正的技术名（GET/CSRF/组件名…）：非技术名（工单号一类）不该借这条豁免留在标题里，而中文开头的标题天然满足判据（无大小写）⇒ 免检面能收多小收多小。实测 oxlint 前缀一命中就把整条标题免检，所以陈旧条目由配置基线自检按『免检面未被使用』点名，不靠人工巡检",
+    note: "只在用例文件里生效：它带 autofix，实测一轮 oxlint --fix 静默把 260 条标题改成了小写（含 nO_VERIFY 这种坏名字）。包级 titlePrefixes 只留真正的技术名（GET/CSRF/组件名…）：非技术名（工单号一类）不该借这条豁免留在标题里，而中文开头的标题天然满足要求（无大小写），免检范围能收多小就收多小。实测 oxlint 前缀一命中就把整条标题免检，所以陈旧条目由配置基线自检按『免检范围未被使用』指出，不靠人工巡检",
   },
   "vitest/prefer-called-times": {
-    kind: "对侧互斥",
+    kind: "与已启用规则互斥",
     measured: 0,
-    note: "探针实测（同文件四种写法各跑一次）：toHaveBeenCalledTimes(1) 被 prefer-called-once 判死、toHaveBeenCalledOnce() 被本条判死、expect(spy.mock.calls).toHaveLength(1) 被 prefer-to-have-been-called-times 判死，只有 n>=2 能同时满足三条 ⇒ 三条同开等于「单次调用」这条断言无法书写（实测逼得消费方改用 assert.equal(spy.mock.calls.length, 1) 绕行）。留 prefer-called-once 与 prefer-to-have-been-called-times 两条方向一致的组合，关本条",
+    note: "实测核对（同文件四种写法各跑一次）：toHaveBeenCalledTimes(1) 被 prefer-called-once 判违规、toHaveBeenCalledOnce() 被本条判违规、expect(spy.mock.calls).toHaveLength(1) 被 prefer-to-have-been-called-times 判违规，只有 n>=2 能同时满足三条 ⇒ 三条同开等于「单次调用」这条断言无法书写（实测逼得消费方改用 assert.equal(spy.mock.calls.length, 1) 绕行）。保留 prefer-called-once 与 prefer-to-have-been-called-times 两条方向一致的组合，关闭本条",
   },
   "vitest/prefer-describe-function-title": {
-    kind: "对侧互斥",
+    kind: "与已启用规则互斥",
     measured: 48,
     note: "要求 `describe(fn)`，而 valid-title 要求字符串字面量（oxlint 1.85 的 valid-title 是 DummyRule、无任何选项）；上游 recommended 收的是 valid-title，取它，26 处 `describe(fn)` 按代码改成同名字符串",
   },
   "vitest/prefer-to-be-truthy": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 117,
     note: "把 toStrictEqual(true) 放宽成 toTruthy()，接受任意真值是削弱断言",
   },
   "vitest/prefer-to-be-falsy": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 89,
     note: "同族，放宽成 toFalsy() 同样是削弱断言",
   },
 
-  // ===== 契约冲突：官方插件/入口形态本身 =====
+  // ===== 与官方形态冲突：官方插件/入口形态本身 =====
   "import/no-default-export": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 38,
     note: "官方 cordis 入口就是 default export（vendor/loader/src/index.ts 的 unwrapExports 先 unwrap default），12 条正是 12 个 bundle 入口",
   },
   "import/no-named-export": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 895,
-    note: "13 个包与上游 deepseek-harness 一样以具名导出 + 子路径说明符对外暴露",
+    note: "13 个包与上游 deepseek-harness 一样以具名导出 + 子路径说明符对外提供接口",
   },
   "import/prefer-default-export": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 58,
     note: "与 no-default-export 同族、方向与 cordis 入口相反",
   },
   "import/no-nodejs-modules": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 448,
-    note: "host 半就跑在 node 上，`node:` 内置模块是运行环境本身而不是越界",
+    note: "宿主侧就运行在 node 上，`node:` 内置模块是运行环境本身而不是越界",
   },
   "import/no-named-as-default-member": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 47,
     note: "对具名导出的默认对象做成员访问是本仓消费官方声明的常态",
   },
   "import/no-anonymous-default-export": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 12,
-    note: "官方 cordis 入口是匿名对象 default export（registry.ts 的 RegistryService.plugin() 读 name/Config，isApplicable() 判 apply），具名化等于改官方形态",
+    note: "官方 cordis 入口是匿名对象 default export（registry.ts 的 RegistryService.plugin() 读 name/Config，isApplicable() 判 apply），改成具名等于改官方形态",
   },
   "eslint/no-duplicate-imports": {
-    kind: "实测否证",
+    kind: "实测有害",
     measured: 166,
     note: "ESLint 官方已废弃（不区分 import type），由 import/no-duplicates 取代",
   },
 
-  // ===== 上游不推荐：纯口味，开启只带来语义无关的重写 =====
+  // ===== 上游不推荐：纯风格偏好，开启只带来语义无关的重写 =====
   "import/group-exports": {
     kind: "上游不推荐",
     measured: 766,
-    note: "要求单点导出，与具名导出面冲突",
+    note: "要求单点导出，与具名导出的接口形态冲突",
   },
   "import/exports-last": { kind: "上游不推荐", measured: 528, note: "要求导出语句在文件末尾" },
   "import/no-relative-parent-imports": {
@@ -179,12 +179,12 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "import/max-dependencies": {
     kind: "上游不推荐",
     measured: 25,
-    note: "给 import 条数设上限；host 半消费官方服务面天然依赖多",
+    note: "给 import 条数设上限；宿主侧消费官方服务天然依赖多",
   },
   "node/no-process-env": {
     kind: "上游不推荐",
     measured: 51,
-    note: "环境变量是本仓的输入面（DSH_HOME、profile 目录、构建期开关）；eslint-plugin-n 的 recommended 也不含本条",
+    note: "环境变量是本仓的输入来源（DSH_HOME、profile 目录、构建期开关）；eslint-plugin-n 的 recommended 也不含本条",
   },
   "eslint/no-magic-numbers": {
     kind: "上游不推荐",
@@ -194,7 +194,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "eslint/sort-keys": {
     kind: "上游不推荐",
     measured: 4101,
-    note: "对象键排序；成对字面量与 locale 字典的可读性会一起牺牲",
+    note: "对象键排序；成对字面量与 locale 字典的可读性会一起受损",
   },
   "eslint/sort-imports": {
     kind: "上游不推荐",
@@ -219,177 +219,177 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "eslint/no-void": {
     kind: "上游不推荐",
     measured: 172,
-    note: "禁 `void` 前缀，而 `void promise` 正是消解 no-floating-promises 的官方写法",
+    note: "禁 `void` 前缀，而 `void promise` 正是满足 no-floating-promises 的官方写法",
   },
   "unicorn/no-null": {
     kind: "上游不推荐",
     measured: 788,
-    note: "禁 null；官方声明与 JSON 边界大量用 null，改成 undefined 会改变序列化形状",
+    note: "禁 null；官方声明与 JSON 边界大量用 null，改成 undefined 会改变序列化形态",
   },
   "typescript/prefer-readonly-parameter-types": {
     kind: "上游不推荐",
     measured: 2433,
-    note: "要求每个入参类型全 readonly；官方声明面（SessionEvent/ConfigForm 等）是可变的，改不动也不该改",
+    note: "要求每个入参类型全 readonly；官方声明（SessionEvent/ConfigForm 等）是可变的，改不动也不该改",
   },
 
-  // ===== 对侧互斥：与本仓已启用的现代语法侧规则直接相反 =====
+  // ===== 与已启用规则互斥：与本仓已启用的现代语法侧规则直接相反 =====
   "oxc/no-async-await": {
-    kind: "对侧互斥",
+    kind: "与已启用规则互斥",
     measured: 2160,
-    note: "禁 async/await，而同表里 promise-function-async、require-await、no-floating-promises 都在推 async",
+    note: "禁 async/await，而同表里 promise-function-async、require-await、no-floating-promises 都在要求用 async",
   },
   "oxc/no-optional-chaining": {
-    kind: "对侧互斥",
+    kind: "与已启用规则互斥",
     measured: 1354,
     note: "禁 `?.`，而 typescript/prefer-optional-chain 正在要求把 && 链改成 `?.`",
   },
   "oxc/no-rest-spread-properties": {
-    kind: "对侧互斥",
+    kind: "与已启用规则互斥",
     measured: 550,
     note: "禁对象 spread，而 ES2024 目标与官方声明的投影写法都靠它",
   },
 
-  // ===== 文体作用域：测试替身与构建脚本 =====
+  // ===== 仅限特定文件：测试替身与构建脚本 =====
   "typescript/no-explicit-any": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 1,
     note: "用例里的桩件面（mini-react 之类）需要 any 才塞得进官方签名",
   },
   "typescript/no-non-null-assertion": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 536,
     note: "用例里 `!` 是「前驱条件已成立」的最短写法",
   },
   "typescript/no-unsafe-type-assertion": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 844,
     note: "桩件需要 `as never` / `as unknown as` 跨官方名义类型",
   },
   "typescript/require-await": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 467,
     note: "官方 async 契约的同步实现与测试替身撑不住这条；prod 侧的条数按代码修，不进豁免",
   },
   "eslint/require-await": {
-    kind: "对侧互斥",
+    kind: "与官方形态冲突",
     measured: 481,
     note:
-      "它与 typescript/require-await 是同一条判据的两份实现，不是两条判据：探针实测（一段无 await 的 " +
-      "async 函数、--type-aware）单开各自都报、同开报两次 ⇒ 2 errors / 1 defect。" +
-      "按 typescript-eslint 官方的 extension-rule 口径裁决：留带类型信息的扩展那条、关基线那条。" +
-      "覆盖面没有因此变小：全仓逐行去重实测 514 行两点同报、typescript 独有 0 行、eslint 独有只落在" +
-      "用例面与配置自身的中间态；而 --type-aware 实测对 .mjs 也会由扩展那条报出，" +
+      "它与 typescript/require-await 是同一条判断的两份实现，不是两条：实测核对（一段无 await 的 " +
+      "async 函数、--type-aware）单开各自都报、同开报两次，即 2 errors / 1 defect。" +
+      "按 typescript-eslint 官方对 extension rule 的处理方式裁决：留带类型信息的扩展那条、关基线那条。" +
+      "覆盖范围没有因此变小：全仓逐行去重实测 514 行两点同报、typescript 独有 0 行、eslint 独有只落在" +
+      "用例范围与配置自身的中间态；而 --type-aware 实测对 .mjs 也会由扩展那条报出，" +
       "所以 scripts/*.mjs 面不需要基线那条补位。用例文件由 TEST_OVERRIDES 整族豁免",
   },
   "eslint/max-statements": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 549,
     note: "用例体天然长（given/when/then 展开）",
   },
-  "eslint/max-lines-per-function": { kind: "文体作用域", measured: 365, note: "同上" },
+  "eslint/max-lines-per-function": { kind: "仅限特定文件", measured: 365, note: "同上" },
   "eslint/max-lines": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 54,
     note: "单个用例文件的长度不作为缺陷信号",
   },
   "node/no-sync": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 299,
     note: "构建脚本与门禁脚本按设计同步读；生产代码的写侧由每包 syncWrites 逐项登记，不在豁免里",
   },
   "node/no-top-level-await": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 53,
     note: "脚本以 node 直接执行，顶层 await 是 ESM 常态；prod 侧 0 条",
   },
   "typescript/strict-boolean-expressions": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: "scripts/*.mjs 无类型面，隐式 any 上无从判定",
   },
   "typescript/no-implied-eval": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: "同上：这条要类型信息才能判",
   },
   "typescript/no-unsafe-member-access": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: "无类型标注的脚本里每个值都落进隐式 any",
   },
   "typescript/no-unsafe-call": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS,
   },
   "typescript/no-unsafe-assignment": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS,
   },
   "typescript/no-unsafe-return": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS,
   },
   "typescript/no-unsafe-argument": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS,
   },
   "typescript/require-array-sort-compare": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: "无类型脚本里「比较器缺失」判不出来",
   },
   "unicorn/no-process-exit": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 2,
     note: "CLI 脚本的 process.exit 就是它的返回方式",
   },
   "eslint/no-continue": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 53,
     note: "只对 scripts/ 豁免：TS 侧实测 0 条（包代码本来就不用 continue），908 行的门禁脚本改成嵌套 if 只会更难读",
   },
   "unicorn/max-nested-calls": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 59,
     note: "只对 scripts/ 豁免：TS 侧实测 0 条；CLI 脚本里链式 map/filter/join 的深度由数据形状决定，不指向缺陷",
   },
   "unicorn/no-useless-undefined": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 0,
     note: "脚本侧同上调；prod 仍按配置项 checkArguments:false 生效",
   },
 
-  // ===== react 插件（owner 拍板开面）的存量处置 =====
+  // ===== react 插件（owner 决定启用）的存量处置 =====
   // 前五条是 React Compiler 实验面（上游默认关闭），与 client 卡片的「宿主挂载适配器」形态
   // 整体冲突：卡片在 effect 里同步宿主态到 store、渲染期读 ref、内联闭包传 hook，是适配器
   // 形态而非交互组件渲染形态。单项收敛（useSyncExternalStore 化、闭包提升）留给源码收敛批次；
-  // measured 为开面实测条数（58 条里除 react-hooks 7 条外的全部）。
+  // measured 为启用后实测条数（58 条里除 react-hooks 7 条外的全部）。
   "react/set-state-in-effect": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 16,
     note: "卡片用 effect 同步宿主态到 store 是挂载适配器形态；Compiler 建议的 render 期推导要改写 12 份适配器的状态流",
   },
   "react/no-deriving-state-in-effects": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 7,
     note: "适配器形态里「props/state 派生值在 effect 对齐宿主」是挂载动作，不是可下沉到 render 的纯派生",
   },
   "react/exhaustive-effect-dependencies": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 8,
     note: "Compiler 版依赖审计对适配器的内联闭包全量追问；与 react-hooks/exhaustive-deps（保留并已修）形成双门，留后者",
   },
   "react/hooks": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 13,
     note: "「同一 hook 函数跨渲染同引用」在适配器的内联闭包形态下整体不成立；收敛批次把闭包提升后再回来开",
   },
   "react/refs": {
-    kind: "契约冲突",
+    kind: "与官方形态冲突",
     measured: 1,
     note: "挂载适配器在 render 期读 ref 对齐宿主布局；收敛批次改成挂载后读",
   },
@@ -399,7 +399,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     note: "报的是 React 编译器 BuildHIR 自己不支持 try/catch(-finally) 的上游 TODO，不是代码缺陷",
   },
   "react/rules-of-hooks": {
-    kind: "文体作用域",
+    kind: "仅限特定文件",
     measured: 3,
     note: "只对用例文件豁免（TEST_FILE_OVERRIDES）：测试架在组件树外直接驱动卡片适配 hook（useCardOf / useSyncExternalStore 桩），调用次数顺序由桩件固定。键用表载前缀 react/（诊断文案显示 react-hooks(...) 是显示名，配置键以 --rules 的 Source 列为准）",
   },
@@ -408,8 +408,8 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
 /**
  * 基线里**不设豁免**的规则清单：这些规则必须保持开启，谁要关掉就得先给出依据。
  *
- * 判据是「按文体分别核命中数」。`oxlint --deny=<rule>` 量的是整体，而 `--deny` 盖不住
- * override 层的 off（这条口径见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
+ * 方法是「按文件种类分别核对命中数」。`oxlint --deny=<rule>` 量的是整体，而 `--deny` 盖不住
+ * override 层的 off（这个测量方法见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
  * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 正是这一类，
  * 它的收窄在 SCRIPTS_OVERRIDES 里，不在这里。`eslint/no-await-in-loop` 则两侧都开着
  * （实测探针对 .mjs 照样报），两边都按代码写到位，没有收窄层。
@@ -435,15 +435,15 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
   "vitest",
   "import",
   // react（捆 react / react-hooks / react-refresh / React Compiler 四个规则面）+ jsx-a11y：
-  // 11 个带 client 半的包的卡片面是 React（createElement 形态），这两个规则面是 owner 拍板要吃的。
-  // 存量按本仓口径处置：能修的修，确属形态冲突的进 OFF_JUSTIFICATIONS（kind+measured+note）。
+  // 11 个带客户端部分的包的卡片界面是 React（createElement 形态），这两个规则面是 owner 决定要启用的。
+  // 存量按本仓的规则处置：能修的修，确属形态冲突的进 OFF_JUSTIFICATIONS（kind+measured+note）。
   "react",
   "jsx-a11y",
 ];
 
 /**
  * oxlint 的 **JS plugin** 面（`jsPlugins`，官方标注 alpha、不受 semver 保护）挂
- * `eslint-plugin-sonarjs`，补上"同形/重复"这一类 oxlint 内建没有的判据。
+ * `eslint-plugin-sonarjs`，补上"同形/重复"这一类 oxlint 内建没有的检查。
  *
  * 入口必须是**能解析到文件的路径**：裸包名在 pnpm 布局里从包目录报 `Cannot find module`，
  * 配置就整份加载失败。所以这里用 `createRequire` 从本模块解析，绝对路径不落进任何配置文件。
@@ -459,7 +459,7 @@ const SONARJS_CANDIDATES = ["eslint-plugin-sonarjs", "eslint-plugin-sonarjs/cjs/
 /**
  * 解析 sonarjs 的 JS plugin 入口。
  * @returns 能解析到文件的绝对路径
- * @throws 两个候选字形都解析不到时，点名该装什么、以及自备入口时的替代接法
+ * @throws 两个候选路径都解析不到时，写明该装什么、以及自备入口时的替代接法
  */
 function resolveSonarjsEntry(): string {
   const fromModule = createRequire(import.meta.url);
@@ -475,7 +475,7 @@ function resolveSonarjsEntry(): string {
     `oxlint 基线要挂 eslint-plugin-sonarjs，但从本包解析不到它（试过 ${tried.join("、")}）。` +
       "要么在本包 devDependencies 里装 eslint-plugin-sonarjs，" +
       "要么把你自己解析到的 sonarjs 入口经 definePluginConfig({ jsPlugins: [...] }) 传进来" +
-      "（入口路径须指向 sonarjs：SONARJS_RULES 无条件引用它，别家的插件救不了这一条）。",
+      "（入口路径须指向 sonarjs：SONARJS_RULES 无条件引用它，换成别家的插件无法满足这一条）。",
   );
 }
 
@@ -483,20 +483,20 @@ function resolveSonarjsEntry(): string {
  * 组装 `jsPlugins`：本包解析到的 sonarjs 入口在前，调用方自带的在后并去重。
  *
  * 为什么要有这一层而不是直接 `[resolveSonarjsEntry(), ...(jsPlugins ?? [])]`：
- * 那写法无条件先求值，于是「调用方自带入口」这条官方逃生口在缺 sonarjs 时**用不了**——
+ * 那写法无条件先求值，于是「调用方自带入口」这条官方预留的退路在缺 sonarjs 时**用不了**——
  * 抛错发生在调用方的入口被用上之前，报错信息给的补救办法照做必然再报同一条。
- * 分支口径：
+ * 分支规则：
  *  - 调用方带了**指向 sonarjs 的**入口 → 解析失败就跳过（它自备的就是 sonarjs），
  *    成功则去重后前置；
  *  - 调用方只带了别家插件、或没带 → 解析失败照旧抛那条可操作的信息。SONARJS_RULES
- *    无条件引用 sonarjs，只带别家插件救不了它：那种失败会迟到到 oxlint 装载配置那一刻
- *    （`Plugin 'sonarjs' not found`），可操作的成因必须在这里先抛出来，而不是被吞掉。
+ *    无条件引用 sonarjs，只带别家插件满足不了它：那种失败会推迟到 oxlint 装载配置那一刻
+ *    （`Plugin 'sonarjs' not found`），可操作的成因必须在这里先抛出来，而不是留到后面被掩盖。
  *    「指向 sonarjs」按入口路径含 `sonarjs` 判定——调用方传的是自己解析到的插件路径，
- *    这是能落进字符串判据的全部信号。
+ *    这是能落进字符串判断的全部信号。
  *
  * 导出且把解析器做成入参，是为了「解析失败」那一支在**本仓**可测：本仓 devDependencies
- * 装着 sonarjs，真实的解析路径永远成功，那两个分支就只能靠注桩走到（与 `LauncherLocator`、
- * `ProjectKeyOptions.realpath` 同一套可注入面的取舍）。生产侧的 consumer 是
+ * 装着 sonarjs，真实的解析路径永远成功，那两个分支就只能靠注入 stub 走到（与 `LauncherLocator`、
+ * `ProjectKeyOptions.realpath` 同一套可注入选项的取舍）。生产侧的 consumer 是
  * `definePluginConfig`，故这不是「只被测试养着的导出」。
  *
  * @param callerPlugins - 调用方经 `jsPlugins` 传入的入口；undefined / 空数组均可
@@ -520,11 +520,11 @@ export function resolveJsPlugins(
 }
 
 /**
- * 逐条点名而不是通配：JS plugin 的 alpha 面里，一条规则改名或新增就可能整份配置解析失败
- * （oxlint 对未知规则名的行为是**整份配置拒绝加载**，比静默保绿更糟）。
- * 挂载集合与实测条数一并写在这里（owner 的口径：挂上就当场全修，不留待办、
+ * 逐条写出而不是通配：JS plugin 的 alpha 面里，一条规则改名或新增就可能整份配置解析失败
+ * （oxlint 对未知规则名的行为是**整份配置拒绝加载**，比静默放行更糟）。
+ * 挂载集合与实测条数一并写在这里（owner 的要求：挂上就立即全修，不留待办、
  * 不靠关规则过关）：`no-duplicate-string` 全仓 291 条、`cognitive-complexity` 22 条按代码修完，
- * 两条都用**默认阈值**，不调 option（调阈值就是把判据改成能过的那副样子）。
+ * 两条都用**默认阈值**，不调 option（调阈值就是把标准改成能通过的样子）。
  */
 const SONARJS_RULES: RuleTable = {
   "sonarjs/no-identical-functions": "error",
@@ -575,9 +575,9 @@ const BASE_OPTIONS: NonNullable<OxlintConfig["options"]> = {
  * 排除面只留"生成物与非源码树"：`client.js`/`host.js` 是 build 产物，`coverage/`、`dist/`、
  * `.toolchain/`、`node_modules/` 同理。
  *
- * 判据是"**人写的源码一律在 lint 射程内**"：配置文件与 bundler 脚本（`*.config.ts`、
+ * 原则是"**人写的源码一律在 lint 范围内**"：配置文件与 bundler 脚本（`*.config.ts`、
  * `*.config.mjs`、`build-*.mjs`）都属人写的，排掉就等于开盲区——实测把这类文件排掉后，
- * 会攒出指向根本不会被 lint 的规则名的僵尸 `oxlint-disable`（删除后没有任何判据报出）。
+ * 会积累出指向根本不会被 lint 的规则名的失效 `oxlint-disable` 注释（删除后没有任何检查报出）。
  * `*.mjs` 由 SCRIPTS_OVERRIDES 按文体收窄（类型信息类规则对无类型 .mjs 无从计算），
  * 而不是整片豁免。
  */
@@ -596,8 +596,8 @@ const BASE_IGNORE_PATTERNS: string[] = [
  *
  * 这是一张**快照**，不是「上游新增规则自动落在生产文件之外」的机制：`categories` 是全局
  * error 开关，上游在任一 category 里新增 vitest 规则，它就会先作用到每一个 host.ts。
- * 拦这一步的是 test/config-oxlint.test.ts 的一致性用例——它拿 `oxlint --rules` 现量与
- * 本数组逐条对照，上游新增/删除规则即红，由人工同步名单（需要豁免的再补依据）。
+ * 拦这一步的是 test/config-oxlint.test.ts 的一致性用例——它拿 `oxlint --rules` 的实际输出与
+ * 本数组逐条对照，上游新增/删除规则即失败，由人工同步名单（需要豁免的再补依据）。
  */
 export const VITEST_ALL_RULES: string[] = [
   "vitest/consistent-each-for",
@@ -709,8 +709,8 @@ export const BASE_RULES: RuleTable = {
   "eslint/max-params": ["error", { max: 5 }],
   "eslint/max-statements": ["error", 50],
   "eslint/no-console": ["error", { allow: ["warn", "error", "info"] }],
-  // start 口径只拦「注释以这四个词开头」：anywhere 会把 `todo/write` 事件名、`api_key:xxx` 脱敏示例
-  // 这类领域词一起判红，而为过门改写它们恰恰是注释纪律要禁止的事。
+  // start 模式只拦「注释以这四个词开头」：anywhere 会把 `todo/write` 事件名、`api_key:xxx` 脱敏示例
+  // 这类领域词一起判违规，而为通过检查改写它们恰恰是注释纪律要禁止的事。
   "eslint/no-warning-comments": [
     "error",
     { terms: ["todo", "fixme", "xxx", "hack"], location: "start" },
@@ -727,7 +727,7 @@ export const BASE_RULES: RuleTable = {
       ],
     },
   ],
-  // 口味类整族关掉（no-magic-numbers / sort-keys / capitalized-comments / no-ternary …），
+  // 风格偏好类整族关掉（no-magic-numbers / sort-keys / capitalized-comments / no-ternary …），
   // 每条的类别与实测条数在 OFF_JUSTIFICATIONS 里；配置加载会要求它们在册。
   "eslint/no-magic-numbers": "off",
   "eslint/sort-keys": "off",
@@ -737,15 +737,15 @@ export const BASE_RULES: RuleTable = {
   "eslint/no-undefined": "off",
   "eslint/no-void": "off",
   "eslint/no-duplicate-imports": "off",
-  // require-await 一族：`eslint/require-await` 与 `typescript/require-await` 是同一条判据的两份实现，
+  // require-await 一族：`eslint/require-await` 与 `typescript/require-await` 是同一条判断的两份实现，
   // 同开会把一个缺陷报两次（实测同一段无 await 的 async 函数在 --type-aware 下报 2 errors / 1 defect）。
-  // 按 typescript-eslint 对 extension rule 的官方口径留扩展那条、关基线那条；全仓实测两面的判据
-  // 面在非用例代码上重合（逐行去重：514 行同点、typescript 独有 0 行、eslint 独有只有本配置
+  // 按 typescript-eslint 对 extension rule 的官方处理留扩展那条、关基线那条；全仓实测两面的判断
+  // 范围在非用例代码上重合（逐行去重：514 行同点、typescript 独有 0 行、eslint 独有只有本配置
   // 自己的一份中间态），而 `options.typeAware: true` 是常开的 ⇒ .mjs/.cjs 也归扩展那条管
   //（实测 --type-aware 下它对 .mjs 同样报出）。用例文件仍整族豁免（见 TEST_OVERRIDES）。
   "eslint/require-await": "off",
   // import 插件按契约类开（no-cycle / named / first 走 categories），下面这几条与官方形态
-  // 冲突或属口味，理由与条数在册。
+  // 冲突或属风格偏好，理由与条数在册。
   "import/no-named-export": "off",
   "import/group-exports": "off",
   "import/exports-last": "off",
@@ -756,9 +756,9 @@ export const BASE_RULES: RuleTable = {
   // 官方 cordis 入口形态就是 default export：`vendor/cordis/src/registry.ts` 的
   // `RegistryService.plugin()` 登记 runtime 时直接读 name/Config/apply，
   // `vendor/loader/src/index.ts` 的 `unwrapExports` 先 unwrap `default`。
-  // 禁止默认导出等于禁止 12 个 bundle 的入口写法，属契约冲突而非噪声。
+  // 禁止默认导出等于禁止 12 个 bundle 的入口写法，属与官方形态冲突，不是无关告警。
   "import/no-default-export": "off",
-  // 实测 12 条 = 12 个 bundle 入口（独立 -c 探针逐包复测，含测试文件同为 12）：
+  // 实测 12 条 = 12 个 bundle 入口（用独立的 -c 配置逐包复测，含测试文件同为 12）：
   // 官方入口形态就是 `export default { name, Config, apply }`
   // （vendor/cordis/src/registry.ts 的 `RegistryService.plugin()` 直接读这三个字段），
   // 要求先具名再导出等于改官方形态。
@@ -812,8 +812,8 @@ export const BASE_RULES: RuleTable = {
   "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
   // ===== react 插件的 React Compiler 实验面（上游默认关闭）：与 client 卡片的「宿主挂载
   // 适配器」形态整体冲突（effect 同步宿主态到 store、渲染期读 ref、内联闭包传 hook 是
-  // 适配器形态而非交互组件渲染形态）。单项收敛（useSyncExternalStore 化、闭包提升）留给
-  // 源码收敛批次；measured 为开面实测条数，依据逐条在 OFF_JUSTIFICATIONS。
+  // 适配器形态而非交互组件渲染形态）。单项整改（useSyncExternalStore 化、闭包提升）留给
+  // 源码整改批次；measured 为开面实测条数，依据逐条在 OFF_JUSTIFICATIONS。
   // react-hooks/exhaustive-deps 与 rules-of-hooks 不在豁免面内：前者 src 侧 4 条已逐站点
   // 结构性修复（稳定化回调 + 补依赖），后者只对用例文件在 TEST_FILE_OVERRIDES 豁免。
   "react/set-state-in-effect": "off",
@@ -822,19 +822,19 @@ export const BASE_RULES: RuleTable = {
   "react/hooks": "off",
   "react/refs": "off",
   "react/todo": "off",
-  // nursery 的 11 条类型感知规则整体吃下。`no-unnecessary-condition` 逐站点判：
-  // 类型确实非空就删冗余的 `?.` / `??`；运行时真会为空则是类型不准，改宽类型让守卫保留且规则不再报。
+  // nursery 的 11 条类型感知规则全部启用。`no-unnecessary-condition` 逐站点判：
+  // 类型确实非空就删冗余的 `?.` / `??`；运行时真会为空则是类型不准，改宽类型让运行时检查保留且规则不再报。
   // 用关规则代替这个判断是本仓明令禁止的路径。
   ...Object.fromEntries(VITEST_ALL_RULES.map((rule) => [rule, "off"])),
 };
 
 /**
- * 两种测试文件的形态口径，单源，不许两处各写一份：
- *  - {@link CASE_FILE_PATTERNS}：**用例文件**本身（vitest 结构类判据只落在这里）；
+ * 两种测试文件的形态规则，单源，不许两处各写一份：
+ *  - {@link CASE_FILE_PATTERNS}：**用例文件**本身（vitest 结构类判断只落在这里）；
  *  - {@link SPEC_FILE_PATTERNS}：spec 命名的用例，只认目录约定下的位置（`__tests__/`
  *    与 `test/`），散在源码树里的 `*.spec.ts` 不算——那更可能是与 vitest 无关的规格件；
- *  - 整个测试树的目录通配（`test/**` 与 `__tests__/**` 两种前缀）：含夹具与 helper，
- *    只享受 {@link TEST_OVERRIDES} 的规模/类型豁免，**不**享受 vitest 结构类判据——
+ *  - 整个测试树的目录通配（`test/**` 与 `__tests__/**` 两种前缀）：含测试数据与 helper，
+ *    只享受 {@link TEST_OVERRIDES} 的规模/类型豁免，**不**享受 vitest 结构类判断——
  *    helper 模块没有用例结构，套上 expect-expect 一类只会整片误报。
  */
 const CASE_FILE_PATTERNS: string[] = ["**/*.test.ts", "**/*.test.tsx"];
@@ -843,9 +843,9 @@ const SPEC_FILE_PATTERNS: string[] = ["**/__tests__/**/*.spec.ts", "**/test/**/*
 const TEST_FILES: string[] = [...CASE_FILE_PATTERNS, "**/test/**", "**/__tests__/**"];
 
 /**
- * 用例文件（含 `test/*.ts` 夹具与 helper）共享的豁免：规模类，以及「桩件要跨官方名义类型」
- * 的类型类判据。vitest 的用例结构类判据不在这里 —— 它们在基线整族 off、只在
- * TEST_FILE_OVERRIDES 里开回来，所以 helper 模块天然不在射程内，旧配置那份按目录豁免的
+ * 用例文件（含 `test/*.ts` 测试数据与 helper）共享的豁免：规模类，以及「stub 要跨官方名义类型」
+ * 的类型类判断。vitest 的用例结构类判断不在这里 —— 它们在基线整族 off、只在
+ * TEST_FILE_OVERRIDES 里开回来，所以 helper 模块天然不在范围内，旧配置那份按目录豁免的
  * TEST_HELPER_OVERRIDES 因此作废。
  */
 export const TEST_OVERRIDES: OxlintOverride = {
@@ -863,18 +863,18 @@ export const TEST_OVERRIDES: OxlintOverride = {
 };
 
 /**
- * vitest 的用例结构类判据**只**在这里生效。
+ * vitest 的用例结构类判断**只**在这里生效。
  * `expect-expect` 的 `assertFunctionNames` 取 vitest flavor 的官方默认
  * （`["expect", "expectTypeOf", "assert", "assertType"]`）：本仓用例里有相当一部分用
  * `node:assert/strict` 断言，那不是「缺断言」，而是这条规则在 jest flavor 默认值下漏判
  * ——实测 17 条里 5 条属于这一族，补上默认值后就不报了。
  *
- * 剩下两族用规则自带的选项解决，不关规则、也不改判据方向：
+ * 剩下两族用规则自带的选项解决，不关规则、也不改判断方向：
  *  - 断言写在包内 helper 里（`assertSameLedger()` 一类）：`assertFunctionNames` 就是
  *    "哪些函数算断言"的名单，走 {@link makeTestFileOverrides} 的 `assertionHelpers` 报名字。
- *    名单只收**裸标识符**：带 `*` / `.` 的通配会把"任何调用都算断言"写进配置，等于掏空规则，直接抛。
+ *    名单只收**裸标识符**：带 `*` / `.` 的通配会把"任何调用都算断言"写进配置，等于让规则失去作用，直接抛。
  *  - 标题以大写术语开头（`PTC`、`W5`、`B1` 这类档位/模式名）：`allowedPrefixes` 是
- *    prefer-lowercase-title 给的同一条口径（官方例子就是 HTTP 方法前缀）。走 `titlePrefixes` 报名字。
+ *    prefer-lowercase-title 给的同一个选项（官方例子就是 HTTP 方法前缀）。走 `titlePrefixes` 报名字。
  *    反过来的做法——把标题改成 `pTC` / `w5`——会把领域名字改成坏名字，本仓不采取。
  */
 export const VITEST_ASSERTION_DEFAULTS: string[] = [
@@ -896,8 +896,8 @@ export const TEST_FILE_OVERRIDES: OxlintOverride = {
       ]),
     ),
     "vitest/expect-expect": ["error", { assertFunctionNames: VITEST_ASSERTION_DEFAULTS }],
-    // 测试架在组件树外直接驱动卡片适配 hook（dir-prep 的 useCardOf、memory-insight 的
-    // useSyncExternalStore 桩）是刻意的测试形态：hook 调用次数/顺序由桩件保证固定
+    // 测试在组件树外直接驱动卡片适配 hook（dir-prep 的 useCardOf、memory-insight 的
+    // useSyncExternalStore stub）是刻意的测试形态：hook 调用次数/顺序由 stub 保证固定
     // （见 memory-insight test/client-lifecycle.test.ts 的同构注释）。rules-of-hooks 的
     // 「必须在组件或自定义 hook 里」对这批直接驱动不成立，只在用例文件上豁免。
     "react/rules-of-hooks": "off",
@@ -916,7 +916,7 @@ export interface TestFileOverridesOptions {
 }
 
 /**
- * 生成用例文件的 override（vitest 结构类判据的开与关都在这张表里）。
+ * 生成用例文件的 override（vitest 结构类判断的开与关都在这张表里）。
  * @param opts - 本包需要用规则自带选项登记的名单（见文件头的两族说明）。
  * @returns 可直接放进 `overrides` 的配置项。
  */
@@ -928,7 +928,7 @@ export function makeTestFileOverrides(opts: TestFileOverridesOptions = {}): Oxli
   );
   if (illegal.length > 0) {
     throw new Error(
-      `assertionHelpers / titlePrefixes 只收裸标识符，不接受通配或带点形式（前者等于把 vitest/expect-expect 掏空）：${illegal.join(", ")}`,
+      `assertionHelpers / titlePrefixes 只收裸标识符，不接受通配或带点形式（前者等于让 vitest/expect-expect 失去作用）：${illegal.join(", ")}`,
     );
   }
   const names = [...new Set([...VITEST_ASSERTION_DEFAULTS, ...assertionHelpers])];
@@ -952,9 +952,9 @@ export function makeTestFileOverrides(opts: TestFileOverridesOptions = {}): Oxli
 export const SCRIPTS_OVERRIDES: OxlintOverride = {
   files: ["scripts/**", "*.mjs", "*.mts"],
   rules: {
-    // 这三条在 TS 侧全部是 0 条 ⇒ 包代码本身已经按它们写，只对 node 直跑的门禁/构建脚本豁免：
-    // 那批脚本的控制流形态就是 guard-continue（908 行的门脚本改成嵌套 if 只会更难读），
-    // 而 unicorn/max-nested-calls 与 eslint/id-length 在 CLI 脚本里指向上限口味，不指向缺陷。
+    // 这三条在 TS 侧全部是 0 条 ⇒ 包代码本身已经按它们写，只对 node 直跑的检查/构建脚本豁免：
+    // 那批脚本的控制流形态就是 guard-continue（908 行的检查脚本改成嵌套 if 只会更难读），
+    // 而 unicorn/max-nested-calls 与 eslint/id-length 在 CLI 脚本里指向的都是上限类的风格偏好，不指向缺陷。
     // 数的是实测条数：no-continue 53、max-nested-calls 59、id-length 32（scripts 面）。
     "eslint/no-continue": "off",
     "unicorn/max-nested-calls": "off",
@@ -971,7 +971,7 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
     "node/no-sync": "off",
     "node/no-top-level-await": "off",
     // 这一族是**类型信息**规则：它们判的是「值在类型面上是 any/unknown」。
-    // `scripts/*.mjs` 是 node 直接跑的门禁脚本，仓内没开 `checkJs`，也没有 TS 类型标注
+    // `scripts/*.mjs` 是 node 直接跑的检查脚本，仓内没开 `checkJs`，也没有 TS 类型标注
     // ⇒ 每个值都落进隐式 any，实测 1658 条里 1428 条是这一族（不是 1428 个缺陷，
     // 而是这些规则在这里无从计算）。真正能判的仍全量保留：no-undef、no-unused-vars、
     // import/first、unicorn 的 correctness 类、eslint 的规模与可读性类。
@@ -990,8 +990,8 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
 /**
  * 造一个"只读依据视图"：基线的 OFF_JUSTIFICATIONS 加上本次调用带进来的包级例外。
  * **刻意不往导出的那张表里写**（早先的实现是 `OFF_JUSTIFICATIONS[rule] = justification`）：
- * 配置模块在同一个 Node 进程里只求值一次，写过的那张表会让 A 包的例外替 B 包的无依据 off 背书
- * ——正是这道门要拦的情形，而且单测里已经复现过一次串味（上一条用例的例外让下一条负例变成正例）。
+ * 配置模块在同一个 Node 进程里只求值一次，写过的那张表会让 A 包的例外为 B 包的无依据 off 提供依据
+ * ——正是这道检查要拦的情形，而且单测里已经复现过一次串扰（上一条用例的例外让下一条负例变成正例）。
  */
 function makeJustificationView(
   offReasons: Record<string, OffJustification>,
@@ -1012,7 +1012,7 @@ function makeJustificationView(
 
 /**
  * 每一条 `"off"` 都必须在 OFF_JUSTIFICATIONS 里有依据。抛错而不是「记一行日志」：
- * 配置加载失败会让 oxlint 当场红，把规则关掉这件事不可能静默穿过这道门
+ * 配置加载失败会让 oxlint 立即报错，把规则关掉这件事不可能静默穿过这道检查
  * （实测过的同类失效形态：一条不存在的规则名让整份配置解析失败，13 个包全部静默 lint 0 条却 exit 0）。
  */
 function assertOffsDocumented(
@@ -1051,8 +1051,8 @@ export interface PluginLintOptions {
   offReasons?: Record<string, OffJustification>;
   /**
    * 本包"内部会断言"的用例 helper 名（如 `assertSameLedger`）。报进来的名字并入
-   * `vitest/expect-expect` 的 `assertFunctionNames`，规则本身保持 error —— 这是规则给的口径，
-   * 不是豁免。只收裸标识符，通配会掏空这条规则，直接抛。
+   * `vitest/expect-expect` 的 `assertFunctionNames`，规则本身保持 error —— 这是规则自带的机制，
+   * 不是豁免。只收裸标识符，通配会让这条规则失去作用，直接抛。
    */
   assertionHelpers?: string[];
   /** 允许开头的用例标题大写术语（`PTC`/`W5`/`B1` 这类档位或模式名），进 allowedPrefixes。 */

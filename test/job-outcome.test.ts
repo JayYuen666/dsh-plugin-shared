@@ -1,8 +1,8 @@
-// test/job-outcome.test.ts —— 落定进程 → 官方作业结局的映射。
+// test/job-outcome.test.ts —— 已结束进程 → 官方作业结局的映射。
 //
-// 这张表的价值在于它钉的是**宿主自己的 bash 工具用的那一份口径**（实测 installed
+// 这张表的价值在于它固定的是**宿主自己的 bash 工具用的那一份行为**（实测 installed
 // @deepseek-ai/dsh-tool-bash/lib/index.js 的 processOutcome）：本包两个生产者
-// （zvec-grep 的重建、ocr-review 的后台评审）交进同一枚注册表的结局必须与宿主的 bash
+// （zvec-grep 的重建、ocr-review 的后台评审）交进同一个注册表的结局必须与宿主的 bash
 // 作业同形，否则同一个 job_list 里会出现两套说法。
 
 import { setImmediate as yieldToMacrotask } from "node:timers/promises";
@@ -11,7 +11,7 @@ import { jobOutcomeOf, killProc } from "../lib/job-outcome.ts";
 import type { SettledProcess } from "../lib/job-outcome.ts";
 
 /**
- * 造一枚落定进程（只带本函数读的三个成员）。
+ * 造一个已结束进程（只带本函数读的三个成员）。
  * @param over 覆盖默认值的字段
  * @returns {SettledProcess}
  */
@@ -32,7 +32,7 @@ describe("jobOutcomeOf", () => {
 
   it("completed 但没报退出码 ⇒ 按 0 记账（与宿主 bash 同口径）", () => {
     // 卡片侧不受影响：zvec-grep 的投影直接读 proc.exitCode 原样下发，这里只影响
-    // 官方名册里那一行理由。
+    // 官方作业列表里那一行理由。
     expect(jobOutcomeOf(settled({ exitCode: null })).detail).toBe("exit code: 0");
   });
 
@@ -87,7 +87,7 @@ describe("killProc（清理臂的收进程）", () => {
 
   it("kill 返回被拒绝的 Promise 时不留未处理拒绝", async () => {
     // 官方句柄的 kill 是 `() => Promise<boolean>`：同步 try/catch 拦不住异步拒绝，
-    // 那条 rejection 会一路逃到进程级 unhandledRejection。清理臂不该有这种能力。
+    // 那条 rejection 最终会变成进程级 unhandledRejection。清理分支不该有这种能力。
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);

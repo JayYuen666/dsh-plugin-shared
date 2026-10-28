@@ -1,9 +1,9 @@
-// test/publish-manifest.test.ts —— 发布形态门禁：入口面必须**与发布器无关**地可解析。
+// test/publish-manifest.test.ts —— 发布形态检查：入口必须**与发布器无关**地可解析。
 //
-// 为什么值得一条测试：其余门禁都在源码侧（内存构建 vs 磁盘 dist），而真实故障都发生在装出去
-// 之后。两类坑都在那一侧：入口指向没随包发出去的文件；入口覆盖写在 `publishConfig` 里——
+// 为什么值得一条测试：其余检查都在源码侧（内存构建 vs 磁盘 dist），而真实故障都发生在装出去
+// 之后。两类问题都在那一侧：入口指向没随包发出去的文件；入口覆盖写在 `publishConfig` 里——
 // pnpm 发布时把它合并到顶层，npm 不合并，同一个仓库换个发布器就发出一个 import 必失败的包，
-// 而构建全绿、测试全绿。这里不模仿任何发布器的实现，而是把不变式钉成断言：**顶层入口自己就
+// 而构建全部通过、测试全部通过。这里不模仿任何发布器的实现，而是把不变式写成断言：**顶层入口自己就
 // 完整可解析，且 publishConfig 不再承载入口字段**，于是两套发布器语义的差恒为空。
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
@@ -13,8 +13,8 @@ import { describe, expect, it } from "vitest";
 const pkgDir = path.join(import.meta.dirname, "..");
 
 /**
- * 两个平面都禁的指涉：日期、只在"这一轮/下一轮"语境里成立的措辞、绝对路径、家目录。
- * 这些在任何读者那里都是噪音。
+ * 两类文件都禁止出现的内容：日期、只在"这一轮/下一轮"语境里成立的措辞、绝对路径、家目录。
+ * 这些内容对任何读者都没有信息量。
  */
 const FORBIDDEN_EVERYWHERE: readonly RegExp[] = [
   /\/Users\/\S+/u,
@@ -24,9 +24,9 @@ const FORBIDDEN_EVERYWHERE: readonly RegExp[] = [
 ];
 
 /**
- * 只在**发布产物**里禁的：兄弟包标识符。源码注释里列"哪些卡片已用这个 helper"是有用的
+ * 只在**发布产物**里禁止的：兄弟包标识符。源码注释里列"哪些卡片已用这个 helper"是有用的
  * 消费方清单；但产物会被装进只装了 shared 的消费方，留下那些名字等于暗示一个并不存在的依赖。
- * 构建时注释被剥掉，所以这条本来就只在产物面有意义。
+ * 构建时注释会被移除，所以这条本来就只在产物里有意义。
  */
 const FORBIDDEN_IN_ARTIFACTS: readonly RegExp[] = [
   ...FORBIDDEN_EVERYWHERE,
@@ -59,15 +59,15 @@ type PatternShape =
 /**
  * 把 `files` 的一条模式归类。本包实际用到的只有三种写法：裸文件名、目录名、`dir/*.ext`。
  *
- * 「精确文件名」这一档不能和后缀过滤混为一谈，而且必须是**判别联合**而不是一个布尔开关：
+ * 「精确文件名」这一类不能和后缀过滤混为一谈，而且必须是**判别联合**而不是一个布尔开关：
  * 开关方案下两种形态挤在同一个 `extension` 字段里 —— 精确形态要存的是完整文件名，
  * 后缀形态要存的是 `.svg`，一个字段装不下两者，于是实现只能二选一。旧实现选了后缀，
  * 于是 `icon.svg` 被读成「收所有 `.svg` 的文件」：精确条目因此**完全失效**，
  * `expand` 一条文件都没返回。
  *
- * 集合虚高或虚低都会让「入口都在 files 覆盖内」这道断言失真。实测两种方向都踩过：
+ * 集合虚高或虚低都会让「入口都在 files 覆盖内」这条断言失真。实测两种方向都出现过：
  * 虚高时未列入 files 的 `CHANGELOG.md` 也被算进去（`tar tzf` 确认它并不随包发布）；
- * 虚低时同一套门禁复制到兄弟包，第一版就把 `main: "host.js"` 误报成「不在 files 覆盖内」，
+ * 虚低时同一套检查复制到兄弟包，第一版就把 `main: "host.js"` 误报成「不在 files 覆盖内」，
  * 而那个包的文件确实随包发布。判别联合让两者在类型上就分得开，不必靠注释提醒。
  *
  * @param entry - `files` 数组里的一项
@@ -126,8 +126,8 @@ function asRelative(target: string): string {
 }
 
 /**
- * 入口目标允许落定的三种形态。dist 是编译产物；`config/*.json` 是给消费方 `extends` 用的
- * 数据件（tsconfig 基线），本来就该按原样发；`package.json` 是宿主读展示元数据要的出口。
+ * 入口目标允许的三种形态。dist 是编译产物；`config/*.json` 是给消费方 `extends` 用的
+ * 数据文件（tsconfig 基线），本来就该按原样发；`package.json` 是宿主读展示元数据要的出口。
  * 除此之外都算源码形态泄漏。
  * @param file - 入口目标的原始串
  * @returns 该目标是否属于允许的形态
@@ -143,7 +143,7 @@ function isArtifactForm(file: string): boolean {
 /**
  * manifest 里全部需要落地的入口文件：main、types 与每个 exports 具体目标。
  * @param manifest - 解析后的 package.json
- * @returns 目标清单，每项带来源标签以便失败时点名
+ * @returns 目标清单，每项带来源标签以便失败时指出出处
  */
 function entryFiles(manifest: Manifest): readonly { label: string; file: string }[] {
   const flat = Object.entries(manifest.exports ?? {}).flatMap(([specifier, value]) =>
@@ -158,7 +158,7 @@ function entryFiles(manifest: Manifest): readonly { label: string; file: string 
 
 /**
  * 发布器无条件附带的文件：这三件不受 `files` 约束（README/LICENSE 是法定附带，package.json
- * 是包身份本身）。门禁要按真实语义建，而不是把这三件塞进 `files` 去迁就断言。
+ * 是包身份本身）。检查要按真实语义建，而不是把这三件塞进 `files` 去迁就断言。
  */
 const ALWAYS_SHIPPED = ["package.json", "README.md", "LICENSE"];
 
@@ -243,10 +243,10 @@ describe("发布形态", () => {
     }
   });
 
-  it("源码面同样没有内部指涉——产物面看不见注释里的编号与日期", async () => {
-    // 产物面那条门只读 dist，而 rolldown 构建时会剥掉注释：源文件里写着的工单号、日期、
-    // "下一轮"这类只在协作当时有意义、对任何读者都是噪音的措辞，会整条漏过产物门。
-    // 同一组判据必须再扫一遍源码与文档，否则"清理"只是一次性动作，没有回归保护。
+  it("源码同样没有内部指涉——产物检查看不见注释里的编号与日期", async () => {
+    // 产物那条检查只读 dist，而 rolldown 构建时会移除注释：源文件里写着的工单号、日期、
+    // "下一轮"这类只在协作当时有意义、对任何读者都没有信息量的措辞，会整条漏过产物检查。
+    // 同一组规则必须再扫一遍源码与文档，否则"清理"只是一次性动作，没有回归保护。
     const listed = await readdir(path.join(pkgDir, "lib"), { recursive: true });
     const libSources = listed
       .filter((name): name is string => typeof name === "string" && name.endsWith(".ts"))
@@ -275,9 +275,9 @@ describe("发布形态", () => {
 });
 
 /**
- * 宿主包在 peer 与 dev 两张表里的并集。`dependencies` 是禁区（见下面那条门禁）：peer 记录
+ * 宿主包在 peer 与 dev 两张表里的并集。`dependencies` 是禁区（见下面那条检查）：peer 记录
  * 「运行期由宿主提供」，dev 记录「本包编译与测试要用它」，两者都不会被消费方的 profile 安装。
- * 同名键以 peer 表为准，那才是消费方环境里真正提供的那一枚。
+ * 同名键以 peer 表为准，那才是消费方环境里真正提供的那一个。
  * @param manifest - 解析后的 package.json
  * @returns 宿主包名到版本区间
  */
@@ -285,45 +285,45 @@ function hostRanges(manifest: Manifest): Record<string, string> {
   return { ...manifest.devDependencies, ...manifest.peerDependencies };
 }
 
-describe("宿主依赖的版本形状（升级防线）", () => {
-  it("@deepseek-ai/* 一律不进 dependencies：装出去会在宿主进程里物化第二份", async () => {
-    // 钉的是「全绿但宿主瘫痪」这一类坑。本包只要被消费方声明成普通依赖，profile 的 hoisted
-    // 安装就会把这批 @deepseek-ai/* 落成**真实目录**，与宿主进程里已有的那份并存在一起。
+describe("宿主依赖的版本形状（升级保护）", () => {
+  it("@deepseek-ai/* 一律不进 dependencies：装出去会在宿主进程里产生第二份", async () => {
+    // 固定的是「检查全部通过但宿主瘫痪」这一类问题。本包只要被消费方声明成普通依赖，profile 的 hoisted
+    // 安装就会把这批 @deepseek-ai/* 安装成**真实目录**，与宿主进程里已有的那份并存在一起。
     // 而 `@deepseek-ai/dsh-tools` 的 TOOL_RUNTIME_SCHEDULER 是普通 Symbol（不是 Symbol.for），
     // 符号身份按模块实例计算：宿主 dsh-agent-loop 用自己那份的 Symbol 去读由副本挂载出来的
     // ToolRuntime，得到 undefined，于是每一次原生工具调用都抛
     // "Cannot read properties of undefined (reading 'prepare')"，整个 profile 的工具一起失效。
-    // 构建、类型检查与本包测试在此之前全部照绿，判据只能落在 manifest 面上。
+    // 构建、类型检查与本包测试在此之前全部通过，检查只能落在 manifest 上。
     const { manifest } = await readSurface();
     const leaked = Object.keys(manifest.dependencies ?? {}).filter((name) =>
       name.startsWith("@deepseek-ai/"),
     );
-    expect(leaked, "这些宿主包会随消费方装进 profile，物化出第二份实例").toStrictEqual([]);
+    expect(leaked, "这些宿主包会随消费方装进 profile，产生第二份实例").toStrictEqual([]);
   });
 
-  it("每一条 peer 都在 peerDependenciesMeta 里显式表过态", async () => {
+  it("每一条 peer 都在 peerDependenciesMeta 里显式标注过", async () => {
     // 缺省即「必需」——而必需 peer 在 npm 7+ 是装不上就 ERESOLVE，不是一条警告。本包只有一条
     // 真是必需（`dsh-output-retention` 被 lib/text.ts 值导入），其余都要 optional: true，
     // 否则消费方会被这个库替宿主包要一份它本来自带的东西。「加 peer 忘了加 meta」这种不对称
-    // 别的门禁都看不见：类型、构建、用例、exports parity 全部照绿。
+    // 别的检查都看不见：类型、构建、用例、exports 一致性全部通过。
     const { manifest } = await readSurface();
     const peers = Object.keys(manifest.peerDependencies ?? {});
-    expect(peers.length, "至少要有一条 peer 才有可钉的面").toBeGreaterThan(0);
+    expect(peers.length, "至少要有一条 peer 才有可检查的对象").toBeGreaterThan(0);
     const silent = peers.filter((name) => manifest.peerDependenciesMeta?.[name] === undefined);
     expect(silent, "这些 peer 没写 optional，会被消费方的安装器读成硬要求").toStrictEqual([]);
   });
 
-  it("dsh-* 家族一律精确钉，不留任何范围算子", async () => {
-    // registry 上的 dist-tag 是实测出来的陷阱（复跑：`npm view @deepseek-ai/dsh-session dist-tags`）：
-    // `latest` 指向的是一个**远早于宿主 ABI** 的版本，本包在用的那一支走 `next`。精确钉是让「不带版本地
+  it("dsh-* 家族一律精确锁定版本，不留任何范围算子", async () => {
+    // registry 上的 dist-tag 是实测发现过的易错点（复跑：`npm view @deepseek-ai/dsh-session dist-tags`）：
+    // `latest` 指向的是一个**远早于宿主 ABI** 的版本，本包在用的那一支走 `next`。精确锁定版本是让「不带版本地
     // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
-    // 那等于让消费方在没有测试的情况下换掉宿主类型面。
+    // 那等于让消费方在没有测试的情况下换掉宿主类型声明。
     const { manifest } = await readSurface();
     const dshDeps = Object.entries(hostRanges(manifest)).filter(([name]) =>
       name.startsWith("@deepseek-ai/dsh-"),
     );
-    expect(dshDeps.length, "至少要钉住一个 dsh-* 依赖").toBeGreaterThan(0);
+    expect(dshDeps.length, "至少要锁定一个 dsh-* 依赖").toBeGreaterThan(0);
     for (const [name, range] of dshDeps) {
       expect(range, `${name} 必须是精确版本，实际 ${range}`).toMatch(/^\d+\.\d+\.\d+-/u);
     }
@@ -331,7 +331,7 @@ describe("宿主依赖的版本形状（升级防线）", () => {
 
   it("dsh-* 全部与 peer 的 dsh 同版本（不许装出第二份宿主类型）", async () => {
     // 宿主类型面被这些包以 type-only 方式消费；同一个会话里出现两个 dsh-session 的
-    // 拷贝，nominal 类型（品牌串、投影状态）会开始互相不认，而那不报编译错、只报运行期
+    // 拷贝，nominal 类型（官方加标识的字符串、投影状态）会开始互相不认，而那不报编译错、只报运行期
     // 「认不出这个 callId」。同版本是让这件事不发生的最小条件。
     const { manifest } = await readSurface();
     const peer = manifest.peerDependencies?.["@deepseek-ai/dsh"];
@@ -344,10 +344,10 @@ describe("宿主依赖的版本形状（升级防线）", () => {
   });
 });
 
-describe("切面与 exports 的 parity（新增/改名切面时的静默失败面）", () => {
-  it("每个 lib/*.ts 切面都有对应的 exports 子路径", async () => {
-    // 消费方一律按裸包子路径引 shared（`@jayyuen66/dsh-plugin-shared/lib/xxx`），所以切面
-    // 少了 exports 条目 = 这个切面对 9 个消费包**不可 import**，而门禁全绿：build 走的是
+describe("模块与 exports 的一致性（新增/改名模块时的静默失败点）", () => {
+  it("每个 lib/*.ts 模块都有对应的 exports 子路径", async () => {
+    // 消费方一律按裸包子路径引 shared（`@jayyuen66/dsh-plugin-shared/lib/xxx`），所以模块
+    // 少了 exports 条目 = 这个模块对 9 个消费包**不可 import**，而检查全部通过：build 走的是
     // build-host.mjs 自己的 entries 数组，根本不看 manifest；publish-manifest 的既有断言
     // 只验「已声明的 exports 都能落到真实文件」，验不出「该声明的没声明」。
     const { manifest } = await readSurface();
@@ -355,14 +355,14 @@ describe("切面与 exports 的 parity（新增/改名切面时的静默失败�
     const facets = libNames
       .filter((name) => name.endsWith(".ts") && name !== "index.ts")
       .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`);
-    expect(facets.length, "至少要扫到切面").toBeGreaterThan(0);
+    expect(facets.length, "至少要扫到模块").toBeGreaterThan(0);
     for (const facet of facets) {
       expect(manifest.exports, `${facet} 缺 exports 条目`).toHaveProperty(facet);
     }
   });
 
-  it("exports 里没有指向已删切面的悬空子路径", async () => {
-    // 反方向同样要钉：切面改名或合并后忘了删 exports 条目，发布出去的是一个 import 即抛的
+  it("exports 里没有指向已删模块的悬空子路径", async () => {
+    // 反方向同样要固定：模块改名或合并后忘了删 exports 条目，发布出去的是一个 import 即抛的
     // 子路径，而包自身一切正常。
     const { manifest } = await readSurface();
     const libNames = await readdir(path.join(pkgDir, "lib"));
@@ -371,7 +371,7 @@ describe("切面与 exports 的 parity（新增/改名切面时的静默失败�
         .filter((name) => name.endsWith(".ts"))
         .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`),
     );
-    // 只看 lib 子路径（./config/* 与 "." 不在这个集合里，那三枚各有各的落点）。
+    // 只看 lib 子路径（./config/* 与 "." 不在这个集合里，由别的断言负责）。
     const libSubpaths = Object.keys(manifest.exports ?? {}).filter((key) =>
       key.startsWith("./lib/"),
     );
@@ -380,15 +380,15 @@ describe("切面与 exports 的 parity（新增/改名切面时的静默失败�
     }
   });
 
-  it("canonicalize-region-paths 在 exports 里却不在 barrel：这条 parity 是承重的", async () => {
-    // 单独点出来，因为 lib/canonicalize-region-paths.ts 的文件头一度写着「不进出 exports」，
-    // 而那是**错的**：各兄弟包的 build-*.mjs 正靠这条子路径引它。照着错注释去「清理」
-    // exports，会一次性打断所有依赖它的包的构建，而本包自己的门禁一声不响。
+  it("canonicalize-region-paths 在 exports 里却不在 barrel：这条一致性是关键的", async () => {
+    // 单独写出来，因为 lib/canonicalize-region-paths.ts 的文件头一度写着「不进出 exports」，
+    // 而那是**错的**：各兄弟包的 build-*.mjs 正靠这条子路径引它。照着错误注释去「清理」
+    // exports，会一次性打断所有依赖它的包的构建，而本包自己的检查毫无反应。
     const { manifest } = await readSurface();
     const barrel = await readFile(path.join(pkgDir, "lib", "index.ts"), "utf8");
     const subpath = "./lib/canonicalize-region-paths";
     expect(manifest.exports).toHaveProperty(subpath);
-    // 不在 barrel：进了根导入面，每个运行期消费方都要为它付一次导入。
+    // 不在 barrel：进了根导入面，每个运行期消费方都要为它多一次导入。
     expect(barrel).not.toContain("canonicalize");
   });
 });

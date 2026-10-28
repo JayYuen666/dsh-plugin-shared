@@ -1,6 +1,6 @@
 // test/card-diff.test.ts —— touched 层与快照的差异投影。
 //
-// 钉的是"值语义"这一条：引用相等会把等值数组判成没改、把重排的同内容数组判成改了，
+// 固定的是"值语义"这一条：引用相等会把等值数组判成没改、把重排的同内容数组判成改了，
 // 两种都会让用户看到不该出现的"有改动"提示或丢掉该出现的。
 
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ describe("diffTouched", () => {
     expect(diffTouched({ temp: null }, { temp: 0 })).toStrictEqual(["temp"]);
   });
 
-  // 下面几条钉的是「为什么不能用 JSON.stringify 比较」：序列化在三个方向上给出错答案。
+  // 下面几条固定的是「为什么不能用 JSON.stringify 比较」：序列化在三个方向上给出错答案。
   it("对象的键序不影响判定：同内容、不同插入序不算改动", () => {
     expect(diffTouched({ nested: { x: 1, y: 2 } }, { nested: { y: 2, x: 1 } })).toStrictEqual([]);
   });
