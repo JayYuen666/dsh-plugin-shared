@@ -5,15 +5,6 @@ import type { ExternalPluginEntry, OxlintConfig, OxlintOverride } from "oxlint";
 export type RuleTable = NonNullable<OxlintConfig["rules"]>;
 
 /**
- * 入口是否指向 sonarjs。`jsPlugins` 的条目可以是字符串，也可以是带别名的对象形态
- * （`{ name, specifier }`）——两形的信号都在路径/别名文本里，按子串判。
- */
-function pointsAtSonarjs(entry: ExternalPluginEntry): boolean {
-  const text = typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
-  return text.includes("sonarjs");
-}
-
-/**
  * 一条规则能被关掉的**全部**合法理由。写不进这六类的，就不该有关掉它的选项。
  * 每类的判断依据来自 oxlint/eslint 官方文档、上游 recommended 集合的归属，加上本仓的实测。
  */
@@ -125,6 +116,24 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     kind: "实测有害",
     measured: 89,
     note: "同族，放宽成 toFalsy() 同样是削弱断言",
+  },
+
+  // ===== 仅限特定文件：JS plugin 的按文件面收窄 =====
+  // 实测方法同本表头：把该规则临时翻成 error 再跑九包，按 lib/src/host 与 test/scripts 分开数。
+  "regexp/no-super-linear-backtracking": {
+    kind: "仅限特定文件",
+    measured: 23,
+    note: "测试夹具里的宽正则只跑短输入，ReDoS 不构成运行风险；生产侧 2 处与脚本侧 1 处保持开启并按代码修",
+  },
+  "e18e/prefer-static-regex": {
+    kind: "仅限特定文件",
+    measured: 1778,
+    note: "只对生产代码开（PROD_OVERRIDES）：生产 78 处按代码提到模块作用域；测试 1672 处与脚本 28 处里的内联正则不构成性能问题",
+  },
+  "e18e/ban-dependencies": {
+    kind: "仅限特定文件",
+    measured: 1,
+    note: "唯一命中是消费方脚本对 js-yaml 的 mark.snippet 的依赖，换 yaml 不是等价替换；脚本面关闭，生产代码仍生效",
   },
 
   // ===== 与官方形态冲突：官方插件/入口形态本身 =====
@@ -442,29 +451,78 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
 ];
 
 /**
- * oxlint 的 **JS plugin** 面（`jsPlugins`，官方标注 alpha、不受 semver 保护）挂
- * `eslint-plugin-sonarjs`，补上"同形/重复"这一类 oxlint 内建没有的检查。
+ * oxlint 的 **JS plugin** 面（`jsPlugins`，官方标注 alpha、不受 semver 保护）。
+ *
+ * 四个常挂插件各补一类 oxlint 内建没有的检查：
+ *  - `eslint-plugin-sonarjs`：同形/重复（本基线的 `SONARJS_RULES`）；
+ *  - `eslint-plugin-regexp`：正则正确性、无用断言与 ReDoS（`REGEXP_RULES`）；
+ *  - `eslint-plugin-zod`：zod 4 schema 的形态与迁移（`ZOD_RULES`）；
+ *  - `@e18e/eslint-plugin`：现代 API 的增量规则（`E18E_RULES`，只取不与内建重复的那一族）。
  *
  * 入口必须是**能解析到文件的路径**：裸包名在 pnpm 布局里从包目录报 `Cannot find module`，
  * 配置就整份加载失败。所以这里用 `createRequire` 从本模块解析，绝对路径不落进任何配置文件。
  *
- * 惰性求值而不是模块顶层常量：本包把 sonarjs 声明成消费方自备的工具链（不进
- * peerDependencies——npm 7+ 会去满足 optional peer，而 oxlint 的 peerOptional `vite-plus`
- * 把 vitest 钉成 5.0.1，与 `vitest >= 5.0.2` 无交集，结果是消费方装本包直接 ERESOLVE）。
- * 顶层求值会让**不用配置面**的消费者也在 `import` 那一刻撞 MODULE_NOT_FOUND；挪进来之后
- * 缺包只影响真正调用 `definePluginConfig()` 的那一侧，且报的是能照着做的话。
+ * 惰性求值而不是模块顶层常量：这些包是消费方自备的工具链（不进 peerDependencies——npm 7+
+ * 会去满足 optional peer，而 oxlint 的 peerOptional `vite-plus` 把 vitest 钉成 5.0.1，
+ * 与 `vitest >= 5.0.2` 无交集，结果是消费方装本包直接 ERESOLVE）。顶层求值会让**不用配置面**
+ * 的消费者也在 `import` 那一刻撞 MODULE_NOT_FOUND；挪进来之后缺包只影响真正调用
+ * `definePluginConfig()` 的那一侧，且报的是能照着做的话。
  */
-const SONARJS_CANDIDATES = ["eslint-plugin-sonarjs", "eslint-plugin-sonarjs/cjs/plugin.js"];
+interface BundledJsPlugin {
+  /** 报错与调用方入口识别用的插件名。 */
+  label: string;
+  /** 必须装到本包或调用方的包名（报错信息里点名）。 */
+  packageName: string;
+  /** 包名之外的候选入口说明符。 */
+  extraCandidates?: string[];
+}
+
+const SONARJS_PLUGIN: BundledJsPlugin = {
+  label: "sonarjs",
+  packageName: "eslint-plugin-sonarjs",
+  extraCandidates: ["eslint-plugin-sonarjs/cjs/plugin.js"],
+};
+
+const REGEXP_PLUGIN: BundledJsPlugin = {
+  label: "regexp",
+  packageName: "eslint-plugin-regexp",
+};
+
+const ZOD_PLUGIN: BundledJsPlugin = {
+  label: "zod",
+  packageName: "eslint-plugin-zod",
+};
+
+const E18E_PLUGIN: BundledJsPlugin = {
+  label: "e18e",
+  packageName: "@e18e/eslint-plugin",
+};
+
+const BUNDLED_JS_PLUGINS: BundledJsPlugin[] = [
+  SONARJS_PLUGIN,
+  REGEXP_PLUGIN,
+  ZOD_PLUGIN,
+  E18E_PLUGIN,
+];
 
 /**
- * 解析 sonarjs 的 JS plugin 入口。
- * @returns 能解析到文件的绝对路径
- * @throws 两个候选路径都解析不到时，写明该装什么、以及自备入口时的替代接法
+ * 入口是否指向某个插件。`jsPlugins` 的条目可以是字符串，也可以是带别名的对象形态
+ * （`{ name, specifier }`）——两形的信号都在路径/别名文本里，按子串判。
  */
-function resolveSonarjsEntry(): string {
+function pointsAtPlugin(entry: ExternalPluginEntry, plugin: BundledJsPlugin): boolean {
+  const text = typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
+  return text.includes(plugin.packageName);
+}
+
+/**
+ * 解析某条 JS plugin 的入口。
+ * @returns 能解析到文件的绝对路径
+ * @throws 候选路径都解析不到时，写明该装什么、以及自备入口时的替代接法
+ */
+function resolvePluginEntry(plugin: BundledJsPlugin): string {
   const fromModule = createRequire(import.meta.url);
   const tried: string[] = [];
-  for (const candidate of SONARJS_CANDIDATES) {
+  for (const candidate of [plugin.packageName, ...(plugin.extraCandidates ?? [])]) {
     try {
       return fromModule.resolve(candidate);
     } catch {
@@ -472,17 +530,17 @@ function resolveSonarjsEntry(): string {
     }
   }
   throw new Error(
-    `oxlint 基线要挂 eslint-plugin-sonarjs，但从本包解析不到它（试过 ${tried.join("、")}）。` +
-      "要么在本包 devDependencies 里装 eslint-plugin-sonarjs，" +
-      "要么把你自己解析到的 sonarjs 入口经 definePluginConfig({ jsPlugins: [...] }) 传进来" +
-      "（入口路径须指向 sonarjs：SONARJS_RULES 无条件引用它，换成别家的插件无法满足这一条）。",
+    `oxlint 基线要挂 ${plugin.packageName}，但从本包解析不到它（试过 ${tried.join("、")}）。` +
+      `要么在本包 devDependencies 里装 ${plugin.packageName}，` +
+      `要么把你自己解析到的 ${plugin.label} 入口经 definePluginConfig({ jsPlugins: [...] }) 传进来` +
+      `（入口路径须指向 ${plugin.packageName}，换成别家的插件无法满足这条规则表）。`,
   );
 }
 
 /**
- * 组装 `jsPlugins`：本包解析到的 sonarjs 入口在前，调用方自带的在后并去重。
+ * 组装 sonarjs 的入口：本包解析到的入口在前，调用方自带的在后并去重。
  *
- * 为什么要有这一层而不是直接 `[resolveSonarjsEntry(), ...(jsPlugins ?? [])]`：
+ * 为什么要有这一层而不是直接 `[resolvePluginEntry(SONARJS_PLUGIN), ...(jsPlugins ?? [])]`：
  * 那写法无条件先求值，于是「调用方自带入口」这条官方预留的退路在缺 sonarjs 时**用不了**——
  * 抛错发生在调用方的入口被用上之前，报错信息给的补救办法照做必然再报同一条。
  * 分支规则：
@@ -505,18 +563,48 @@ function resolveSonarjsEntry(): string {
  */
 export function resolveJsPlugins(
   callerPlugins: NonNullable<OxlintConfig["jsPlugins"]> | undefined,
-  resolve: () => string = resolveSonarjsEntry,
+  resolve: () => string = () => resolvePluginEntry(SONARJS_PLUGIN),
 ): NonNullable<OxlintConfig["jsPlugins"]> {
   const caller = callerPlugins ?? [];
   let bundled: string | null = null;
   try {
     bundled = resolve();
   } catch (error) {
-    if (!caller.some((entry) => pointsAtSonarjs(entry))) {
+    if (!caller.some((entry) => pointsAtPlugin(entry, SONARJS_PLUGIN))) {
       throw error;
     }
   }
   return bundled === null ? [...caller] : [bundled, ...caller.filter((entry) => entry !== bundled)];
+}
+
+/**
+ * 组装全部常挂插件的 `jsPlugins`：sonarjs 走 {@link resolveJsPlugins} 的退路语义，
+ * 其余三条在调用方没有自带入口时从本包解析并前置。
+ *
+ * 调用方自带入口的判定按路径/别名子串（`pointsAtPlugin`）：这是能落进字符串判断的全部信号。
+ * 自带入口时**不再解析**本包那一份，避免同一个插件被挂两遍（两份插件对象会让同一条规则报两次）。
+ *
+ * 导出并把解析器做成可注入，是为了缺包分支在本仓可测：本仓 devDependencies 装着这四个包，
+ * 真实解析永远成功，失败支只能靠 stub 走到。
+ *
+ * @param callerPlugins - 调用方经 `jsPlugins` 传入的入口
+ * @param resolvers - 按插件 label 注入的入口解析器（生产用默认实现，测试注桩）
+ * @returns 交给 oxlint 的 jsPlugins 数组
+ */
+export function resolveBundledJsPlugins(
+  callerPlugins: NonNullable<OxlintConfig["jsPlugins"]> | undefined,
+  resolvers: Record<string, () => string> = {},
+): NonNullable<OxlintConfig["jsPlugins"]> {
+  let entries = resolveJsPlugins(callerPlugins);
+  for (const plugin of BUNDLED_JS_PLUGINS.filter((item) => item !== SONARJS_PLUGIN)) {
+    const suppliedByCaller = (callerPlugins ?? []).some((entry) => pointsAtPlugin(entry, plugin));
+    if (!suppliedByCaller) {
+      const resolve = resolvers[plugin.label] ?? (() => resolvePluginEntry(plugin));
+      const entry = resolve();
+      entries = [entry, ...entries.filter((existing) => existing !== entry)];
+    }
+  }
+  return entries;
 }
 
 /**
@@ -544,6 +632,159 @@ const SONARJS_RULES: RuleTable = {
   "sonarjs/no-redundant-assignments": "error",
   "sonarjs/prefer-single-boolean-return": "error",
   "sonarjs/label-position": "error",
+};
+
+/**
+ * `eslint-plugin-regexp` recommended 里带 `regexp/` 前缀的全部规则（63 条）。
+ *
+ * 不带它同 preset 的 4 条裸 eslint 规则（no-control-regex / no-misleading-character-class /
+ * no-regex-spaces / prefer-regex-literals）：oxlint 的内建 eslint 插件已有同名规则，重复挂只会
+ * 把同一个缺陷报两遍。
+ *
+ * 实测（oxlint 1.90、9 包，含既有代码）：95 条命中，prod 34 / test 56 / 其余 5；其中 56 条所属
+ * 规则带 fixer（实测 oxlint 会执行 JS plugin 的 fixer，用 prefer-w 验过）。剩余非 fixer 的
+ * `no-super-linear-backtracking` 在测试文件里由 TEST_OVERRIDES 收窄（理由见 OFF_JUSTIFICATIONS）。
+ *
+ * `no-obscure-range` 允许本仓刻意使用的两个 CJK 范围：把 `[一-鿿]` 改写成 `\u4e00-\u9fff` 只会
+ * 让中文正则更难读，而这两个范围的语义在项目里是明确的。
+ */
+export const REGEXP_RULES: RuleTable = {
+  "regexp/confusing-quantifier": "error",
+  "regexp/control-character-escape": "error",
+  "regexp/match-any": "error",
+  "regexp/negation": "error",
+  "regexp/no-contradiction-with-assertion": "error",
+  "regexp/no-dupe-characters-character-class": "error",
+  "regexp/no-dupe-disjunctions": "error",
+  "regexp/no-empty-alternative": "error",
+  "regexp/no-empty-capturing-group": "error",
+  "regexp/no-empty-character-class": "error",
+  "regexp/no-empty-group": "error",
+  "regexp/no-empty-lookarounds-assertion": "error",
+  "regexp/no-empty-string-literal": "error",
+  "regexp/no-escape-backspace": "error",
+  "regexp/no-extra-lookaround-assertions": "error",
+  "regexp/no-invalid-regexp": "error",
+  "regexp/no-invisible-character": "error",
+  "regexp/no-lazy-ends": "error",
+  "regexp/no-legacy-features": "error",
+  "regexp/no-misleading-capturing-group": "error",
+  "regexp/no-misleading-unicode-character": "error",
+  "regexp/no-missing-g-flag": "error",
+  "regexp/no-non-standard-flag": "error",
+  "regexp/no-obscure-range": ["error", { allowed: ["alphanumeric", "一-鿿", "一-龥"] }],
+  "regexp/no-optional-assertion": "error",
+  "regexp/no-potentially-useless-backreference": "error",
+  "regexp/no-super-linear-backtracking": "error",
+  "regexp/no-trivially-nested-assertion": "error",
+  "regexp/no-trivially-nested-quantifier": "error",
+  "regexp/no-unused-capturing-group": "error",
+  "regexp/no-useless-assertions": "error",
+  "regexp/no-useless-backreference": "error",
+  "regexp/no-useless-character-class": "error",
+  "regexp/no-useless-dollar-replacements": "error",
+  "regexp/no-useless-escape": "error",
+  "regexp/no-useless-flag": "error",
+  "regexp/no-useless-lazy": "error",
+  "regexp/no-useless-non-capturing-group": "error",
+  "regexp/no-useless-quantifier": "error",
+  "regexp/no-useless-range": "error",
+  "regexp/no-useless-set-operand": "error",
+  "regexp/no-useless-string-literal": "error",
+  "regexp/no-useless-two-nums-quantifier": "error",
+  "regexp/no-zero-quantifier": "error",
+  "regexp/optimal-lookaround-quantifier": "error",
+  "regexp/optimal-quantifier-concatenation": "error",
+  "regexp/prefer-character-class": "error",
+  "regexp/prefer-d": "error",
+  "regexp/prefer-plus-quantifier": "error",
+  "regexp/prefer-predefined-assertion": "error",
+  "regexp/prefer-question-quantifier": "error",
+  "regexp/prefer-range": "error",
+  "regexp/prefer-set-operation": "error",
+  "regexp/prefer-star-quantifier": "error",
+  "regexp/prefer-unicode-codepoint-escapes": "error",
+  "regexp/prefer-w": "error",
+  "regexp/simplify-set-operations": "error",
+  "regexp/sort-flags": "error",
+  "regexp/strict": "error",
+  "regexp/use-ignore-case": "error",
+};
+
+/**
+ * `eslint-plugin-zod` recommended 的 23 条里去掉 `consistent-schema-var-name` 后的 22 条
+ * （针对 zod 4）。
+ *
+ * 实测（oxlint 1.90、9 包）：
+ *  - `consistent-import` 默认要求 namespace import，与本仓统一的 `import { z } from "zod"` 冲突；
+ *    按参考仓的做法把 syntax 设成 named 后归零。
+ *  - `no-number-schema-with-int` 5 条（`z.number().int()` → `z.int()`，fixer 可修）。
+ *  - `require-error-message` 5 条待按代码补错误文案。
+ *  - `consistent-schema-var-name` 71 条**不挂**：本仓的 schema 常量是大写词（`MAX_DENIES_SCHEMA`、
+ *    `STATS_SNAPSHOT_SCHEMA`），规则的默认口径是把 `Schema` 后缀再拼一次，得到
+ *    `MAX_DENIES_SCHEMASchema` 这类坏名字；把它当命名缺陷改 71 处只是风格迁移，不指向缺陷。
+ *
+ * 该插件只对真的 import zod 的文件生效；本仓九个包都声明了 zod，规则面不会空转。
+ */
+export const ZOD_RULES: RuleTable = {
+  "zod/consistent-import": ["error", { syntax: "named" }],
+  "zod/no-any-schema": "error",
+  "zod/no-coerce-boolean": "error",
+  "zod/no-conflicting-checks": "error",
+  "zod/no-duplicate-schema-methods": "error",
+  "zod/no-empty-custom-schema": "error",
+  "zod/no-native-enum": "error",
+  "zod/no-number-schema-with-finite": "error",
+  "zod/no-number-schema-with-int": "error",
+  "zod/no-number-schema-with-is-finite": "error",
+  "zod/no-number-schema-with-is-int": "error",
+  "zod/no-number-schema-with-safe": "error",
+  "zod/no-number-schema-with-step": "error",
+  "zod/no-optional-and-default-together": "error",
+  "zod/no-promise-schema": "error",
+  "zod/no-schema-with-is-nullable": "error",
+  "zod/no-schema-with-is-optional": "error",
+  "zod/no-throw-in-refine": "error",
+  "zod/no-transform-in-record-key": "error",
+  "zod/prefer-top-level-string-formats": "error",
+  "zod/require-brand-type-parameter": "error",
+  "zod/require-error-message": "error",
+};
+
+/**
+ * `@e18e/eslint-plugin` recommended 里**不与 oxlint 内建规则重复**的那一族。
+ *
+ * 刻意不挂的 9 条：
+ *  - 实测与内建规则同义，挂上会把同一条缺陷报两遍：`prefer-array-at`（unicorn/prefer-at）、
+ *    `prefer-array-some`（unicorn/prefer-array-some）、`prefer-date-now`（unicorn/prefer-date-now）、
+ *    `prefer-includes`（unicorn/prefer-includes / typescript/prefer-includes）、
+ *    `prefer-nullish-coalescing`（typescript/prefer-nullish-coalescing）、
+ *    `prefer-object-has-own`（eslint/prefer-object-has-own）、`prefer-regex-test`
+ *    （unicorn/prefer-regexp-test）、`prefer-spread-syntax`（unicorn/prefer-spread；某个消费方的
+ *    sidecar 已为后者做过文件级 off，再挂本条会把那个冲突原样带回来）。
+ *  - `prefer-string-fromcharcode` 与已启用的 `unicorn/prefer-code-point` **方向相反**：前者的
+ *    fixer 把 `String.fromCodePoint` 改回 `String.fromCharCode`，后者要求反过来。实测在一个
+ *    消费方上执行 `--fix` 会把 15 处 `fromCodePoint` 改写成 `fromCharCode`，其中含非 BMP
+ *    码点时运行语义会变，故整条不挂（不是"重复"，是互斥）。
+ *
+ * 实测非重复规则当前命中：`prefer-array-from-map` 25、`prefer-array-fill` 5（都带 fixer）；
+ * `ban-dependencies` 唯一命中落在某个消费方的脚本，由 SCRIPTS_OVERRIDES 收窄（理由见
+ * OFF_JUSTIFICATIONS）。
+ *
+ * `prefer-static-regex` 全仓 1778 条（生产 78、测试 1672、其余 28），且没有 fixer：基线全局
+ * off，只在 PROD_OVERRIDES 的生产文件上开。测试里的内联正则不构成性能问题，生产侧按代码提到
+ * 模块作用域。
+ */
+export const E18E_RULES: RuleTable = {
+  "e18e/ban-dependencies": "error",
+  "e18e/prefer-array-fill": "error",
+  "e18e/prefer-array-from-map": "error",
+  "e18e/prefer-array-to-reversed": "error",
+  "e18e/prefer-array-to-sorted": "error",
+  "e18e/prefer-array-to-spliced": "error",
+  "e18e/prefer-static-regex": "off",
+  "e18e/prefer-timer-args": "error",
+  "e18e/prefer-url-canparse": "error",
 };
 
 const BASE_CATEGORIES: NonNullable<OxlintConfig["categories"]> = {
@@ -822,6 +1063,11 @@ export const BASE_RULES: RuleTable = {
   "react/hooks": "off",
   "react/refs": "off",
   "react/todo": "off",
+  // JS plugin 的规则表与 sonarjs 同一条纪律：逐条写死，上游改名/删除会让整份配置加载失败
+  // （快照测试兜住；见 test/config-oxlint.test.ts）。
+  ...REGEXP_RULES,
+  ...ZOD_RULES,
+  ...E18E_RULES,
   // nursery 的 11 条类型感知规则全部启用。`no-unnecessary-condition` 逐站点判：
   // 类型确实非空就删冗余的 `?.` / `??`；运行时真会为空则是类型不准，改宽类型让运行时检查保留且规则不再报。
   // 用关规则代替这个判断是本仓明令禁止的路径。
@@ -859,6 +1105,23 @@ export const TEST_OVERRIDES: OxlintOverride = {
     "eslint/max-lines": "off",
     "eslint/max-lines-per-function": "off",
     "node/no-top-level-await": "off",
+    // 测试夹具里的宽正则只跑短输入；生产与脚本侧保持开启（依据见 OFF_JUSTIFICATIONS）。
+    "regexp/no-super-linear-backtracking": "off",
+  },
+};
+
+/**
+ * 生产代码面的 override：目前只有 `e18e/prefer-static-regex`。
+ *
+ * 该规则在全仓 1778 条（生产 78、测试 1672、其余 28），没有 fixer；全局 off、这里 on，
+ * 既保住「生产代码里的内联正则提到模块作用域」这条要求，又不把测试断言与构建脚本逼成
+ * 一堆模块级常量。`lib/**` 是各包的运行期模块（shared 的 build-* helper 也在 lib 下，
+ * 它们随包发布，按生产代码对待）；`host.ts` / `cli-main.ts` 是包根的生产入口。
+ */
+export const PROD_OVERRIDES: OxlintOverride = {
+  files: ["lib/**", "src/**", "host.ts", "cli-main.ts"],
+  rules: {
+    "e18e/prefer-static-regex": "error",
   },
 };
 
@@ -970,6 +1233,8 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
     "typescript/no-non-null-assertion": "off",
     "node/no-sync": "off",
     "node/no-top-level-await": "off",
+    // 唯一命中是 ocr-review 脚本对 js-yaml mark.snippet 的依赖（依据见 OFF_JUSTIFICATIONS）。
+    "e18e/ban-dependencies": "off",
     // 这一族是**类型信息**规则：它们判的是「值在类型面上是 any/unknown」。
     // `scripts/*.mjs` 是 node 直接跑的检查脚本，仓内没开 `checkJs`，也没有 TS 类型标注
     // ⇒ 每个值都落进隐式 any，实测 1658 条里 1428 条是这一族（不是 1428 个缺陷，
@@ -1093,6 +1358,7 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     TEST_OVERRIDES,
     makeTestFileOverrides({ assertionHelpers, titlePrefixes }),
     SCRIPTS_OVERRIDES,
+    PROD_OVERRIDES,
     ...extraOverrides,
   ];
 
@@ -1109,14 +1375,14 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     options: BASE_OPTIONS,
     categories: BASE_CATEGORIES,
     ignorePatterns: [...BASE_IGNORE_PATTERNS, ...extraIgnorePatterns],
-    // sonarjs 这条 JS plugin 是常挂的（`SONARJS_RULES` 在 rules 里，缺入口就是整份配置加载失败，
-    // 实测报 `Plugin 'sonarjs' not found`）；包内自带的入口追加在后面。
+    // 四个 JS plugin 都是常挂的（规则表在 rules 里，缺入口就是整份配置加载失败，
+    // 实测报 `Plugin 'sonarjs' not found` 一类）；包内自带的入口追加在后面。
     //
-    // 组装交给 resolveJsPlugins：调用方自带**指向 sonarjs 的**入口时不再无条件求值
-    // resolveSonarjsEntry。原写法无条件先解析，缺包就抛，于是本文件那条「要么经
+    // 组装交给 resolveBundledJsPlugins：调用方自带指向某个插件的入口时不再无条件解析
+    // 本包那一份。原写法无条件先解析，缺包就抛，于是本文件那条「要么经
     // definePluginConfig({ jsPlugins }) 传进来」的提示**兑现不了**——调用方传的入口根本
     // 轮不到被用上（实测：sonarjs 缺席时传了自己的入口，仍抛同一条错）。
-    jsPlugins: resolveJsPlugins(jsPlugins),
+    jsPlugins: resolveBundledJsPlugins(jsPlugins),
     rules,
     overrides,
   });

@@ -47,6 +47,7 @@ interface Manifest {
   readonly devDependencies?: Record<string, string>;
   readonly peerDependencies?: Record<string, string>;
   readonly peerDependenciesMeta?: Record<string, { readonly optional?: boolean }>;
+  readonly engines?: Record<string, string>;
 }
 
 /** 一条 `files` 模式归类后的两种形态。 */
@@ -274,16 +275,8 @@ describe("发布形态", () => {
   });
 });
 
-/**
- * 宿主包在 peer 与 dev 两张表里的并集。`dependencies` 是禁区（见下面那条检查）：peer 记录
- * 「运行期由宿主提供」，dev 记录「本包编译与测试要用它」，两者都不会被消费方的 profile 安装。
- * 同名键以 peer 表为准，那才是消费方环境里真正提供的那一个。
- * @param manifest - 解析后的 package.json
- * @returns 宿主包名到版本区间
- */
-function hostRanges(manifest: Manifest): Record<string, string> {
-  return { ...manifest.devDependencies, ...manifest.peerDependencies };
-}
+/** 宿主 dsh 家族的包名前缀（本组三条判据都要按它筛，收常量）。 */
+const DSH_FAMILY_PREFIX = "@deepseek-ai/dsh-";
 
 describe("宿主依赖的版本形状（升级保护）", () => {
   it("@deepseek-ai/* 一律不进 dependencies：装出去会在宿主进程里产生第二份", async () => {
@@ -313,34 +306,71 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     expect(silent, "这些 peer 没写 optional，会被消费方的安装器读成硬要求").toStrictEqual([]);
   });
 
-  it("dsh-* 家族一律精确锁定版本，不留任何范围算子", async () => {
+  it("devDependencies 里的 dsh-* 家族一律精确锁定版本，不留任何范围算子", async () => {
     // registry 上的 dist-tag 是实测发现过的易错点（复跑：`npm view @deepseek-ai/dsh-session dist-tags`）：
     // `latest` 指向的是一个**远早于宿主 ABI** 的版本，本包在用的那一支走 `next`。精确锁定版本是让「不带版本地
     // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
-    // 那等于让消费方在没有测试的情况下换掉宿主类型声明。
+    // 那等于让本包在没有测试的情况下换掉编译用的宿主类型声明。
+    // 只判 dev 这一侧：它才是本包真正装下来的那一份。peer 记录的是「运行期由宿主提供」，
+    // 装什么版本由宿主决定，判据在下面那条。
     const { manifest } = await readSurface();
-    const dshDeps = Object.entries(hostRanges(manifest)).filter(([name]) =>
-      name.startsWith("@deepseek-ai/dsh-"),
+    const dshDev = Object.entries(manifest.devDependencies ?? {}).filter(([name]) =>
+      name.startsWith(DSH_FAMILY_PREFIX),
     );
-    expect(dshDeps.length, "至少要锁定一个 dsh-* 依赖").toBeGreaterThan(0);
-    for (const [name, range] of dshDeps) {
+    expect(dshDev.length, "至少要锁定一个 dsh-* 开发依赖").toBeGreaterThan(0);
+    for (const [name, range] of dshDev) {
       expect(range, `${name} 必须是精确版本，实际 ${range}`).toMatch(/^\d+\.\d+\.\d+-/u);
     }
   });
 
-  it("dsh-* 全部与 peer 的 dsh 同版本（不许装出第二份宿主类型）", async () => {
-    // 宿主类型面被这些包以 type-only 方式消费；同一个会话里出现两个 dsh-session 的
-    // 拷贝，nominal 类型（官方加标识的字符串、投影状态）会开始互相不认，而那不报编译错、只报运行期
+  it("devDependencies 里的 dsh-* 全部同版本（不许装出第二份宿主类型）", async () => {
+    // 宿主类型面被这些包以 type-only 方式消费；同一次安装里出现两个 dsh-session 的拷贝，
+    // nominal 类型（官方加标识的字符串、投影状态）会开始互相不认，而那不报编译错、只报运行期
     // 「认不出这个 callId」。同版本是让这件事不发生的最小条件。
     const { manifest } = await readSurface();
-    const peer = manifest.peerDependencies?.["@deepseek-ai/dsh"];
-    expect(peer, "peer 依赖缺失：宿主版本就失去基准了").toBeDefined();
-    const hostVersion = (peer ?? "").replace(/^[\^~]/u, "");
-    const drifted = Object.entries(hostRanges(manifest)).filter(
-      ([name, range]) => name.startsWith("@deepseek-ai/dsh-") && range !== hostVersion,
+    const versions = Object.entries(manifest.devDependencies ?? {})
+      .filter(([name]) => name.startsWith(DSH_FAMILY_PREFIX))
+      .map(([, range]) => range);
+    expect(versions.length, "至少要有一个 dsh-* 开发依赖").toBeGreaterThan(0);
+    expect(
+      new Set(versions).size,
+      `dsh-* 开发依赖出现多个版本，nominal 类型会互相不认：${versions.join(", ")}`,
+    ).toBe(1);
+  });
+
+  it("peerDependencies 里的 dsh 家族写支持窗口范围，且与 engines.dsh 是同一条", async () => {
+    // peer 由宿主拿自己安装的那版去满足：钉成精确版本等于要求两者版本号完全相等，而滚动支持
+    // 窗口本来就含三个版本。宿主侧只在 manifest 没有 engines.dsh 时才读 peer（app-boot 的
+    // plugin-compatibility 里 engines.dsh 存在即独判），所以这一位是发布元数据的含义问题——
+    // 那就让它与真正当闸门的那一条写成同一个范围，两处口径说的才是同一件事。
+    const { manifest } = await readSurface();
+    const bare = manifest.peerDependencies?.["@deepseek-ai/dsh"];
+    expect(bare, "裸 dsh 的 peer 缺失：支持窗口就失去基准了").toMatch(/^\^/u);
+    const family = Object.entries(manifest.peerDependencies ?? {}).filter(([name]) =>
+      name.startsWith(DSH_FAMILY_PREFIX),
     );
-    expect(drifted, "这些 dsh-* 与宿主 dsh 不同版本").toStrictEqual([]);
+    expect(family.length, "至少要有一条 dsh-* peer").toBeGreaterThan(0);
+    for (const [name, range] of family) {
+      expect(range, `${name} 的 peer 范围与裸 dsh 不是同一条`).toBe(bare);
+    }
+    expect(manifest.engines?.["dsh"], "engines.dsh 与 peer 范围必须说同一个窗口").toBe(bare);
+  });
+
+  it("cordis 的 peer 范围同时覆盖 rc 线与 alpha 线，且不带空格", async () => {
+    // cordis 是唯一跨宿主线版本不同的 peer：rc.3/rc.4 的 dsh-output-retention 要求 ~4.0.5，
+    // alpha.2 要求 ~4.0.6-alpha.1。把 peer 钉成 alpha 线的精确版本，干净目录 npm 安装会
+    // ERESOLVE（install-matrix 实测）。范围里的 `||` 不能带空格：CI 的类型面 peer 安装把
+    // 整串清单按空白切分，带空格的 `||` 会被切成多个包名。
+    const { manifest } = await readSurface();
+    expect(
+      manifest.peerDependencies?.["@deepseek-ai/cordis"],
+      "cordis 的 peer 范围只覆盖一条宿主线",
+    ).toBe("^4.0.5||^4.0.6-alpha.1");
+    expect(
+      manifest.devDependencies?.["@deepseek-ai/cordis"],
+      "dev 线仍要精确锁定构建与测试用的那一版",
+    ).toMatch(/^\d+\.\d+\.\d+-/u);
   });
 });
 

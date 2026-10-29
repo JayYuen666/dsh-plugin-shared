@@ -26,10 +26,17 @@ const outDir = path.join(root, "dist", "config");
  * 所以这里只列包名，不列子路径。这些不进 peerDependencies 是有意的：npm 7+ 会去满足 optional
  * peer，而 oxlint 的 peerOptional vite-plus 把 vitest 锁在 5.0.1，与 vitest 的 >=5.0.2 无交集。
  */
-const FACET_PEERS = ["oxlint", "vitest", "eslint-plugin-sonarjs"];
+const FACET_PEERS = [
+  "oxlint",
+  "vitest",
+  "eslint-plugin-sonarjs",
+  "eslint-plugin-regexp",
+  "eslint-plugin-zod",
+  "@e18e/eslint-plugin",
+];
 
 // 机械代码与外部化规则在 build-shared.mjs（此前这里与 build-host.mjs 各有一份逐字副本）；
-// 本脚本特有的只有上面那三个 FACET_PEERS，作为 extraNames 传进去。
+// 本脚本特有的只有上面那张 FACET_PEERS，作为 extraNames 传进去。
 const isExternal = await createIsExternal(root, FACET_PEERS);
 
 /** 两份配置模块（消费方按 ./config/oxlint 与 ./config/vitest.base 取）。 */

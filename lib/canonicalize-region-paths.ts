@@ -71,13 +71,19 @@ const LEADING_RELATIVE_SEGMENTS = /^(?:\.\.?\/)+/u;
 /** 分隔符两头认：产物里的模块路径由 rolldown 写成 `/`，而 `import.meta.dirname` 在 Windows 上是 `\`。 */
 const SEGMENT_SPLIT = /[/\\]+/u;
 
+/** 行尾/目录尾的分隔符串：取末段与父目录前都要先去掉它。 */
+const TRAILING_SEPARATORS = /[/\\]+$/u;
+
+/** Windows 绝对路径：盘符后跟 `/` 或 `\`。 */
+const WINDOWS_ABSOLUTE_PREFIX = /^[A-Za-z]:[\\/]/u;
+
 /**
  * 取路径的末段。
  * @param dir - 目录路径
  * @returns 末段；只剩分隔符时为空串
  */
 function lastSegment(dir: string): string {
-  const trimmed = dir.replace(/[/\\]+$/u, "");
+  const trimmed = dir.replace(TRAILING_SEPARATORS, "");
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return index === -1 ? trimmed : trimmed.slice(index + 1);
 }
@@ -88,7 +94,7 @@ function lastSegment(dir: string): string {
  * @returns 父目录；没有父目录（裸名、只剩分隔符）时原样或空串交回
  */
 function parentDirOf(pkgDir: string): string {
-  const trimmed = pkgDir.replace(/[/\\]+$/u, "");
+  const trimmed = pkgDir.replace(TRAILING_SEPARATORS, "");
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return index === -1 ? trimmed : trimmed.slice(0, index);
 }
@@ -139,7 +145,16 @@ function trimTrailingEmptySegments(segments: string[]): string[] {
 
 /** 绝对路径判断落在原始字符串上：POSIX 根、Windows 盘符与 UNC 两种都认。 */
 function isAbsolutePath(path: string): boolean {
-  return path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/u.test(path);
+  return path.startsWith("/") || path.startsWith("\\") || WINDOWS_ABSOLUTE_PREFIX.test(path);
+}
+
+/** 生成 count 个 `..` 段。 */
+function parentSegments(count: number): string[] {
+  const out: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    out.push("..");
+  }
+  return out;
 }
 
 /**
@@ -165,10 +180,7 @@ function relativeSegments(from: string, to: string): string[] | null {
   ) {
     shared += 1;
   }
-  return [
-    ...Array.from({ length: fromSegments.length - shared }, () => ".."),
-    ...toSegments.slice(shared),
-  ];
+  return [...parentSegments(fromSegments.length - shared), ...toSegments.slice(shared)];
 }
 
 /**

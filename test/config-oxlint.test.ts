@@ -4,18 +4,24 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BASE_RULES,
+  E18E_RULES,
   OFF_JUSTIFICATIONS,
+  PROD_OVERRIDES,
+  REGEXP_RULES,
   RETIRED_OFFS,
   SCRIPTS_OVERRIDES,
   TEST_FILE_OVERRIDES,
   TEST_OVERRIDES,
   VITEST_ALL_RULES,
   VITEST_ASSERTION_DEFAULTS,
+  ZOD_RULES,
   definePluginConfig,
   makeTestFileOverrides,
+  resolveBundledJsPlugins,
   resolveJsPlugins,
 } from "../config/oxlint.base.ts";
 import type { OffReason, RuleTable } from "../config/oxlint.base.ts";
+import type { ExternalPluginEntry } from "oxlint";
 
 /** 取一条规则设置里的severity（oxlint 的设置可以是 `"off"` 或 `["off", {…}]`）。 */
 function severity(setting: unknown): string {
@@ -45,18 +51,82 @@ const BUNDLED_ENTRY = "/bundled.js";
 const OWN_SONARJS_ENTRY = "/own/eslint-plugin-sonarjs.js";
 /** 与 sonarjs 无关的调用方入口：它无法弥补 SONARJS_RULES 的缺包。 */
 const OWN_LOCAL_ENTRY = "/own/local-rules.js";
+/** 调用方自备的 regexp 入口：挂载后不得再把本包解析到的那一份挂第二遍。 */
+const OWN_REGEXP_ENTRY = "/own/eslint-plugin-regexp.js";
 const SONARJS_MISSING = "解析不到 sonarjs";
 const SONARJS_MISSING_PATTERN = /解析不到 sonarjs/u;
+const REGEXP_MISSING_PATTERN = /eslint-plugin-regexp/u;
+
+/** 「本仓解析不到 regexp」的 stub 解析器。生产路径永远成功，缺包支只能靠 stub 走到。 */
+function boomRegexp(): string {
+  throw new Error("解析不到 eslint-plugin-regexp");
+}
 
 /** 「本仓解析不到 sonarjs」的 stub 解析器。生产路径永远成功，那两个分支只能靠 stub 走到。 */
 function boomSonarjs(): string {
   throw new Error(SONARJS_MISSING);
 }
 
+/** 读一条 JS plugin 的模块面：有的包把 plugin 挂在 default 上，两形都认。 */
+interface PluginModule {
+  rules?: Record<string, unknown>;
+  configs?: Record<string, { rules?: Record<string, unknown> }>;
+}
+
+/** 入口文本：字符串形态直接用，对象形态拼 name + specifier（与基线 same 判据）。 */
+function entryText(entry: ExternalPluginEntry): string {
+  return typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
+}
+
+/** 包名各写一次常量：require 那一侧必须是字面量（import/no-dynamic-require），
+ *  但键与 loadPlugin 的调用走常量，避免同一字面量在用例里出现三次触发 no-duplicate-string。 */
+const REGEXP_PLUGIN_ID = "eslint-plugin-regexp";
+const ZOD_PLUGIN_ID = "eslint-plugin-zod";
+const E18E_PLUGIN_ID = "@e18e/eslint-plugin";
+
+const PLUGIN_MODULES: Record<string, PluginModule & { default?: PluginModule }> = {
+  [REGEXP_PLUGIN_ID]: createRequire(import.meta.url)("eslint-plugin-regexp") as PluginModule & {
+    default?: PluginModule;
+  },
+  [ZOD_PLUGIN_ID]: createRequire(import.meta.url)("eslint-plugin-zod") as PluginModule & {
+    default?: PluginModule;
+  },
+  [E18E_PLUGIN_ID]: createRequire(import.meta.url)("@e18e/eslint-plugin") as PluginModule & {
+    default?: PluginModule;
+  },
+};
+
+function loadPlugin(id: keyof typeof PLUGIN_MODULES): PluginModule {
+  const loaded = PLUGIN_MODULES[id];
+  if (loaded === undefined) {
+    throw new Error(`测试要读的插件模块没有登记：${id}`);
+  }
+  return loaded.default ?? loaded;
+}
+
 describe("definePluginConfig：关规则必须留依据", () => {
-  it("jsPlugins：默认解析到本包的 sonarjs 入口", () => {
+  it("jsPlugins：默认解析到本包的四个常挂插件入口", () => {
     const cfg = definePluginConfig();
-    expect(cfg.jsPlugins ?? []).toHaveLength(1);
+    expect(cfg.jsPlugins ?? []).toHaveLength(4);
+  });
+
+  it("jsPlugins：调用方自带 regexp 入口时不再解析本包那一份，同一条插件只挂一次", () => {
+    const cfg = definePluginConfig({ jsPlugins: [OWN_REGEXP_ENTRY] });
+    expect(cfg.jsPlugins ?? []).toHaveLength(4);
+    expect(
+      (cfg.jsPlugins ?? []).filter((entry) => entryText(entry).includes("regexp")),
+    ).toHaveLength(1);
+  });
+
+  it("jsPlugins：regexp 缺包且调用方没自带入口 ⇒ 装载即抛，消息点名要装的包", () => {
+    expect(() => resolveBundledJsPlugins(undefined, { regexp: boomRegexp })).toThrow(
+      REGEXP_MISSING_PATTERN,
+    );
+    expect(
+      resolveBundledJsPlugins([OWN_REGEXP_ENTRY], { regexp: boomRegexp }).some((entry) =>
+        entryText(entry).includes(REGEXP_PLUGIN_ID),
+      ),
+    ).toBe(true);
   });
 
   it("jsPlugins：解析成功时自带入口接在后面，重复的那个不追加第二遍", () => {
@@ -122,7 +192,7 @@ describe("definePluginConfig：关规则必须留依据", () => {
       definePluginConfig({
         extraOverrides: [{ files: ["**/*.test.ts"], rules: { "eslint/no-console": "off" } }],
       }),
-    ).toThrow(/overrides\[3\]/u);
+    ).toThrow(/overrides\[4\]/u);
   });
 
   it('数组形态的关闭（["off"]）也走同一道检查，不被当成没关', () => {
@@ -288,7 +358,8 @@ describe("vitest 规则全集快照与 oxlint --rules 实际输出一致（不�
       env: { ...childEnv, NO_COLOR: "1", FORCE_COLOR: "0", CLICOLOR: "0" },
     });
     // 表行形状：`| <rule> | vitest | …`（规则名与插件名两列，右列宽度不定）。
-    const names = [...stdout.matchAll(/^\| (?<rule>[^|\s]+)\s+\| vitest\s+\|/gmu)].map(
+    const names = Array.from(
+      stdout.matchAll(/^\| (?<rule>[^|\s]+)\s+\| vitest\s+\|/gmu),
       (match) => match.groups?.["rule"] ?? "",
     );
     // 空集不算通过：解析不到任何行说明输出格式变了，检查什么都没量到。
@@ -297,5 +368,58 @@ describe("vitest 规则全集快照与 oxlint --rules 实际输出一致（不�
       "oxlint --rules 里没解析到任何 vitest 规则行（输出格式变了）",
     ).toBeGreaterThan(0);
     expect(new Set(names.map((name) => `vitest/${name}`))).toStrictEqual(new Set(VITEST_ALL_RULES));
+  });
+});
+
+describe("js plugin 规则表与插件实际规则集一致（上游改名/删除即失败）", () => {
+  // `oxlint --rules` 不列 JS plugin 的规则（实测只列内建插件），所以这几张表不从 oxlint 输出取，
+  // 直接从插件模块的 rules/configs 读。表本身逐条写死，上游改名或删除就会在这里红。
+  const regexp = loadPlugin(REGEXP_PLUGIN_ID);
+  const zod = loadPlugin(ZOD_PLUGIN_ID);
+  const e18e = loadPlugin(E18E_PLUGIN_ID);
+
+  it("regexp：REGEXP_RULES 逐条对上 recommended 里的 regexp/* 规则", () => {
+    const recommended = Object.entries(regexp.configs?.["recommended"]?.rules ?? {})
+      .filter(([rule, setting]) => rule.startsWith("regexp/") && setting !== "off")
+      .map(([rule]) => rule)
+      .toSorted();
+    expect(Object.keys(REGEXP_RULES).toSorted()).toStrictEqual(recommended);
+  });
+
+  it("zod：ZOD_RULES 逐条对上 recommended 规则（去掉不想挂的命名规则）", () => {
+    const recommended = Object.entries(zod.configs?.["recommended"]?.rules ?? {})
+      .filter(([, setting]) => setting !== "off")
+      .map(([rule]) => rule)
+      .filter((rule) => rule !== "zod/consistent-schema-var-name")
+      .toSorted();
+    expect(Object.keys(ZOD_RULES).toSorted()).toStrictEqual(recommended);
+    expect(ZOD_RULES).not.toHaveProperty("zod/consistent-schema-var-name");
+  });
+
+  it("e18e：表里每条都真实存在，且不包含重复或方向相反的 9 条", () => {
+    const pluginRules = new Set(Object.keys(e18e.rules ?? {}));
+    for (const rule of Object.keys(E18E_RULES)) {
+      expect(pluginRules.has(rule.slice("e18e/".length))).toBe(true);
+    }
+    const duplicateRules = [
+      "prefer-array-at",
+      "prefer-array-some",
+      "prefer-date-now",
+      "prefer-includes",
+      "prefer-nullish-coalescing",
+      "prefer-object-has-own",
+      "prefer-regex-test",
+      "prefer-spread-syntax",
+      "prefer-string-fromcharcode",
+    ];
+    for (const rule of duplicateRules) {
+      expect(E18E_RULES).not.toHaveProperty(`e18e/${rule}`);
+    }
+  });
+
+  it("prefer-static-regex 只在生产 override 里开启", () => {
+    expect(severity(BASE_RULES["e18e/prefer-static-regex"])).toBe("off");
+    expect(PROD_OVERRIDES.rules?.["e18e/prefer-static-regex"]).toBe("error");
+    expect(PROD_OVERRIDES.files).toStrictEqual(["lib/**", "src/**", "host.ts", "cli-main.ts"]);
   });
 });

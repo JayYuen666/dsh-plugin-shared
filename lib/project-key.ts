@@ -49,6 +49,15 @@ function separatorRuns(sep: string): RegExp {
 /** Windows 的盘符根（`C:\` 归一后剩 `C:`）；与 POSIX 的 `/` 同判，都归入 `default`。 */
 const DRIVE_ROOT = /^[A-Za-z]:$/u;
 
+/** UNC 长路径前缀（`\\?\` / `\\?\UNC\`）与紧随其后的共享根形状。 */
+const UNC_LONG_PATH_PREFIX = /^\\\\[?.]\\(?:UNC\\)?/u;
+const LEADING_DOUBLE_BACKSLASH = /^\\\\/u;
+const UNC_SHARE_ROOT = /^[^\\]+\\[^\\]+$/u;
+
+/** 目录尾分隔符与归一后的尾斜杠：取父级与最终形态前都要去掉。 */
+const TRAILING_SEPARATORS = /[/\\]+$/u;
+const TRAILING_SLASHES = /\/+$/u;
+
 /**
  * Windows 的 UNC 共享根（`\\server\share`，可带尾反斜杠，也可带 `\\?\` 长路径前缀）。
  *
@@ -67,8 +76,10 @@ function isUncRoot(candidate: string): boolean {
     // 按两段判断会把普通目录误判成根。
     return false;
   }
-  const withoutPrefix = candidate.replace(/^\\\\[?.]\\(?:UNC\\)?/u, "").replace(/^\\\\/u, "");
-  return /^[^\\]+\\[^\\]+$/u.test(withoutPrefix);
+  const withoutPrefix = candidate
+    .replace(UNC_LONG_PATH_PREFIX, "")
+    .replace(LEADING_DOUBLE_BACKSLASH, "");
+  return UNC_SHARE_ROOT.test(withoutPrefix);
 }
 
 /**
@@ -99,8 +110,8 @@ export function deriveProjectKey(cwd: unknown, opts?: ProjectKeyOptions): string
   // POSIX 的 `/` 去尾斜杠后变成空串；Windows 盘符根合并后剩 `C:`；UNC 共享根（`\\server\share`）
   // 合并后剩 `/server/share` —— 它的形状与 POSIX 的两段目录**完全一样**，所以必须在合并分隔符
   // **之前**判断，合并后就再也认不出来（实测 `\\server\share` 原先生成 `share-<hash>` 而非 default）。
-  const stripped = resolved.replace(/[/\\]+$/u, "");
-  const norm = resolved.replaceAll(separatorRuns(sep), "/").replace(/\/+$/u, "");
+  const stripped = resolved.replace(TRAILING_SEPARATORS, "");
+  const norm = resolved.replaceAll(separatorRuns(sep), "/").replace(TRAILING_SLASHES, "");
   if (norm === "" || DRIVE_ROOT.test(norm) || isUncRoot(stripped)) {
     return "default";
   }

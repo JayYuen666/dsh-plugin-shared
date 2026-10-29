@@ -28,6 +28,14 @@ export const REACT_RUNTIME_MODULES: readonly string[] = [
   "react-dom/client",
 ];
 
+/** 注释行里 pnpm store 段的匹配锚：行首、可选 region 前缀、任意相对段、store 层。 */
+const STORE_PATH_COMMENT =
+  /^\/\/(?:#region | )?(?:\.\.?\/)*node_modules\/\.pnpm\/[^/]+\/node_modules\//u;
+/** 兜底检查只认这个子串，与注释行形态无关。 */
+const STORE_PATH_LEFTOVER = /node_modules\/\.pnpm\//u;
+/** npm 允许的包名字符集（含 scope）。 */
+const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/u;
+
 /**
  * 把注释行里的 pnpm 内容寻址段（store 目录里带「名@版_哈希」的那一层）改写成普通的
  * `node_modules/` 一层。
@@ -59,13 +67,11 @@ export function collapseStorePaths(code: string): string {
   const collapsed = code.replaceAll(/^\/\/(?:#region .*| .*)$/gmu, (line) =>
     line
       .replaceAll("\\", "/")
-      .replace(
-        /^\/\/(?:#region | )?(?:(?:\.\.?\/)+)?node_modules\/\.pnpm\/[^/]+\/node_modules\//u,
-        (matched) =>
-          matched.startsWith("//#region") ? "//#region node_modules/" : "// node_modules/",
+      .replace(STORE_PATH_COMMENT, (matched) =>
+        matched.startsWith("//#region") ? "//#region node_modules/" : "// node_modules/",
       ),
   );
-  const leftover = /node_modules\/\.pnpm\//u.exec(collapsed);
+  const leftover = STORE_PATH_LEFTOVER.exec(collapsed);
   if (leftover !== null) {
     const at = Math.max(0, leftover.index - 40);
     throw new Error(
@@ -136,7 +142,7 @@ function clientBundleId(manifest: Record<string, unknown>): string {
   }
   // id 那一行是手写源码而不是 JSON：放行 npm 允许的字符集，挡住引号/反斜杠/换行造成的
   // 产物语法错误，让下面的 JSON.stringify 只是补充手段而不是唯一保障。
-  if (!/^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/u.test(raw)) {
+  if (!NPM_PACKAGE_NAME.test(raw)) {
     throw new Error(`package.json 的 name ${JSON.stringify(raw)} 不符合 npm 包名字符集。`);
   }
   return raw;

@@ -2,6 +2,27 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1
+
+### Added
+
+- **Shared oxlint baseline now mounts three more JS plugins**: `eslint-plugin-regexp` (63 curated rules; 95 existing hits, 56 fixer-backed), `eslint-plugin-zod` (22 recommended rules with the `named` import syntax; 5 legacy `z.number().int()` migrations plus 5 explicit refine/custom error messages), and non-duplicate `@e18e/eslint-plugin` rules. `e18e/prefer-static-regex` is production-only (`lib/**`, `src/**`, `host.ts`, `cli-main.ts`); tests and scripts keep their inline regexes. The regexp/zod/e18e rule tables are snapshotted against the installed plugin rule sets, all four JS plugin entries are resolved lazily with the same caller-supplied-entry escape hatch as sonarjs, and `build-config.mjs` externalises all four plugin package names.
+- **A compile-time parity check for the local PTC payloads**: `test/tool-events-host-parity.ts` asserts that the two interfaces declared in `lib/tool-events.ts` are mutually assignable with the development baseline's `@deepseek-ai/dsh-tool-executor-ptc/types`. The file intentionally carries no `it()` case: a type assertion wrapped in a runtime test still passes after the shape drifts, because types are erased. `pnpm typecheck` is the judge, and the file is outside `tsconfig.build.json`, so it never ships.
+
+### Changed
+
+- **The two PTC event payloads are declared in this package.** The host moved its `SessionEventMap` augmentation from `@deepseek-ai/dsh-tools/types` to `@deepseek-ai/dsh-tool-executor-ptc/types`: the new subpath does not exist on `0.2.1-rc.3` / `0.2.1-rc.4`, and the old one is gone on `0.2.2-alpha.2`, so no single re-export resolves across the supported window. `PtcDispatchStartEventData` / `PtcDispatchEventData` keep their names and fields; `lib/tool-events.ts` declares them locally and augments `SessionEventMap` itself. The local declarations reference `ToolCallId` (`@deepseek-ai/dsh-llm/brand`), `ContentBlock` (`@deepseek-ai/dsh-llm/types`) and `JsonValue` (`@deepseek-ai/dsh-util-values`); `@deepseek-ai/dsh-tool-executor-ptc` and `@deepseek-ai/dsh-util-values` join `devDependencies`. `dependencies` stays empty and `exports` is unchanged.
+- **The dsh peer family now expresses the support window.** `@deepseek-ai/dsh-*` in `peerDependencies` moved from the exact `0.2.1-rc.3` to the same `^0.2.1-rc.3` range as the bare `@deepseek-ai/dsh` peer and `engines.dsh`. `devDependencies` stay exact and uniform at `0.2.2-alpha.2`, the line this repository compiles and tests against. `@deepseek-ai/cordis` stays exact at `4.0.6-alpha.1` in `devDependencies`; its peer range covers both host lines (see Fixed below). `test/publish-manifest.test.ts` checks the three separately: exact uniform development pins, dsh peer ranges equal to the bare peer, `engines.dsh` equal to that range, and the cordis peer covering both host lines.
+- **Internal regular expressions moved to module scope** in `lib/project-key.ts`, `lib/jsonl.ts`, `lib/canonicalize-region-paths.ts` and `lib/build-client.ts`, and the `matchAll(...).map` spreads in `build-types-check.mjs` and two test helpers became `Array.from(matchAll(...), fn)`. No behavior change. The first group is what `e18e/prefer-static-regex` asks for on production paths; the second is `e18e/prefer-array-from-map`.
+
+### Fixed
+
+- **A clean npm install no longer fails with `ERESOLVE` on the rc host line.** The cordis peer was pinned to `4.0.6-alpha.1`, while `@deepseek-ai/dsh-output-retention` resolved from the `^0.2.1-rc.3` peer requires `~4.0.5`; the install matrix failed at `npm install <tarball>` without flags. The peer is now `^4.0.5||^4.0.6-alpha.1`, so one cordis version can satisfy both the rc and alpha lines. The range carries no spaces because the CI type probe splits the peer list on whitespace, and `test/publish-manifest.test.ts` pins it.
+
+### Notes
+
+- `exports` and the runtime surface are unchanged: 0.2.1 adds no subpath, so a consumer already declaring `^0.2.0` picks it up without a range edit. A profile that pins `0.2.1` can install it only after the version is on the registry.
+
 ## 0.2.0
 
 ### Added

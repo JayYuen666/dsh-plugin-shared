@@ -16,16 +16,53 @@
 //
 // 事件形状取官方判别联合 `@deepseek-ai/dsh-session` 的 `SessionEvent`，不再本地声明
 // 「最小投影」：按 `event.type` 分支即收窄 `event.data`，宿主改名/换形状在编译期暴露，
-// 而不是靠注释手抄 d.ts 行号。两个 PTC 事件由 `@deepseek-ai/dsh-tools/types` 以
-// `declare module '@deepseek-ai/dsh-session/types'` 官方增强进 `SessionEventMap`——
-// 下面那行具名 re-export 既是给消费方的类型出口，也把该增强带进本模块的 program
-// （TS7 不接受 `import type "mod"` 这种无绑定形式，不具名引用就看不见这两个变体）。
+// 而不是靠注释手抄 d.ts 行号。
+//
+// 两个 PTC 事件是这条规则的**例外**，载荷在本包内声明：官方把这两个变体增强进
+// `SessionEventMap` 的那份声明**换过宿主包**，而支持窗口同时含换之前与换之后的版本，
+// 新包在旧版宿主上根本没发布——从任何一侧具名 re-export 都会在另一侧解析不到。
+// `skipLibCheck` 只豁免被消费的 `.d.ts`，不豁免本包自己的源码，所以那一侧是构建硬失败
+// 而不是消费方的隐患。自己声明接口、自己做那份增强，两条宿主线上都成立。
+// 与宿主真实定义是否仍同形由 test/tool-events-host-parity.ts 的双向可赋值断言钉住——那是
+// 一条**编译期**判据，只有 tsc 兑现得了（该文件头记了为什么不能包成用例）。
 
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import type { ToolCallId } from "@deepseek-ai/dsh-llm/brand";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
+import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 import { isRecord } from "./record.ts";
 
 export type { SessionEvent } from "@deepseek-ai/dsh-session";
-export type { PtcDispatchEventData, PtcDispatchStartEventData } from "@deepseek-ai/dsh-tools/types";
+
+/** 一枚 PTC 子调度**开始**时记下的载荷。字段与宿主声明逐位同形，理由见文件头。 */
+export interface PtcDispatchStartEventData {
+  rootCallId: ToolCallId;
+  parentCallId: ToolCallId;
+  subCallId: ToolCallId;
+  name: string;
+  arguments: unknown;
+}
+
+/** 一枚 PTC 子调度**结算**时记下的载荷：结算面沿用 `tool/result` 自己的词表。 */
+export interface PtcDispatchEventData extends PtcDispatchStartEventData {
+  isError: boolean;
+  content: ContentBlock[];
+  /** 可重放的工具侧呈现元数据，与模型可见内容分开记账。 */
+  meta?: JsonValue;
+  /** 可选的失败身份与原始用户可见细节，不在模型可见内容里。 */
+  error?: {
+    name: string;
+    code: string;
+    reason?: string;
+  };
+}
+
+declare module "@deepseek-ai/dsh-session/types" {
+  interface SessionEventMap {
+    "tool/ptc-dispatch-start": PtcDispatchStartEventData;
+    "tool/ptc-dispatch": PtcDispatchEventData;
+  }
+}
 
 /**
  * 一条 tool/call 的记录。

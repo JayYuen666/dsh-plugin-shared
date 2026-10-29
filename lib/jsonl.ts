@@ -7,6 +7,9 @@
 // （前者把异常抛给调用方、后者内部 catch 并打日志）。故磁盘写入与触发留在各包。
 // 本文件不碰 fs，与 README「lib/** 不写文件」的承诺一致。
 
+/** 对半拆分后可能留下的前导换行（LF 与 CRLF 都认）。 */
+const LEADING_NEWLINES = /^(?:\r?\n)+/u;
+
 /**
  * 反复保留后半行段直到 UTF-8 字节数 ≤ `maxBytes`；行数 ≤2 时停手（单条超限行原样保留，
  * 防死循环也防清空文件）。未超限直接返回入参**同一引用**，调用方可据此跳过磁盘写入。
@@ -44,7 +47,7 @@ export function shrinkJsonlTail(text: string, maxBytes: number): string {
     // 去掉 keep 前面的空行：对半拆分落在连续空行中间时会拆出一串前导换行，只 slice(1) 只去掉
     // 一个、结果仍以空行开头；CRLF 形态下 keep 以 `\r\n` 开头，`startsWith("\n")` 更是
     // 一次都命中不了。这里整段去掉，判断同时覆盖两种行尾。
-    current = keep.replace(/^(?:\r?\n)+/u, "");
+    current = keep.replace(LEADING_NEWLINES, "");
   }
   return current;
 }

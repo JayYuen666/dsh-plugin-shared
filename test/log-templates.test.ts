@@ -36,7 +36,7 @@ async function libSources(): Promise<string[]> {
  */
 function loggedFirstArgs(texts: readonly string[]): string[] {
   return texts.flatMap((text) =>
-    [...text.matchAll(CONSOLE_CALL)].map((match) => match.groups?.["first"] ?? ""),
+    Array.from(text.matchAll(CONSOLE_CALL), (match) => match.groups?.["first"] ?? ""),
   );
 }
 

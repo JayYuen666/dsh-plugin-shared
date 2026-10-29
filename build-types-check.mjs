@@ -51,7 +51,10 @@ const inspected = await Promise.all(
     const content = await readFile(file, "utf8");
     return {
       file: path.relative(import.meta.dirname, file),
-      residuals: [...content.matchAll(RESIDUAL_SPECIFIER)].map((match) => match.groups.specifier),
+      residuals: Array.from(
+        content.matchAll(RESIDUAL_SPECIFIER),
+        (match) => match.groups.specifier,
+      ),
     };
   }),
 );
