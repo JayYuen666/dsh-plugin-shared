@@ -225,7 +225,7 @@ jobs:
           # 清单不手抄：只取「产物 .d.ts 里引到 且 package.json 里声明过」的交集——未声明的引用
           # 因此装不进来，这道门原本要抓的"未声明依赖导致退化"照样有牙。宿主包与只作值导入的
           # dsh-output-retention 都不在这个交集里，所以探针的安装面不因此变大。
-          # 这里**故意**让 $peers 不加引号：要的就是按空格切成多个包名当参数，不是被 IFS 咬。
+          # 清单不写成空格分隔：范围本身可能带空白（`^a||^b`），那样按空白切会把一枚说明符拆成多个参数。
           peers=$(node --input-type=module -e '
           import { readFileSync, readdirSync } from "node:fs";
           const ROOTDIR = "node_modules/@jayyuen66/dsh-plugin-shared";
@@ -245,12 +245,12 @@ jobs:
           const pkgs = [...new Set(specifiers.map((s) => s.split("/").length > 2 ? s.split("/").slice(0, 2).join("/") : s))];
           const install = pkgs.filter((p) => declared[p] !== undefined).map((p) => p + "@" + declared[p]);
           if (install.length === 0) throw new Error("产物 .d.ts 里没有引用任何声明过的 @deepseek-ai 包：清单空了，这道门等于没跑");
-          console.log(install.join(" "));
+          console.log(install.join("\n"));
           ')
-          echo "类型面 peer 现量（产物引到 ∩ 清单声明过）：${peers}"
-          # 先按空白切成数组再按元素展开：裸 $peers 同时受分词与 glob 影响，且会触发 SC2086。
+          echo "类型面 peer 现量（产物引到 ∩ 清单声明过，一行一枚）：${peers}"
+          # 按行读进数组再按元素展开：裸 $peers 同时受分词与 glob 影响，且会触发 SC2086。
           # 上方已断言它非空，所以不存在「空数组 ⇒ 没有包名」的情况。
-          read -r -a peer_args <<< "$peers"
+          mapfile -t peer_args <<< "$peers"
           npm install -D "${peer_args[@]}" --no-audit --no-fund
           # ① 现在会把 `./config/*` 两份 .d.ts 也拉进 program，它们顶端 import `oxlint` 与
           # `vitest/config`——那是消费方自备的工具链（本包刻意不声明为 peer）。上一步「逐子路径

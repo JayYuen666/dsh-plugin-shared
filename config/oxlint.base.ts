@@ -304,7 +304,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "node/no-sync": {
     kind: "仅限特定文件",
     measured: 299,
-    note: "构建脚本与门禁脚本按设计同步读；生产代码的写侧由每包 syncWrites 逐项登记，不在豁免里",
+    note: "构建脚本与门禁脚本按设计同步读；写侧豁免按文件生效（syncIoScopes），不在这一层的豁免里",
   },
   "node/no-top-level-await": {
     kind: "仅限特定文件",
@@ -1305,8 +1305,30 @@ function assertOffsDocumented(
   }
 }
 
+/**
+ * 一条按文件生效的同步 API 豁免。
+ *
+ * `files` 是 oxlint 的 override 匹配式（包内相对路径），`apis` 是这些文件里除基线只读名单之外
+ * 还允许出现的同步方法名 —— 名单不外溢：同包里另一个文件用同一个 API 照样报。
+ */
+export interface SyncIoScope {
+  readonly files: readonly string[];
+  readonly apis: readonly string[];
+}
+
 export interface PluginLintOptions {
-  syncWrites?: string[];
+  /**
+   * 同步 API 的**文件级**豁免，一枚 scope 对应一条 override。
+   *
+   * 换掉的是早前的包级扁平名单 `syncWrites`：那张表把 `writeFileSync` / `rmSync` 登记进去之后，
+   * 整个包任何位置的同步写都不再报，而配套注释写的是「谁用谁声明」—— 结构与说法不是一回事。
+   * 这里让豁免跟着 `files` 生效。
+   *
+   * 生成的 override 必须自带基线只读名单：oxlint 对同一条规则在 override 里是**整条设置替换**，
+   * 实测（oxlint 1.90）override 只写 `ignores: ["readFileSync"]` 时，基线豁免过的 `existsSync`
+   * 在那个文件里就变成了报的。
+   */
+  syncIoScopes?: SyncIoScope[];
   extraRules?: RuleTable;
   extraOverrides?: OxlintOverride[];
   extraIgnorePatterns?: string[];
@@ -1326,7 +1348,7 @@ export interface PluginLintOptions {
 
 export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfig {
   const {
-    syncWrites = [],
+    syncIoScopes = [],
     extraRules = {},
     extraOverrides = [],
     extraIgnorePatterns = [],
@@ -1341,24 +1363,33 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
   const rules: RuleTable = {
     ...BASE_RULES,
     ...SONARJS_RULES,
-    ...(syncWrites.length > 0
-      ? {
-          "node/no-sync": [
-            "error",
-            {
-              ignores: [...new Set([...READONLY_SYNC_ALLOWLIST, ...syncWrites])],
-            },
-          ],
-        }
-      : {}),
     ...extraRules,
   };
+
+  // 一枚 scope 一条 override，ignores 自带基线只读名单（override 是整条替换，见 PluginLintOptions）。
+  const scopeOverrides: OxlintOverride[] = syncIoScopes.map((scope, index) => {
+    if (scope.files.length === 0 || scope.apis.length === 0) {
+      throw new Error(
+        `syncIoScopes[${String(index)}] 要 files 与 apis 同时非空，否则这条 override 是死配置。`,
+      );
+    }
+    return {
+      files: [...scope.files],
+      rules: {
+        "node/no-sync": [
+          "error",
+          { ignores: [...new Set([...READONLY_SYNC_ALLOWLIST, ...scope.apis])] },
+        ],
+      },
+    };
+  });
 
   const overrides = [
     TEST_OVERRIDES,
     makeTestFileOverrides({ assertionHelpers, titlePrefixes }),
     SCRIPTS_OVERRIDES,
     PROD_OVERRIDES,
+    ...scopeOverrides,
     ...extraOverrides,
   ];
 
