@@ -35,6 +35,21 @@ function offKeys(rules: RuleTable | undefined): string[] {
     .map(([rule]) => rule);
 }
 
+/**
+ * 取一条规则设置里的 ignores（设置写成 `["error", { ignores: [...] }]` 时）。
+ *
+ * @param setting - 规则设置，形态由 oxlint 的类型给
+ * @returns 那份名单；不是这个形态时 undefined
+ */
+function ignoresOf(setting: unknown): string[] | undefined {
+  const options: unknown = Array.isArray(setting) ? setting[1] : undefined;
+  return (options as { ignores?: string[] } | undefined)?.ignores;
+}
+
+/** syncIoScopes 用例里的两个被测字面量：写侧 API 名与被点名的文件。 */
+const LOCK_FILE = "lib/lock.ts";
+const WRITE_API = "writeFileSync";
+
 const KINDS: OffReason[] = [
   "与官方形态冲突",
   "与已启用规则互斥",
@@ -208,6 +223,66 @@ describe("definePluginConfig：关规则必须留依据", () => {
     expect(() =>
       definePluginConfig({ extraRules: { "vitest/some-future-rule": "off" } }),
     ).not.toThrow();
+  });
+});
+
+describe("syncIoScopes：写侧豁免按文件生效", () => {
+  it("一枚 scope 生成一条 override：只点名文件里额外允许那一枚，基线只读名单一起带上", () => {
+    const cfg = definePluginConfig({
+      syncIoScopes: [{ files: [LOCK_FILE], apis: [WRITE_API] }],
+    });
+    const scope = cfg.overrides?.[4];
+    expect(scope?.files).toStrictEqual([LOCK_FILE]);
+    const setting = scope?.rules?.["node/no-sync"];
+    expect(Array.isArray(setting) ? setting[0] : setting).toBe("error");
+    const ignores = ignoresOf(setting);
+    expect(ignores).toContain(WRITE_API);
+    // 基线只读名单必须一起带上：override 对同一条规则是整条设置替换（oxlint 1.90 实测——
+    // override 只写 ignores:["readFileSync"] 时，基线豁免过的 existsSync 在那个文件里变成报的）。
+    // 少了这一步，被点名的文件会凭空多出一批红。
+    expect(ignores).toContain("existsSync");
+    expect(ignores).toContain("readFileSync");
+    expect(ignores).toContain("readdirSync");
+    // 规则表本身不受影响：豁免只活在 override 层。
+    expect(ignoresOf(cfg.rules?.["node/no-sync"])).not.toContain(WRITE_API);
+  });
+
+  it("scope 排在包内 extraOverrides 之前：包自己写的覆盖仍然压得住它", () => {
+    const cfg = definePluginConfig({
+      syncIoScopes: [{ files: ["lib/state-writer.ts"], apis: ["rmSync"] }],
+      extraOverrides: [
+        {
+          files: ["lib/state-writer.ts"],
+          rules: { "eslint/no-console": "off" },
+        },
+      ],
+      offReasons: {
+        "eslint/no-console": {
+          kind: "仅限特定文件",
+          measured: 1,
+          note: "这条用例只关心 override 的先后顺序",
+        },
+      },
+    });
+    expect(ignoresOf(cfg.overrides?.[4]?.rules?.["node/no-sync"])).toContain("rmSync");
+    expect(offKeys(cfg.overrides?.[5]?.rules)).toStrictEqual(["eslint/no-console"]);
+  });
+
+  it("files 或 apis 为空的 scope 当场抛，不留一条永不命中或不起作用的 override", () => {
+    expect(() => definePluginConfig({ syncIoScopes: [{ files: [], apis: [WRITE_API] }] })).toThrow(
+      /syncIoScopes\[0\]/u,
+    );
+    expect(() => definePluginConfig({ syncIoScopes: [{ files: [LOCK_FILE], apis: [] }] })).toThrow(
+      /syncIoScopes\[0\]/u,
+    );
+  });
+
+  it("同一条基线只读名在被点名的那份名单里只出现一次", () => {
+    const cfg = definePluginConfig({
+      syncIoScopes: [{ files: ["lib/fs-io.ts"], apis: ["readFileSync", WRITE_API] }],
+    });
+    const ignores = ignoresOf(cfg.overrides?.[4]?.rules?.["node/no-sync"]) ?? [];
+    expect(ignores.filter((name) => name === "readFileSync")).toStrictEqual(["readFileSync"]);
   });
 });
 

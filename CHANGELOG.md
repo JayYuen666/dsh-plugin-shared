@@ -2,6 +2,22 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2
+
+### Changed
+
+- **The dsh peer family and `engines.dsh` name every host line in the support window.** Both move from `^0.2.1-rc.3` to `^0.2.1-rc.3||^0.2.2-alpha.2`. `^0.2.1-rc.3` covers `0.2.1-rc.3` and `0.2.1-rc.4`, but a prerelease on another `major.minor.patch` tuple sits outside it: `semver.satisfies("0.2.2-alpha.2", "^0.2.1-rc.3")` reads `false` (semver 7.8.5, measured here), so an installer checking this package against the alpha host line reports an unsatisfied peer even though the plugin loads. The host's own gate is not what changed — it compares `engines.dsh` with `includePrerelease: true`, and that call reads `true` for the same pair. The added comparator fixes the install side without widening what the host accepts. `devDependencies` stay exact and uniform at `0.2.2-alpha.2`, and `test/publish-manifest.test.ts` still checks the three separately: uniform development pins, family peers equal to the bare peer, `engines.dsh` equal to that range.
+- **The package-wide `syncWrites` option became the file-scoped `syncIoScopes`.** `syncWrites` merged its API names into the single `node/no-sync` setting at the top of the rule table, so registering `writeFileSync` or `rmSync` silenced every synchronous write in the consumer's package — `lib/` and `host.ts` included — while the option's own comment promised a declaration per use. Each `syncIoScopes` entry (`{ files, apis }`) now emits one override, so an exemption is in force only in the files it names. The generated override repeats the baseline read-only list, because oxlint replaces the whole setting for a rule inside an override (measured on oxlint 1.90: an override carrying only `ignores: ["readFileSync"]` made the baseline-exempted `existsSync` report again in that file) — listing only the extra names would hand those files a block of new errors. An entry with empty `files` or empty `apis` throws at load instead of emitting an override that never matches or exempts nothing. Scope overrides sit before a consumer's `extraOverrides`, so a repository can still narrow a named file further. The `node/no-sync` row of `OFF_JUSTIFICATIONS` points at `syncIoScopes`.
+
+### Fixed
+
+- **The install-matrix type probe hands npm one peer spec per argument.** It joined the `@deepseek-ai/*` peers its own declarations reference into a single space-separated string and split that string on whitespace before `npm install`, so a range carrying a union arrived as three arguments and npm answered `ETARGET: No matching version found for undefined@^0.2.2-alpha.2` (measured against the shipped list in a clean directory). The list is now one spec per line and is read line by line, so tokenising no longer depends on how a range is spelled. The dsh family ranges are written without spaces all the same, in the form the cordis peer already used: a spec that is one whitespace-free token survives any consumer that splits a spec list on blanks.
+
+### Notes
+
+- `exports`, the artifacts and the runtime modules are unchanged; the edit is confined to `./config/oxlint`'s options. Dropping an option is not a patch-level change under strict semver, and it is taken here because that option reaches only the eight repositories in this family, every one of which declares its synchronous exemptions through it: a repository still passing `syncWrites` fails its own typecheck, since `oxlint.config.ts` sits inside each repository's `tsconfig.json` `include`.
+- The workspace catalog already names 0.2.2, so a consumer installing on its own — each repository's CI, and the workspace's `verify:published` — resolves this package from the registry and fails `ERR_PNPM_PACKAGE_NOT_FOUND` until 0.2.2 is published; `sync --check` reports the same range as unsatisfiable. Publishing first is also what makes the option change safe to consume: against an installed 0.2.1 a `syncIoScopes` declaration is an unknown option, so the files it names keep no exemption and start reporting `node/no-sync`.
+
 ## 0.2.1
 
 ### Added

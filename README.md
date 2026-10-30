@@ -12,7 +12,7 @@
   <a href="https://github.com/JayYuen666/dsh-plugin-shared/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JayYuen666/dsh-plugin-shared/ci.yml?branch=main&style=flat-square&label=ci" alt="ci" /></a>
   <img src="https://img.shields.io/badge/license-MIT-4c1?style=flat-square" alt="MIT" />
   <img src="https://img.shields.io/badge/node-%3E%3D22.12-4c1?style=flat-square&logo=nodedotjs&logoColor=white" alt="node" />
-  <img src="https://img.shields.io/badge/dsh-%5E0.2.1--rc.3-658EFF?style=flat-square" alt="dsh" />
+  <img src="https://img.shields.io/badge/dsh-0.2.1--rc.3%20%E2%86%92%200.2.2--alpha.2-658EFF?style=flat-square" alt="dsh 0.2.1-rc.3 to 0.2.2-alpha.2" />
   <a href="https://github.com/deepseek-ai/deepseek-harness"><img src="https://img.shields.io/badge/powered_by_dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white" alt="powered by dsh" /></a>
 </p>
 
@@ -79,7 +79,7 @@ End users do not install or enable it separately: any consumer package pulls it 
 | Requirement | Value |
 | --- | --- |
 | Node.js | `>=22.12.0` — the publish-side floor the plugin family shares, so a package declaring the same `engines.node` never rejects this library |
-| dsh | `^0.2.1-rc.3`, declared as an **optional** peer (importing this package does not need a host) |
+| dsh | `^0.2.1-rc.3||^0.2.2-alpha.2`, declared as an **optional** peer (importing this package does not need a host) |
 | Module format | ESM only. `require()` works only where Node supports `require(esm)` |
 | Tree shaking | `"sideEffects": false` |
 
@@ -92,7 +92,7 @@ End users do not install or enable it separately: any consumer package pulls it 
 - **A host package under `dependencies` disables the consumer's host.** Profiles install with `nodeLinker: hoisted` and `autoInstallPeers: false`, so a listed host package is materialized as a real directory next to the copy the host process already loaded. `@deepseek-ai/dsh-tools` keys its tool-runtime scheduler with a plain `Symbol` (not `Symbol.for`), so symbol identity is per module instance: the host reads the scheduler from the duplicate and gets `undefined`, and every native tool call throws. Build, typecheck and tests pass up to that point; the invariant has to be stated in the manifest.
 - **`@deepseek-ai/dsh-output-retention` is the one required peer.** It is a value import (`truncateEnd`), provided by the host at runtime, and marked `"optional": false` in `peerDependenciesMeta` rather than left implicit — a peer left out of that table is a hard requirement for npm 7+.
 - **The remaining peers are optional.** Except for the bare `@deepseek-ai/dsh` peer, which only declares the host line, they carry type declarations only. `devDependencies` holds the exact development line, including `@deepseek-ai/dsh-llm` and `@deepseek-ai/dsh-util-values`, whose types the local PTC declarations name, and `@deepseek-ai/dsh-tool-executor-ptc`, whose types only the parity check reads. Profiles never install peers, so no duplicate appears.
-- **Version requirements separate the install gate from the build baseline.** Every `@deepseek-ai/dsh-*` peer uses the same `^0.2.1-rc.3` range as `engines.dsh`, so a host anywhere in the supported window satisfies it. `devDependencies` pin the exact line this repository compiles and tests against (`0.2.2-alpha.2`) and must stay uniform: one `dsh-session` version per tree keeps the nominal types recognizable. `@deepseek-ai/cordis` stays exact in `devDependencies` (`4.0.6-alpha.1`) and its peer range `^4.0.5||^4.0.6-alpha.1` covers both the rc and alpha host lines; the range carries no spaces because the CI type probe splits the peer list on whitespace. `test/publish-manifest.test.ts` checks each of these separately.
+- **Version requirements separate the install gate from the build baseline.** Every `@deepseek-ai/dsh-*` peer uses the same `^0.2.1-rc.3||^0.2.2-alpha.2` range as `engines.dsh`, so a host anywhere in the supported window satisfies it. `devDependencies` pin the exact line this repository compiles and tests against (`0.2.2-alpha.2`) and must stay uniform: one `dsh-session` version per tree keeps the nominal types recognizable. `@deepseek-ai/cordis` stays exact in `devDependencies` (`4.0.6-alpha.1`) and its peer range `^4.0.5||^4.0.6-alpha.1` covers both the rc and alpha host lines. Ranges with more than one comparator carry no spaces around `||`: a spec that is a single whitespace-free token survives being split into install arguments, which is how the CI type probe and the publish scripts consume them. `test/publish-manifest.test.ts` checks each of these separately.
 - Known upstream limitation: `@deepseek-ai/dsh-llm`'s declarations import `@deepseek-ai/dsh-attachment`, which that package does not declare. It is reached through `dsh-session`, so a consumer running with `skipLibCheck: false` sees `TS2307` from that package, not from this one. The published `./lib/tool-events` declaration also names `@deepseek-ai/dsh-util-values`, which is reached through `dsh-session` / `dsh-tools`; a consumer running with `skipLibCheck: false` must have that package resolvable as well.
 
 ### Shared version floor

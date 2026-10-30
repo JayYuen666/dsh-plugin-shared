@@ -1,14 +1,22 @@
 import { definePluginConfig } from "./config/oxlint.base.ts";
 
 export default definePluginConfig({
-  // 包内例外只有一个：`execFileSync` —— 规则快照检查（test/config-oxlint.test.ts）要启动
-  // `oxlint --rules` 子进程，取 vitest 规则全集的实际输出。为什么用同步：这条检查没有并发需求，
-  // 而 async 三种写法恰好都被基线三条 promise 规则禁止——`new Promise`（promise/avoid-new）、
-  // 回调形（promise/prefer-await-to-callbacks）、`promisify(execFile)`
-  // （typescript/strict-void-return：execFile 返回 ChildProcess，promisify 的签名要的是
-  // 返回 void 的回调式函数）。基线的只读组（existsSync/readFileSync/...）不含它，
-  // 故按「逐项登记」的方式登记这一个（danger-guard 的产物加载检查做了同样的取舍）。
-  syncWrites: ["execFileSync"],
+  // 包内例外只有一个：`execFileSync`，三个调用点 —— 规则快照检查（test/config-oxlint.test.ts）
+  // 要启动 `oxlint --rules` 子进程取 vitest 规则全集的实际输出；lib/build-types.ts 用它跑 tsc
+  // 的声明产出；test/build-types-facet.test.ts 的替身要把未被打桩的那一路直通回原函数。
+  // 为什么用同步：这三处都没有并发需求，而 async 三种写法恰好都被基线三条 promise
+  // 规则禁止——`new Promise`（promise/avoid-new）、回调形（promise/prefer-await-to-callbacks）、
+  // `promisify(execFile)`（typescript/strict-void-return：execFile 返回 ChildProcess，promisify
+  // 的签名要的是返回 void 的回调式函数）。基线的只读组（existsSync/readFileSync/...）不含它，
+  // 所以豁免按文件登记，只在这三个文件里生效；别处再写 execFileSync 照样报。
+  // 收窄这一步当场量到一条旧口径漏掉的调用点：build-types-facet.test.ts 的替身以前靠着
+  // 包级扁平名单一起被放行，配置文件里没有它的名字也没人发现。
+  syncIoScopes: [
+    {
+      files: ["test/config-oxlint.test.ts", "test/build-types-facet.test.ts", "lib/build-types.ts"],
+      apis: ["execFileSync"],
+    },
+  ],
   // 唯一一条包内例外，范围收到单个用例文件。
   // `unicorn/no-thenable` 禁的是「把 thenable 当公开 API 自造」。而 lesson-bus 的被测对象
   // 恰恰是 `isThenable` 对各种形状的判定，其中一支是**函数型** thenable：不造出这个形状，
