@@ -1,6 +1,37 @@
 # Changelog
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
+
+## 0.2.3
+
+0.2.2 is on the registry; this section covers the work since it. `exports`, the artifacts and the runtime modules are unchanged, so the release is a manifest, development-baseline and test-infrastructure change.
+
+### Changed
+
+- **The dsh peer family and `engines.dsh` name the whole support window again.** The dsh peers and `engines.dsh` moved from `^0.2.1-rc.3` to `^0.2.1-rc.3 || ^0.2.2-alpha.2`. A caret covers prereleases only inside its own `major.minor.patch` tuple, so the single rc range is false for `0.2.2-alpha.2`, `0.2.2-alpha.3` and `0.2.2-rc.1` under installer semantics, while the host's own comparison passes `includePrerelease: true` and accepts them. The union is therefore the install-side declaration; the load gate keeps reading the same string with `includePrerelease: true`. This reverses the single-line decision recorded in 0.2.2, which was taken because a mixed-line npm install resolved the required `@deepseek-ai/dsh-output-retention` to the alpha line while cordis came from the rc line and stopped at `ERESOLVE`. That npm shape remains a documented limitation when a consumer pins the older host line; pnpm resolves both lines and prints a peer warning. `test/publish-manifest.test.ts` keeps `engines.dsh`, the bare dsh peer and every dsh-family peer on one string.
+- **The development baseline moved to `0.2.2-alpha.3` and cordis `4.0.6-alpha.2`.** All declared `@deepseek-ai/dsh-*` devDependencies move together; the uniform exact pins keep one nominal `dsh-session` type per tree. The cordis peer stays `^4.0.5||^4.0.6-alpha.1`: the `0.2.2-alpha.2` host line requires cordis `~4.0.6-alpha.1`, `0.2.2-alpha.3` requires `~4.0.6-alpha.2`, and the range also admits `4.1.0`. Raising the lower bound to alpha.2 would drop the alpha.2 host line, so the lower bound stays.
+- **CI and publish pin pnpm to `12.11.2`.** `version: 12` let every run take the newest 12.x, while patch differences are observable in install-tree resolution; the value now comes from workflow-level `PNPM_VERSION`, matching the umbrella `packageManager` and the lockfile generation line. The codeql workflow also treats a fork PR's artifact upload failure as non-blocking: the GitHub token is read-only there, and codeql-action v4 throws after a warning, so the old workflow reported a red unrelated to code quality. Non-fork events still fail normally.
+- **GitHub Actions pins moved to their latest releases.** `pnpm/action-setup` went from v6.0.10 to v6.1.1, `actions/download-artifact` from v7.0.0 to v8.0.2, and `github/codeql-action` from v4.39.1 to v4.39.2. The latter's artifact backend (`@actions/artifact` 6.3.1) matches `actions/upload-artifact` v7.0.2, and actionlint passes over all four workflows. The remaining pins were already the latest release: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, `actions/upload-artifact` v7.0.2, `actions/attest` v4.2.2, `actions/dependency-review-action` v5.0.0 and `ossf/scorecard-action` v2.5.0.
+- **The documentation now matches the manifest.** The cordis peer range was described as `^4.0.5||^4.0.6-alpha.2`; the manifest and its test pin `^4.0.5||^4.0.6-alpha.1`. The lower bound is deliberate (see above). The "no spaces around `||`" rule is scoped to the cordis peer, which is the one union written without spaces; the dsh-family window keeps spaces, and the install-matrix probe has read one specifier per line since 0.2.2 instead of splitting a whitespace-separated list.
+
+### Fixed
+
+- **The dev-only audit findings are cleared through root overrides.** `eslint-plugin-sonarjs` resolves `minimatch` 10.2.6, which carries the globparts amplification DoS advisory; the root override now pins `minimatch` 11.0.1, the first fixed release. The host devDependencies' transitive `zod` 4.4.3 is pinned to 4.6.7, the same line the umbrella root already uses. Minimatch 11 still ships a CommonJS build and the `Minimatch` class sonarjs calls, so lint and the full check stay green. `pnpm audit` reports zero vulnerabilities. The pins live in the root `PINNED_OVERRIDES` and in this repository's overrides, so a standalone install and Dependabot see the fixed tree too, not only the umbrella install.
+
+### Added
+
+- **A real-rolldown integration fixture.** `test/integration/fixture-build.integration.test.ts` runs the host and client build chains against a temporary package and asserts the structural properties the stub-based tests only assumed: a self-contained single file, externalized dependencies, generated headers and inlined JSON.
+- **Property tests for the pure-function contracts.** `test/property/invariants.property.test.ts` uses `fast-check` (a development-only dependency) over the JSONL quota/suffix, surrogate-safe truncation, card diffs, error text and project-key grammars. Expectations come from the module contracts, not from the implementation.
+
+### Notes
+
+- The workspace catalog must name 0.2.3 before consumers can resolve this release; until the version is on the registry, `sync --check` and the registry segment of the root tests report it as unsatisfiable. That is the release order, not a defect.
+- 0.2.2's single-line note remains an accurate record of that release. 0.2.3 supersedes the install-side decision; the declared support window is not narrower.
+- `0.2.2-rc.1` sits inside the declared range, but it is not part of this release's verified baseline. The compile and test pins stay on `0.2.2-alpha.3`; moving to rc.1 is a separate round that must move the dev pins together and re-run the host parity and install checks. The range admitting a version is an install-gate fact, not a compatibility certification.
+
+### How this release was verified
+
+`pnpm run check` passes at 0.2.3: typecheck, oxlint with zero warnings/errors, build, 26 test files with 435 tests, 100 % on all four coverage metrics, and `oxfmt --check`. `pnpm audit` reports zero vulnerabilities with `minimatch` 11.0.1 and `zod` 4.6.7. `npm pack --dry-run --ignore-scripts` lists 55 files, all entry targets resolve inside `files`, and no `src/` or test file ships.
 
 ## 0.2.2
 

@@ -18,6 +18,10 @@ permissions:
   # --provenance 是另一件事：它另取一枚 sigstore audience 的 id-token 去签来源证明，与发布凭据
   # 那枚交换互相独立；少了它，产物只剩 npm 自己的签名，没有可查的来源链。
   id-token: write
+# 与 ci.yml 同一枚取值：门禁 certify 的那棵树与发布装的树要由同一个 pnpm 解出。GitHub Actions 没有
+# 跨文件的 env，抬版本时与 ci.yml 那份一起动。
+env:
+  PNPM_VERSION: 12.11.2
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -45,9 +49,9 @@ jobs:
           # 本仓的 workflow 不用 git 写动词，token 没必要留在 .git/config 里：
           # 后续步骤会跑仓库自己的 install/构建/测试脚本，也就跑得到依赖里的脚本。
           persist-credentials: false
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 12
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24

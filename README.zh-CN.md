@@ -79,11 +79,11 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 | 要求 | 值 |
 | --- | --- |
 | Node.js | `>=22.12.0`——插件家族共用的发布侧下限，声明同一个 `engines.node` 的包不会因为这个库而被拒 |
-| dsh | `^0.2.1-rc.3`，声明为 **optional** peer（import 本包不需要宿主存在） |
+| dsh | `^0.2.1-rc.3 || ^0.2.2-alpha.2`，声明为 **optional** peer（import 本包不需要宿主存在） |
 | 模块形态 | 仅 ESM。`require()` 只在支持 `require(esm)` 的 Node 上可用 |
 | Tree shaking | `"sideEffects": false` |
 
-- **宿主窗口是滚动的。** 本包在发布时最近的三个已发布宿主版本上逐版取证，窗口滚动后重新取证；`engines.dsh` 与 peer 里的范围只是装载门与编译期纪律，不等于取证范围。
+- **宿主窗口是滚动的。** 本包对着 `devDependencies` 里精确锁定的开发线取证；`engines.dsh` 与 peer 里的范围只是装载门与编译期纪律，不等于取证范围。窗口滚动意味着同步移动这些钉版、重跑宿主对照断言并重新发布。
 
 ### 依赖要求
 
@@ -92,7 +92,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 - **宿主包写进 `dependencies` 会让消费方的宿主无法工作。** profile 用 `nodeLinker: hoisted` 与 `autoInstallPeers: false` 安装，于是列在 `dependencies` 里的宿主包会被安装成真实目录，与宿主进程已加载的那份并存。`@deepseek-ai/dsh-tools` 的工具运行期调度键是普通 `Symbol`（不是 `Symbol.for`），符号身份按模块实例计算：宿主从副本上读那个键得到 `undefined`，于是每一次原生工具调用都抛错。构建、类型检查与测试在此之前全部通过；这条不变式只能写在 manifest 上。
 - **`@deepseek-ai/dsh-output-retention` 是唯一必需 peer。** 它是值导入（`truncateEnd`），运行期由宿主提供；在 `peerDependenciesMeta` 里明写成 `"optional": false`，不靠"没写就等于必需"，因为没写进那张表对 npm 7+ 就是硬要求。
 - **其余 peer 都是 optional。** 除裸 `@deepseek-ai/dsh`（只声明宿主版本线）外，它们只承载类型声明。`devDependencies` 保存精确的开发线，其中包括本包 PTC 声明所引用的 `@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-util-values`，以及只有对照断言会读其类型的 `@deepseek-ai/dsh-tool-executor-ptc`。profile 不装 peer，所以不会产生副本。
-- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 使用同一条 `^0.2.1-rc.3` 范围，而这条范围刻意只写一条宿主线：npm 对每条 peer 独立解析，把两条线并列（`^0.2.1-rc.3||^0.2.2-alpha.2`）会让必需 peer `@deepseek-ai/dsh-output-retention` 取到 alpha 线、cordis 取到 rc 线，干净目录安装止步于 `ERESOLVE`。支持窗口并没有因此变窄——宿主比较 `engines.dsh` 时带 `includePrerelease: true`，在该语义下 `^0.2.1-rc.3` 对 `0.2.1-rc.3`、`0.2.1-rc.4`、`0.2.1-rc.5`、`0.2.2-alpha.2` 全为真。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-alpha.2`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.0.6-alpha.1`，peer 范围 `^4.0.5||^4.0.6-alpha.1` 同时覆盖 rc 线与 alpha 线——单独一枚包不存在宿主家族那种混线问题。含多条比较符的范围在 `||` 两侧不带空格：一枚说明符因此是一个不含空白的 token，在任何按空白切分参数表的安装命令里都不会被拆开（CI 的类型面 peer 安装按行读取）。`test/publish-manifest.test.ts` 分别检查这三件事。
+- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 写同一条窗口，而这条窗口点明两条宿主线：caret 的预发布比较只吃自己那条 patch 元组，单写 `^0.2.1-rc.3` 收不进 `0.2.2-alpha.*`——用本工作区的 semver 实测 `satisfies('0.2.2-alpha.3','^0.2.1-rc.3')` 为 false，带 `{includePrerelease:true}` 才为 true，而宿主自己那道比较正是带这一档。代价是量出来写在这里的：npm 逐条 peer 独立解析，宿主家族每一枚包内部又把自己的那条线精确钉住（`0.2.1-rc` 线上的成员要求 cordis `~4.0.5`，`0.2.2-alpha.2` 宿主线要求 `~4.0.6-alpha.1`，`0.2.2-alpha.3` 要求 `~4.0.6-alpha.2`），所以消费者把宿主钉在旧那条线时仍可能止步 `ERESOLVE`，同一条树落在最新线上则可解。并集窗口也收得进同一 `0.2.2` 元组里更晚的预发布，例如 `0.2.2-rc.1`；那只是范围语义，不是兼容性取证。本版实际取证的基线仍是 `0.2.2-alpha.3`，要抬到 `rc.1` 必须同步移动 dev 钉版并重跑宿主对照断言。pnpm——本工作区支持、也是宿主 `dsh plugin add` 在用的安装器——两种形状都解得出，只打一条 peer 告警。装载门两边都不受影响。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-alpha.3`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.0.6-alpha.2`，peer 范围 `^4.0.5||^4.0.6-alpha.1` 同时覆盖 rc 线与 alpha 线——单独一枚包不存在宿主家族那种混线问题：alpha.2 要求 `~4.0.6-alpha.1`，alpha.3 要求 `~4.0.6-alpha.2`，该范围也收得下 `4.1.0`。cordis 这条并集在 `||` 两侧不带空格；类型面 peer 安装现已按行逐枚读取，dsh 家族窗口保留空格。`test/publish-manifest.test.ts` 分别检查这三件事。
 - 已知上游限制：`@deepseek-ai/dsh-llm` 的声明文件引用了它自己没声明的 `@deepseek-ai/dsh-attachment`。它经 `dsh-session` 传递进来，所以开 `skipLibCheck: false` 的消费方会看到来自那个包的 `TS2307`，不是来自本包。发布出去的 `./lib/tool-events` 声明还引用了 `@deepseek-ai/dsh-util-values`，它经 `dsh-session` / `dsh-tools` 传递进来；开 `skipLibCheck: false` 的消费方同样必须能解析到这个包。
 
 ### shared 的版本下限

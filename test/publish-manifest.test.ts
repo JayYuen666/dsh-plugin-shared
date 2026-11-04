@@ -358,10 +358,13 @@ describe("宿主依赖的版本形状（升级保护）", () => {
   });
 
   it("cordis 的 peer 范围同时覆盖 rc 线与 alpha 线，且不带空格", async () => {
-    // cordis 是唯一跨宿主线版本不同的 peer：rc.3/rc.4 的 dsh-output-retention 要求 ~4.0.5，
-    // alpha.2 要求 ~4.0.6-alpha.1。把 peer 钉成 alpha 线的精确版本，干净目录 npm 安装会
-    // ERESOLVE（install-matrix 实测）。范围里的 `||` 不能带空格：CI 的类型面 peer 安装把
-    // 整串清单按空白切分，带空格的 `||` 会被切成多个包名。
+    // cordis 是唯一跨宿主线版本不同的 peer：rc 线的宿主成员要求 ~4.0.5，`0.2.2-alpha.2`
+    // 宿主要求 ~4.0.6-alpha.1，`0.2.2-alpha.3` 要求 ~4.0.6-alpha.2（后者见
+    // `npm view @deepseek-ai/dsh-agent-default-model@0.2.2-alpha.3 peerDependencies` 现量）。
+    // 所以 peer 保留 alpha.1 下界；抬到 alpha.2 会把 alpha.2 宿主线排除在外。把 peer 钉成其中
+    // 一条线的精确版本，另一条线上的干净目录 npm 安装会 ERESOLVE（install-matrix 实测）。
+    // 这里唯一一条不带空格的并集就是 cordis：manifest 里 dsh 家族窗口保留空格，install-matrix
+    // 已改成一行一枚说明符、按行读取，不再依赖按空白切分。
     const { manifest } = await readSurface();
     expect(
       manifest.peerDependencies?.["@deepseek-ai/cordis"],

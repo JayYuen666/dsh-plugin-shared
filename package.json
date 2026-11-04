@@ -1,6 +1,6 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
   "keywords": [
     "cordis",
@@ -130,18 +130,18 @@
     "prepare": "npm run --loglevel=warn build"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.6-alpha.1",
-    "@deepseek-ai/dsh-brand": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-jobs": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-llm": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-scope": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-session": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-shell": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-tools": "0.2.2-alpha.2",
-    "@deepseek-ai/dsh-util-values": "0.2.2-alpha.2",
+    "@deepseek-ai/cordis": "4.0.6-alpha.2",
+    "@deepseek-ai/dsh-brand": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-client-locale": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-jobs": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-llm": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-output-retention": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-scope": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-session": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-shell": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tools": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-util-values": "0.2.2-alpha.3",
     "@e18e/eslint-plugin": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
@@ -150,6 +150,7 @@
     "eslint-plugin-regexp": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
     "eslint-plugin-zod": "catalog:",
+    "fast-check": "4.10.2",
     "happy-dom": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -163,13 +164,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5||^4.0.6-alpha.1",
-    "@deepseek-ai/dsh": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-client-locale": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-jobs": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-output-retention": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-session": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-shell": "^0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.3",
+    "@deepseek-ai/dsh": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-client-locale": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-jobs": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-output-retention": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-shell": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
     "react": "^19.3.0"
   },
   "peerDependenciesMeta": {
@@ -203,7 +204,7 @@
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": "^0.2.1-rc.3",
+    "dsh": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
     "node": ">=22.12.0"
   }
 }
