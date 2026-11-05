@@ -22,8 +22,13 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
  *  card-ui 是客户端组件子面（含统一样式表），按消费方 external 取用；本轮实测 25956 B，
  *  预算按 +25% 登记为 33000 B。 */
 const RUNTIME_BUDGET_BYTES = 33_000;
-/** 配置面预算（取实测值上浮后的整数档）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。 */
-const CONFIG_BUDGET_BYTES = 30_000;
+/** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算，单独按同一 +25% 口径登记。 */
+const CLIENT_BUDGET_BYTES = 54_000;
+/** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型面的入口。 */
+const HOST_RUNTIME_EXCLUDE = new Set(["client.js", "client-entry.js"]);
+/** 配置面预算（取实测值上浮后的整数档）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。
+ *  客户端行的测试别名（shared/client → shared/client-node）把配置面推到 30064 B，按同一 +25% 口径抬到 31000 B。 */
+const CONFIG_BUDGET_BYTES = 31_000;
 /** 构建编排切面预算（dist/build/，各包 build-*.mjs 构建期取用）。与配置面同一记账理由：
  *  不占插件运行期装载成本，但整目录随 tarball 发布。 */
 const BUILD_BUDGET_BYTES = 22_000;
@@ -37,20 +42,28 @@ const BUILD_BUDGET_BYTES = 22_000;
  * @param relDir - 相对包根的目录
  * @returns 字节合计
  */
-function jsBytesUnder(relDir: string): number {
+function jsBytesUnder(relDir: string, exclude: ReadonlySet<string> = new Set()): number {
   const dir = path.join(pkgDir, relDir);
   return readdirSync(dir)
-    .filter((name) => name.endsWith(".js"))
+    .filter((name) => name.endsWith(".js") && !exclude.has(name))
     .reduce((sum, name) => sum + readFileSync(path.join(dir, name)).byteLength, 0);
 }
 
 describe("dist 体积闸门", () => {
   it("运行期切面总量在预算内", () => {
-    const bytes = jsBytesUnder("dist");
+    const bytes = jsBytesUnder("dist", HOST_RUNTIME_EXCLUDE);
     assert.ok(
       bytes <= RUNTIME_BUDGET_BYTES,
       `运行期切面 ${bytes} B 超预算 ${RUNTIME_BUDGET_BYTES} B。若是关掉了 minify 请改回；` +
         "若确实需要变大，请改 test/dist-size.test.ts 的常量并写明理由。",
+    );
+  });
+
+  it("客户端行在独立预算内", () => {
+    const bytes = readFileSync(path.join(pkgDir, "dist", "client.js")).byteLength;
+    assert.ok(
+      bytes <= CLIENT_BUDGET_BYTES,
+      `客户端行 ${bytes} B 超预算 ${CLIENT_BUDGET_BYTES} B；改预算前先确认没有把宿主运行期代码打进这条行。`,
     );
   });
 

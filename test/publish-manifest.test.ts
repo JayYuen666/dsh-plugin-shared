@@ -48,6 +48,9 @@ interface Manifest {
   readonly peerDependencies?: Record<string, string>;
   readonly peerDependenciesMeta?: Record<string, { readonly optional?: boolean }>;
   readonly engines?: Record<string, string>;
+  readonly dsh?: {
+    readonly client?: { readonly platform?: string; readonly immediately?: boolean };
+  };
 }
 
 /** 一条 `files` 模式归类后的两种形态。 */
@@ -196,6 +199,13 @@ describe("发布形态", () => {
     }
   });
 
+  it("客户端行声明与 ./client 入口同源", async () => {
+    const { manifest } = await readSurface();
+    expect(manifest.dsh?.client?.platform).toBe("web");
+    expect(manifest.exports?.["./client"]).toBeDefined();
+    expect(manifest.exports?.["."]).toMatchObject({ default: "./dist/plugin.js" });
+  });
+
   it("files 里的精确文件名条目确实被算进发布集合（shapeOf/expand 的回归防线）", async () => {
     // 单独钉住这两件事，因为它们坏掉时**上面那道入口覆盖断言不会响**：
     //   · 精确条目没被算进来 → 集合虚低 → 入口一旦靠精确条目承载就会误报；
@@ -279,7 +289,7 @@ describe("发布形态", () => {
 const DSH_FAMILY_PREFIX = "@deepseek-ai/dsh-";
 
 describe("宿主依赖的版本形状（升级保护）", () => {
-  it("@deepseek-ai/* 一律不进 dependencies：装出去会在宿主进程里产生第二份", async () => {
+  it("@deepseek-ai/* 除纯解析器外一律不进 dependencies：其余宿主包会装出第二份", async () => {
     // 固定的是「检查全部通过但宿主瘫痪」这一类问题。本包只要被消费方声明成普通依赖，profile 的 hoisted
     // 安装就会把这批 @deepseek-ai/* 安装成**真实目录**，与宿主进程里已有的那份并存在一起。
     // 而 `@deepseek-ai/dsh-tools` 的 TOOL_RUNTIME_SCHEDULER 是普通 Symbol（不是 Symbol.for），
@@ -288,8 +298,12 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     // "Cannot read properties of undefined (reading 'prepare')"，整个 profile 的工具一起失效。
     // 构建、类型检查与本包测试在此之前全部通过，检查只能落在 manifest 上。
     const { manifest } = await readSurface();
-    const leaked = Object.keys(manifest.dependencies ?? {}).filter((name) =>
-      name.startsWith("@deepseek-ai/"),
+    // `dsh-fs-patch` 是唯一允许的例外：纯解析器，没有服务实例、没有模块级状态，
+    // 多一份也不会像 dsh-tools 那样按 Symbol 身份分裂。它必须随本包一起装出去，
+    // 因为 rc.5 宿主没有这个包，而 apply_patch 的语法必须与执行它的 rc.1 宿主同源。
+    const PURE_HOST_DEPENDENCIES = new Set(["@deepseek-ai/dsh-fs-patch"]);
+    const leaked = Object.keys(manifest.dependencies ?? {}).filter(
+      (name) => name.startsWith("@deepseek-ai/") && !PURE_HOST_DEPENDENCIES.has(name),
     );
     expect(leaked, "这些宿主包会随消费方装进 profile，产生第二份实例").toStrictEqual([]);
   });
@@ -320,7 +334,9 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     );
     expect(dshDev.length, "至少要锁定一个 dsh-* 开发依赖").toBeGreaterThan(0);
     for (const [name, range] of dshDev) {
-      expect(range, `${name} 必须是精确版本，实际 ${range}`).toMatch(/^\d+\.\d+\.\d+-/u);
+      expect(range, `${name} 必须是精确版本，实际 ${range}`).toMatch(
+        /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u,
+      );
     }
   });
 
@@ -357,12 +373,11 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     expect(manifest.engines?.["dsh"], "engines.dsh 与 peer 范围必须说同一个窗口").toBe(bare);
   });
 
-  it("cordis 的 peer 范围同时覆盖 rc 线与 alpha 线，且不带空格", async () => {
-    // cordis 是唯一跨宿主线版本不同的 peer：rc 线的宿主成员要求 ~4.0.5，`0.2.2-alpha.2`
-    // 宿主要求 ~4.0.6-alpha.1，`0.2.2-alpha.3` 要求 ~4.0.6-alpha.2（后者见
-    // `npm view @deepseek-ai/dsh-agent-default-model@0.2.2-alpha.3 peerDependencies` 现量）。
-    // 所以 peer 保留 alpha.1 下界；抬到 alpha.2 会把 alpha.2 宿主线排除在外。把 peer 钉成其中
-    // 一条线的精确版本，另一条线上的干净目录 npm 安装会 ERESOLVE（install-matrix 实测）。
+  it("cordis 的 peer 范围同时覆盖两条宿主线，且不带空格", async () => {
+    // cordis 是唯一跨宿主线版本不同的 peer：`npm view @deepseek-ai/dsh@0.2.1-rc.5` 声明
+    // `~4.0.5`，`@0.2.2-rc.1` 声明 `~4.1.0`（两处都是 registry 现量）。peer 写并集是为了两条线
+    // 各自的宿主副本都落在满足面里；钉成其中一条线的精确版本，另一条线上的干净目录 npm 安装会
+    // ERESOLVE（install-matrix 实测）。
     // 这里唯一一条不带空格的并集就是 cordis：manifest 里 dsh 家族窗口保留空格，install-matrix
     // 已改成一行一枚说明符、按行读取，不再依赖按空白切分。
     const { manifest } = await readSurface();
@@ -370,10 +385,12 @@ describe("宿主依赖的版本形状（升级保护）", () => {
       manifest.peerDependencies?.["@deepseek-ai/cordis"],
       "cordis 的 peer 范围只覆盖一条宿主线",
     ).toBe("^4.0.5||^4.0.6-alpha.1");
+    // dev 线要的是**精确**：范围操作符会让构建与测试对着一个会漂移的副本跑，而 peer 那一条
+    // 承载的是对外声明的窗口，两者不是一个东西。宿主线发正式版后这一位不再带预发布尾巴。
     expect(
       manifest.devDependencies?.["@deepseek-ai/cordis"],
       "dev 线仍要精确锁定构建与测试用的那一版",
-    ).toMatch(/^\d+\.\d+\.\d+-/u);
+    ).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u);
   });
 });
 
@@ -385,8 +402,15 @@ describe("模块与 exports 的一致性（新增/改名模块时的静默失败
     // 只验「已声明的 exports 都能落到真实文件」，验不出「该声明的没声明」。
     const { manifest } = await readSurface();
     const libNames = await readdir(path.join(pkgDir, "lib"));
+    // 两个入口别名不按 lib 子路径发布：plugin 是根入口，client-entry 由 ./client 承载。
+    const ENTRY_ALIASES = new Set(["client-entry", "plugin"]);
     const facets = libNames
-      .filter((name) => name.endsWith(".ts") && name !== "index.ts")
+      .filter(
+        (name) =>
+          name.endsWith(".ts") &&
+          name !== "index.ts" &&
+          !ENTRY_ALIASES.has(name.replace(/\.ts$/u, "")),
+      )
       .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`);
     expect(facets.length, "至少要扫到模块").toBeGreaterThan(0);
     for (const facet of facets) {

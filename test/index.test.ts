@@ -44,6 +44,9 @@ const BARREL_EXEMPT = new Set([
   "build-types.ts",
   // 客户端专用子模块：只在插件客户端 bundle 里按子路径取用，根 barrel 不得把 react 带进来。
   "card-ui.ts",
+  // 宿主入口在 barrel 之外再补 apply；客户端行是独立 bundle，不进根 barrel。
+  "plugin.ts",
+  "client-entry.ts",
 ]);
 
 describe("lib/index 聚合导出", () => {

@@ -90,6 +90,13 @@ export function definePackageConfig(options: PackageVitestOptions): PackageConfi
     );
   }
   return defineConfig({
+    // 客户端行在浏览器里是 `__ModuleLoader__` UMD，Node 测试直接执行会在 window 处抛错。
+    // 测试侧把公开说明符映射到同一份 ESM 入口；宿主仍从 exports["./client"].default 取 UMD。
+    resolve: {
+      alias: {
+        "@jayyuen66/dsh-plugin-shared/client": "@jayyuen66/dsh-plugin-shared/client-node",
+      },
+    },
     test: {
       // 用例形态放宽到 spec 命名与全部 TS 扩展位（.tsx/.mts/.cts）：旧规则只认
       // `test/**/*.test.ts`，其余形态与命名的用例会被静默漏跑，且 vitest 不报错。

@@ -30,6 +30,7 @@ import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolCallId } from "@deepseek-ai/dsh-llm/brand";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
+import { parsePatch } from "@deepseek-ai/dsh-fs-patch";
 import { isRecord } from "./record.ts";
 
 export type { SessionEvent } from "@deepseek-ai/dsh-session";
@@ -324,15 +325,72 @@ export type EditTarget =
   | { readonly kind: "read-view"; readonly path: string | undefined };
 
 /**
+ * 一条 `apply_patch` 补丁操作的目标。`moveTo` 只出现在 update 上；源路径与目的路径
+ * 都是文件效应，调用方需要分别记账。
+ */
+export interface ApplyPatchTarget {
+  readonly kind: "add" | "update" | "delete";
+  readonly path: string;
+  readonly moveTo?: string;
+}
+
+/**
+ * 从 `apply_patch` 的 `{ input }` 解析有序操作。解析器是官方 `dsh-fs-patch` 的同一份
+ * `parsePatch`：host 执行什么语法，这里就认什么，不另写一套会与宿主漂移的补丁文法。
+ * 非补丁输入、或宿主解析器拒绝的补丁一律交回空数组；调用方按工具名决定是否 fail-closed。
+ */
+export function applyPatchTargetsOf(
+  args: Record<string, unknown> | undefined | null,
+): readonly ApplyPatchTarget[] {
+  const input = args?.["input"];
+  if (typeof input !== "string" || !input.includes("*** Begin Patch")) {
+    return [];
+  }
+  try {
+    return parsePatch(input).map((operation) => {
+      if (operation.kind !== "update") {
+        return { kind: operation.kind, path: operation.path };
+      }
+      return operation.moveTo === undefined
+        ? { kind: "update" as const, path: operation.path }
+        : { kind: "update" as const, path: operation.path, moveTo: operation.moveTo };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 由 tool/call 记录推导被编辑的文件路径；str_replace_editor 的 view 只读不算写。
+ * `apply_patch` 取第一条操作路径，多目标调用请走 {@link editPathsOf}。
  * @returns `write` = 写操作；`read-view` = 只读视图。取不到路径时 `path` 为 `undefined`。
  */
 export function editPathOf(call: ToolCallRecord): EditTarget {
   const args = call.arguments;
+  if (call.name === "apply_patch") {
+    return { kind: "write", path: applyPatchTargetsOf(args)[0]?.path };
+  }
   if (call.name === "str_replace_editor") {
     return args["command"] === "view"
       ? { kind: "read-view", path: pathOf(args, "path") }
       : { kind: "write", path: pathOf(args, "path") };
   }
   return { kind: "write", path: pathOf(args, "file_path") };
+}
+
+/**
+ * 一次 tool/call 的全部写目标（去重、保持补丁顺序）。`apply_patch` 的 move 同时交回
+ * 源路径与目的路径：前者被删除、后者被创建，两处都必须能被下游看见。
+ */
+export function editPathsOf(call: ToolCallRecord): readonly string[] {
+  if (call.name === "apply_patch") {
+    const paths = applyPatchTargetsOf(call.arguments).flatMap((target) =>
+      target.kind === "update" && target.moveTo !== undefined
+        ? [target.path, target.moveTo]
+        : [target.path],
+    );
+    return paths.filter((value, index) => value.length > 0 && paths.indexOf(value) === index);
+  }
+  const target = editPathOf(call);
+  return target.kind === "write" && target.path !== undefined ? [target.path] : [];
 }

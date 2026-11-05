@@ -7,7 +7,13 @@
 // 缺 subCallId、retired 的 content[0].isError……）显式走 badEvent()——那是用例明说的意图。
 
 import { describe, expect, it } from "vitest";
-import { scanToolEvents, editPathOf, toolEventRowsOf } from "../lib/tool-events.ts";
+import {
+  scanToolEvents,
+  applyPatchTargetsOf,
+  editPathOf,
+  editPathsOf,
+  toolEventRowsOf,
+} from "../lib/tool-events.ts";
 import type { SessionEvent, ToolCallRecord } from "../lib/tool-events.ts";
 import {
   badEvent,
@@ -26,6 +32,15 @@ const PTC_START_TYPE = "tool/ptc-dispatch-start";
 const RESULT_TYPE = "tool/result";
 /** 同上的 tool/call 字面量（坏事件构造点要用它，事件类型本身保持合法以证明是 data 的锅）。 */
 const CALL_TYPE = "tool/call";
+
+/** apply_patch 的调用记录；不依赖任何 describe 状态，放在外层避免每次用例重建。 */
+const applyPatchCall = (input: string): ToolCallRecord => ({
+  name: "apply_patch",
+  callId: "x",
+  seq: 0,
+  arguments: { input },
+  badArguments: false,
+});
 
 /** 结算事件 → 该事件的 isError；不产出结算行时返回 undefined。 */
 function isErrorOf(event: SessionEvent): boolean | undefined {
@@ -236,6 +251,101 @@ describe("editPathOf", () => {
     expect(
       editPathOf({ name: "edit", callId: "x", seq: 0, arguments: {}, badArguments: false }),
     ).toStrictEqual({ kind: "write", path: undefined });
+  });
+});
+
+describe("apply_patch 目标解析", () => {
+  const patch = [
+    "*** Begin Patch",
+    "*** Add File: a.ts",
+    "+a",
+    "*** Update File: b.ts",
+    "*** Move to: c.ts",
+    "@@",
+    "-old",
+    "+new",
+    "*** Delete File: d.ts",
+    "*** End Patch",
+  ].join("\n");
+
+  it("按官方 parser 交回有序操作（含 move 的目的路径）", () => {
+    expect(applyPatchTargetsOf({ input: patch })).toStrictEqual([
+      { kind: "add", path: "a.ts" },
+      { kind: "update", path: "b.ts", moveTo: "c.ts" },
+      { kind: "delete", path: "d.ts" },
+    ]);
+  });
+
+  it("update 没有 move 时交回不带 moveTo 的目标", () => {
+    const withoutMove = [
+      "*** Begin Patch",
+      "*** Update File: e.ts",
+      "@@",
+      "-old",
+      "+new",
+      "*** End Patch",
+    ].join("\n");
+    expect(applyPatchTargetsOf({ input: withoutMove })).toStrictEqual([
+      { kind: "update", path: "e.ts" },
+    ]);
+  });
+
+  it("非补丁输入与非法补丁交回空表（调用方按工具名 fail-closed）", () => {
+    expect(applyPatchTargetsOf({ input: "hello" })).toStrictEqual([]);
+    expect(applyPatchTargetsOf({ input: "*** Begin Patch\n*** Update File: a.ts" })).toStrictEqual(
+      [],
+    );
+    expect(applyPatchTargetsOf({ input: 42 })).toStrictEqual([]);
+    expect(applyPatchTargetsOf(undefined)).toStrictEqual([]);
+  });
+
+  it("editPathsOf 交回全部写目标并去重，move 的源与目的都在表内", () => {
+    expect(editPathsOf(applyPatchCall(patch))).toStrictEqual(["a.ts", "b.ts", "c.ts", "d.ts"]);
+    const repeated = patch.replace("*** Delete File: d.ts", "*** Delete File: a.ts");
+    expect(editPathsOf(applyPatchCall(repeated))).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+
+  it("editPathOf 对 apply_patch 只交回第一条目标（单目标兼容面）", () => {
+    expect(editPathOf(applyPatchCall(patch))).toStrictEqual({ kind: "write", path: "a.ts" });
+  });
+
+  it("editPathsOf 对普通编辑器沿用单路径口径（view 与无路径不成行）", () => {
+    expect(
+      editPathsOf({
+        name: "edit",
+        callId: "e1",
+        seq: 0,
+        arguments: { file_path: "/a.ts" },
+        badArguments: false,
+      }),
+    ).toStrictEqual(["/a.ts"]);
+    expect(
+      editPathsOf({
+        name: "edit",
+        callId: "e2",
+        seq: 0,
+        arguments: {},
+        badArguments: false,
+      }),
+    ).toStrictEqual([]);
+    expect(
+      editPathsOf({
+        name: "str_replace_editor",
+        callId: "e3",
+        seq: 0,
+        arguments: { command: "view", path: "/v.ts" },
+        badArguments: false,
+      }),
+    ).toStrictEqual([]);
+    expect(
+      editPathsOf({
+        name: "str_replace_editor",
+        callId: "e4",
+        seq: 0,
+        arguments: { command: "str_replace", path: "/w.ts" },
+        badArguments: false,
+      }),
+    ).toStrictEqual(["/w.ts"]);
   });
 });
 

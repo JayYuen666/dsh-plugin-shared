@@ -100,6 +100,9 @@ describe("shared buildHost()", () => {
       // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
       "card-ui",
       "index",
+      // 宿主入口与客户端行：前者只补 apply，后者由 build-client.mjs 单独打包。
+      "plugin",
+      "client-entry",
     ].toSorted();
     assert.deepEqual(onDisk, expected);
   });

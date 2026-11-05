@@ -44,6 +44,8 @@ export const facets = [
  *  会让每个运行时消费方都为它多一次导入；各包 build-*.mjs 按子路径取用。 */
 const entries = [
   "lib/index.ts",
+  "lib/plugin.ts",
+  "lib/client-entry.ts",
   ...facets.map((facet) => `lib/${facet}.ts`),
   "lib/canonicalize-region-paths.ts",
   "lib/card-ui.ts",

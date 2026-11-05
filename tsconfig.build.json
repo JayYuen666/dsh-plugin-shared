@@ -10,5 +10,5 @@
     "types": ["node"]
   },
   "include": ["lib/**/*.ts"],
-  "exclude": ["test/**/*.ts", "lib/index.ts"]
+  "exclude": ["test/**/*.ts", "lib/index.ts", "lib/plugin.ts"]
 }

@@ -1,7 +1,7 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.2.3",
-  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。作为库包被 import，不由用户启用",
+  "version": "0.2.4",
+  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。宿主半由各插件 import；客户端半以 ./client 共享行由插件 patch 启用，不由用户单独停用",
   "keywords": [
     "cordis",
     "dsh",
@@ -27,12 +27,22 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.js",
+  "main": "./dist/plugin.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "default": "./dist/plugin.js"
+    },
+    "./client": {
+      "types": "./dist/types/client-entry.d.ts",
+      "node": "./dist/client-entry.js",
+      "import": "./dist/client-entry.js",
+      "default": "./dist/client.js"
+    },
+    "./client-node": {
+      "types": "./dist/types/client-entry.d.ts",
+      "default": "./dist/client-entry.js"
     },
     "./lib/tool-events": {
       "types": "./dist/types/tool-events.d.ts",
@@ -120,7 +130,8 @@
   },
   "scripts": {
     "prebuild": "node build-clean.mjs",
-    "build": "node build-host.mjs && node build-config.mjs && tsc -p tsconfig.build.json && tsc -p tsconfig.build.config.json && node build-types-check.mjs",
+    "build": "node build-host.mjs && node build-config.mjs && tsc -p tsconfig.build.json && tsc -p tsconfig.build.config.json && node build-types-check.mjs && node build-client.mjs",
+    "build:client": "node build-client.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint .",
     "test": "vitest run --coverage",
@@ -129,19 +140,22 @@
     "fmt": "oxfmt .",
     "prepare": "npm run --loglevel=warn build"
   },
+  "dependencies": {
+    "@deepseek-ai/dsh-fs-patch": "0.2.2-rc.1"
+  },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.6-alpha.2",
-    "@deepseek-ai/dsh-brand": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-client-locale": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-jobs": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-llm": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-output-retention": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-scope": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-session": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-shell": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-tools": "0.2.2-alpha.3",
-    "@deepseek-ai/dsh-util-values": "0.2.2-alpha.3",
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-brand": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-jobs": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-output-retention": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-scope": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-shell": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-util-values": "0.2.2-rc.1",
     "@e18e/eslint-plugin": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
@@ -164,13 +178,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5||^4.0.6-alpha.1",
-    "@deepseek-ai/dsh": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-client-locale": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-jobs": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-output-retention": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-session": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-shell": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
+    "@deepseek-ai/dsh": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-client-locale": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-jobs": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-output-retention": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-shell": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
     "react": "^19.3.0"
   },
   "peerDependenciesMeta": {
@@ -204,7 +218,13 @@
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": "^0.2.1-rc.3 || ^0.2.2-alpha.2",
-    "node": ">=22.12.0"
+    "dsh": "^0.2.1-rc.5 || ^0.2.2-alpha.3",
+    "node": ">=24.9.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
   }
 }

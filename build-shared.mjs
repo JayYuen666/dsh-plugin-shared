@@ -51,7 +51,7 @@ function dependencyNames(pkgJson, field) {
  * 不能写 `process.argv[1] === import.meta.filename`：`import.meta.filename` 是解析后的真实
  * 路径，而 argv[1] 保留调用方写的那一串——软链、`/tmp` → `/private/tmp` 这类符号链接、以及
  * 大小写不同的盘符都会让两者不同形，于是判断恒为 false、脚本照常退出 0 却什么都没建。
- * 不用 `import.meta.main`：本包 `engines.node` 是 `>=22.12.0`，那个属性在 Node 22 上不存在。
+ * 不用 `import.meta.main`：这一位在实测的 Node 26 上仍读不到（`'import.meta.main' in import.meta` 为 false），存在性不足以判入口。
  * @param moduleFile 调用方的 `import.meta.filename`
  * @returns 是否直接运行
  */
