@@ -6,8 +6,8 @@
 // 下面两行 `= true` 过不了 `pnpm typecheck`。
 //
 // ⚠ 判据只由 **tsc** 兑现，不由 vitest 兑现：类型在运行期已被擦除，任何把它包成 `it()` 的写法
-// 都会恒真通过（实测：把 `meta?: JsonValue` 改成 `meta?: string`，tsc 报 TS2322，而 vitest 那条
-// 用例照样 1 passed）。所以本文件刻意**不是** `.test.ts`——它没有可执行内容，只有类型面。
+// 都会永远成立通过（实测：把 `meta?: JsonValue` 改成 `meta?: string`，tsc 报 TS2322，而 vitest 那条
+// 用例照样 1 passed）。所以本文件刻意**不是** `.test.ts`——它没有可执行内容，只有类型声明。
 // 同一次实验也证明：两份同 key 的增强即使字段已经漂移也**不报** TS2717，别把它当成第二处检测。
 //
 // 导入路径随**开发基线**走：基线能提供 `@deepseek-ai/dsh-tool-executor-ptc/types` 时用它；

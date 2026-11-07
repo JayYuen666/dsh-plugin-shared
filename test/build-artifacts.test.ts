@@ -1,4 +1,4 @@
-// test/build-artifacts.test.ts —— 构建机械代码（lib/build-artifacts.ts）的行为面。
+// test/build-artifacts.test.ts —— 构建机械代码（lib/build-artifacts.ts）的行为测试。
 //
 // 这些代码此前散在各包 build-utils.mjs 的近似副本里，各仓只测自己那一半；收进 shared 之后
 // 判断在这里一份测全：输出检查的负形状、原子写入的失败与重试路径、直跑判断的两种失败
@@ -105,7 +105,7 @@ async function freshDir(): Promise<string> {
 }
 
 describe("packageNameOf", () => {
-  it("四种形态：裸名、裸名带子路径、scope 名、scope 名带子路径", () => {
+  it("四种形态：只有包名、只有包名带子路径、带 scope 的名字、带 scope 的名字带子路径", () => {
     assert.equal(packageNameOf("pkg"), "pkg");
     assert.equal(packageNameOf("pkg/sub"), "pkg");
     assert.equal(packageNameOf("@scope"), "@scope");

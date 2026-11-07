@@ -9,7 +9,7 @@ export default definePluginConfig({
   // `promisify(execFile)`（typescript/strict-void-return：execFile 返回 ChildProcess，promisify
   // 的签名要的是返回 void 的回调式函数）。基线的只读组（existsSync/readFileSync/...）不含它，
   // 所以豁免按文件登记，只在这三个文件里生效；别处再写 execFileSync 照样报。
-  // 收窄这一步当场量到一条旧口径漏掉的调用点：build-types-facet.test.ts 的替身以前靠着
+  // 收窄这一步当场量到一条旧规则漏掉的调用点：build-types-facet.test.ts 的替身以前靠着
   // 包级扁平名单一起被放行，配置文件里没有它的名字也没人发现。
   syncIoScopes: [
     {

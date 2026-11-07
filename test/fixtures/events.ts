@@ -1,6 +1,6 @@
 // test/fixtures/events.ts —— 官方 `SessionEvent` 测试数据构造器。
 //
-// 生产面（lib/tool-events.ts）绑官方判别联合后，测试数据必须满足本地投影曾一笔带过的三条
+// 生产代码（lib/tool-events.ts）绑官方判别联合后，测试数据必须满足本地投影曾一笔带过的三条
 // 真约束（都是这一轮由编译器逼出来的，写在这里备忘）：
 //   1. 事件必填位齐全：`seq`（且它是 `SessionSeq = BrandedNumber<'SessionSeq'>`，不是
 //      number）、`time`，以及 `data.turn` / `data.step`；
@@ -118,9 +118,9 @@ export function unrelated(): SessionEvent {
   return event;
 }
 
-/** 显式畸形事件：类型面已不可表示的坏形状（缺 callId、data 非对象、未知类型、retired
+/** 显式畸形事件：类型声明里已不可表示的坏形状（缺 callId、data 非对象、未知类型、retired
  *  的 content[0].isError……）。个别用例经它表达「宿主真送来了这个」，测的是扫描器的
- *  降级口径，不是类型合法性。 */
+ *  降级规则，不是类型合法性。 */
 export function badEvent(value: Record<string, unknown>): SessionEvent {
   bump();
   return value as unknown as SessionEvent;

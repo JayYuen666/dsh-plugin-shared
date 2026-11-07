@@ -36,7 +36,7 @@ export function asRecord(raw: unknown): Record<string, unknown> {
  * 读包根的 package.json，带上下文的失败信息。
  *
  * 惰性（调用时才读）而不是在消费方模块顶层读：顶层一次 JSON 语法错误会以未捕获的顶层
- * await 错误 + 裸 SyntaxError 收场，读者看不出是哪个文件坏了；而测试 import 构建模块时
+ * await 错误 + 不带文件路径的 SyntaxError 收场，读者看不出是哪个文件坏了；而测试 import 构建模块时
  * 只为拿构建函数，不该连带做一次磁盘 I/O。
  * @param root - 包根绝对路径
  * @returns 解析后的 manifest
@@ -86,7 +86,7 @@ export interface OutputItem {
  * 单文件产物只接受一个带正文的 entry chunk。
  *
  * 正文还必须非空白：`typeof code === "string"` 会放行空串与纯空白，而那两种状态写入磁盘后是
- * 一份语法上能解析、跑起来什么都不做的产物——构建报成功，宿主那条路静默不渲染。
+ * 一份语法上能解析、跑起来什么都不做的产物——构建报成功，宿主那条路不渲染，也不报错。
  * @param item - 输出项
  * @returns 是否为带正文的 entry chunk
  */
@@ -135,7 +135,7 @@ const RENAME_RETRY_DELAYS_MS = [50, 100, 200];
  *
  * POSIX 上 rename 换目录项是原子的，失败即真失败；Windows 上目标文件被其它进程持有
  * （Electron / dev server 正 require 产物、杀毒或索引服务短暂占用）时会给 EPERM/EBUSY，
- * 而占用通常在几十毫秒内释放。不重试的话这条失败是**间歇性**的：同一棵树连着构建两次，
+ * 而占用通常在几十毫秒内释放。不重试的话这条失败是**间歇性**的：同一份安装里连着构建两次，
  * 一次失败一次成功。其余错误码照旧立即抛出——真的没权限时重试只是拖慢失败。
  * @param from - 草稿文件
  * @param to - 目标文件
@@ -170,12 +170,12 @@ async function renameWithRetry(from: string, to: string, attempt = 0): Promise<v
  * 草稿落在**目标文件所在目录**下的 `.tmp/`，不是 `os.tmpdir()`，也不是产物旁边的裸名：
  *   - 不用 `os.tmpdir()`：rename 只在同一文件系统内原子，跨设备会以 EXDEV 失败，而系统临时
  *     目录常被挂到另一个分区/卷；
- *   - 跟随目标目录而不是写死包根：本函数住在公共库里，产物落点由调用方决定；
+ *   - 跟随目标目录而不是写死包根：本函数定义在公共库里，产物写到哪儿由调用方决定；
  *   - 不用「产物名 + 后缀」直接落在产物旁边：那个名字通常不在 `.gitignore` 里，构建被中断
  *     时半份产物会以未跟踪文件出现在 `git status`，被误当成源码改动提交。`.tmp/` 是各包
  *     统一忽略的目录，不需要为构建残留单独扩忽略规则。
  *
- * 失败信息带上两个路径并保留 cause：裸 `ENOENT … open '…/<uuid>.tmp'` 把注意力引到草稿名上，
+ * 失败信息带上两个路径并保留 cause：只有 `ENOENT … open '…/<uuid>.tmp'` 把注意力引到草稿名上，
  * 读者还得自己从中找出真正的产物路径。
  * @param target - 目标文件绝对路径
  * @param text - 产物正文
@@ -220,7 +220,7 @@ export interface RolldownBundle extends CloseableBundle {
  * 调用方注入的 rolldown 构造器。
  *
  * 注入而不是由本包声明依赖：rolldown 是各包构建期自己的 devDependency，本包作为库
- * 不该为构建工具声明运行期依赖面。参数类型借 rolldown 自己的 InputOptions（仅类型
+ * 不该为构建工具声明运行期依赖。参数类型借 rolldown 自己的 InputOptions（仅类型
  * 导入，产物里没有它）。
  */
 export type RolldownFactory = (options: InputOptions) => Promise<RolldownBundle>;

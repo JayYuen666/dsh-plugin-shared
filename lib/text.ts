@@ -25,7 +25,7 @@
 // 零预算与 NaN 预算两端行为相同：都返回空串。truncateStart 必须自己判 `!(minChars > 0)`
 // —— 否则 `slice(-0)` 即 `slice(0)`，整串原样返回，正是本模块要拦住的超长输出；
 // 写成"取反的正判"而不是 `minChars <= 0`，是因为 NaN 与两者比较都是 false，
-// 裸 `<=` 会让 truncateStart(x, NaN) 返回整串而 truncateEnd(x, NaN) 给空串。truncateEnd
+// `<=` 那种写法会让 truncateStart(x, NaN) 返回整串而 truncateEnd(x, NaN) 给空串。truncateEnd
 // 一侧由 Math.max(0, ·) 与官方件合力达成：官方把负预算交给 slice(0, 负数) 解释成
 // "从尾部倒数"，把负数按 0 处理之后与本地旧实现行为相同；NaN 经 Math.max 仍是 NaN，官方拿它走
 // slice(0, NaN) 得空串。本模块不写 `if (cut.length === 0) return cut;` 这类截断结果为空时的早返回：

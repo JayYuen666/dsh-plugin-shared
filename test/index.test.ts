@@ -28,7 +28,7 @@ import {
 
 const pkgDir = path.join(import.meta.dirname, "..");
 
-/** barrel 自己那一份源文件（它是被比的那一侧，不进模块清单）。 */
+/** barrel 自己那一份源文件（它是被比较的那一份，不进模块清单）。 */
 const BARREL_FILE = "index.ts";
 
 /**
@@ -50,7 +50,7 @@ const BARREL_EXEMPT = new Set([
 ]);
 
 describe("lib/index 聚合导出", () => {
-  it("根 barrel 把每一面的公开成员都作为函数导出", () => {
+  it("根 barrel 把每个模块的公开成员都作为函数导出", () => {
     for (const fn of [
       scanToolEvents,
       editPathOf,
@@ -78,9 +78,9 @@ describe("lib/index 聚合导出", () => {
   // 上面那份名单是手写的，所以它只证「列出来的成员确实还在」，证不到「该列的没被漏列」：
   // 新增一个 lib/<模块>.ts 时，publish-manifest 的一致性查的是「模块 ↔ exports 子路径」，
   // 这条查的是「名字 ↔ 那份手写清单」，两边都不会因为 barrel 少一条 re-export 而失败。
-  // 漏掉的那一面于是只在消费方 `import { x } from "@jayyuen66/dsh-plugin-shared"` 那天
+  // 被漏掉的那一项于是只在消费方 `import { x } from "@jayyuen66/dsh-plugin-shared"` 那天
   // 以运行期 undefined 现形——正是本文件开头要防的那件事。
-  it("barrel 覆盖 lib/ 下每一面的每一个值导出（清单不许自己腐烂）", async () => {
+  it("barrel 覆盖 lib/ 下每个模块的每一个值导出（清单不许自己腐烂）", async () => {
     const listed = await readdir(path.join(pkgDir, "lib"));
     const facetFiles = listed
       .filter((name) => name.endsWith(".ts"))

@@ -43,7 +43,7 @@ function loggedFirstArgs(texts: readonly string[]): string[] {
 describe("日志模板记录清单", () => {
   it("登记的每条片段都还在源码的 console 调用里", async () => {
     const logged = loggedFirstArgs(await libSources());
-    // 空集不算通过：一条都扫不到时下面那条 some() 恒假，但前一条会很可疑地通过。
+    // 空集不算通过：一条都扫不到时下面那条 some() 永远不成立，但前一条会很可疑地通过。
     expect(logged.length, "lib/ 下没扫到任何 console 调用").toBeGreaterThan(0);
     for (const fragment of LOG_TEMPLATES) {
       expect(

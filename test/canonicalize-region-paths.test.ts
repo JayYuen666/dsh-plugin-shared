@@ -102,7 +102,7 @@ describe("行首相对段折叠：跨包依赖在两种 cwd 下同形", () => {
     assert.deepEqual(fromPkgCwd, ["//#region shared/lib/record.ts"]);
   });
 
-  it("../node_modules 与 ./node_modules ⇒ 都收成裸 node_modules", () => {
+  it("../node_modules 与 ./node_modules ⇒ 都收成不带前缀的 node_modules", () => {
     const fromParent = foldedRegionLines(["../node_modules/x/index.js"]);
     const fromSelf = foldedRegionLines(["./node_modules/y/index.cjs"]);
     assert.deepEqual(fromParent, ["//#region node_modules/x/index.js"]);
@@ -355,7 +355,7 @@ describe("cwd 精确档：包内目录与父目录同名不被误折", () => {
     assert.deepEqual(regionLines(folded), [foldedMark(BARE_PKG_MARK)]);
   });
 
-  it("裸名包根（无分隔符）也走精确档", () => {
+  it("只有一个名字的包根（无分隔符）也走精确档", () => {
     const folded = canonicalizeRegionPaths(
       artifactOf([BARE_PKG_MARK, `../${DEP_HELPER}`]),
       "pkg",

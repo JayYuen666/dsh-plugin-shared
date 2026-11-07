@@ -1,5 +1,5 @@
 // lib/jsonl 单元测试：JSONL 尾部对半收缩的**纯**决策逻辑。
-// 为什么单独测：SP-D 把两份逐字符同义的磁盘写入实现（ctx-observe 的 metrics 分片、lesson-loop 的
+// 为什么单独测：那一轮整理把两份逐字符同义的磁盘写入实现（ctx-observe 的 metrics 分片、lesson-loop 的
 // lessons 落库）统一成这一份决策，而两家的**触发策略与错误处理刻意不同、不能统一**
 // （lesson-loop 出厂 maxBytes=0 = 永不截断，那是写进它 README 的承诺）。
 // 因此这里只固定"该留什么"，磁盘与异常归各包；期望值由实测算出而非手推。

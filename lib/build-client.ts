@@ -1,9 +1,9 @@
 // lib/build-client.ts —— 插件包 client 侧产物的统一编排：rolldown 把客户端入口打包为
-// CJS（react 家族精确外置），再包进 window.__ModuleLoader__.load({ id, factory }) 外壳。
+// CJS（react 家族精确外置），再包进 window.__ModuleLoader__.load({ id, factory }) 的 外壳 里。
 // id 取 package.json 的 name，与 dsh.client 模块表键一致。
 //
 // 调用方（各包根的 build-client.mjs）声明入口、产物头与包名同源校验；外置规则、
-// store 路径改写与外壳拼装都在这里。rolldown 由调用方注入（各包自己的 devDependency）。
+// store 路径改写与 外壳 拼装都在这里。rolldown 由调用方注入（各包自己的 devDependency）。
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { canonicalizeRegionPaths } from "./canonicalize-region-paths.ts";
@@ -17,9 +17,9 @@ import {
 import type { RolldownFactory } from "./build-artifacts.ts";
 
 /**
- * 宿主 seed 表里 react 家族的全部说明符（客户端产物只外置宿主真给得出的模块）。
+ * 宿主 seed 表里 react 家族的全部模块说明符——客户端产物只外置宿主真给得出的模块。
  * 与宿主客户端自己的模块表同源：那张表里 react 家族只有这四条。外置清单更大的包
- * （宿主外壳基座扩容后）由调用方在 `externals` 里给全量清单。
+ * （宿主 外壳 的 PLATFORM_MODULES，即宿主平台模块表，扩容后）由调用方在 `externals` 里给全量清单。
  */
 export const REACT_RUNTIME_MODULES: readonly string[] = [
   "react",
@@ -87,9 +87,9 @@ export function collapseStorePaths(code: string): string {
  * 判断材料在这里。
  */
 export interface ClientNameContext {
-  /** package.json 的 name（外壳 id 的唯一来源）。 */
+  /** package.json 的 name（外壳 里 id 的唯一来源）。 */
   readonly pkgName: string;
-  /** 改写后的 chunk 正文（未包外壳）。 */
+  /** 改写后的 chunk 正文（尚未包进 外壳）。 */
   readonly body: string;
   /** 读包根下一份源码文件。 */
   readonly readSource: (relative: string) => Promise<string>;
@@ -126,7 +126,7 @@ async function readSourceFile(file: string): Promise<string> {
 }
 
 /**
- * package.json 的 name（外壳 id 用）。必须立即失败：id 写进产物的模块表键，键对不上时宿主
+ * package.json 的 name（外壳 的 id 用）。必须立即失败：id 写进产物的模块表键，键对不上时宿主
  * 不报错、整张设置卡静默不渲染；留一个退化的回退只会让构建与新鲜度检查两端一起通过，缺陷直达
  * 运行时。
  * @param manifest - 解析后的 package.json
@@ -151,9 +151,9 @@ function clientBundleId(manifest: Record<string, unknown>): string {
 /**
  * 客户端外置规则：登记过的精确说明符外置，react 家族里**没登记**的说明符当场失败。
  *
- * 为什么既不静默内联也不前缀放行：外壳注入的 require 只在宿主模块表里查键。前缀放行会
- * 得到一条表里没有的 require（加载期 not in the module table，整张卡片静默不渲染）；而
- * 静默内联会把 node_modules 里那份 React 打进产物、与宿主那份并存，页面里两个 React
+ * 为什么既不悄悄内联也不按前缀放行：外壳 注入的 require 只在宿主模块表里查键。按前缀放行会
+ * 得到一条表里没有的 require（加载期 not in the module table，整张卡片不渲染也不给提示）；而
+ * 悄悄内联会把 node_modules 里那份 React 打进产物、与宿主那份并存，页面里两个 React
  * 实例， hooks 直接报错。两种失败都不在构建期报错，所以这里没有可观察的中间态。
  * 导出给各包的构建脚本复用与测试直接驱动，与构建走同一份判断。
  * @param externals - 外置说明符全量清单（精确匹配）
@@ -210,10 +210,10 @@ export async function buildClientBundle(options: ClientBuildOptions): Promise<st
   let body: string;
   try {
     const { output } = await bundle.generate(generateOptions);
-    // CJS 外壳只包一块：多余 chunk / asset 不写入磁盘，产物要到运行时才因缺模块而报错。
+    // CJS 外壳 只包一块：多余 chunk / asset 不写入磁盘，产物要到运行时才因缺模块而报错。
     const chunk = singleEntryChunk(output, entry);
     // 改写 canonical 必须落在返回值之前：调用方的新鲜度检查逐字节比内存构建与磁盘产物，
-    // 不能只在写入磁盘那一侧做。
+    // 不能只在写盘这一步做。
     body = collapseStorePaths(
       canonicalizeRegionPaths(chunk.code.trimEnd(), options.root, process.cwd()),
     );
@@ -236,7 +236,7 @@ export async function buildClientBundle(options: ClientBuildOptions): Promise<st
     // 会让整个产物语法错误。
     `  id: ${JSON.stringify(pkgName)},`,
     "  factory: (require) => {",
-    // 'use strict' 必须在指令序言里：外壳的两条声明排在 chunk 之前，chunk 自带的
+    // 'use strict' 必须在指令序言里：外壳 的两条声明排在 chunk 之前，chunk 自带的
     // "use strict" 会被顶出序言，整份产物变成 sloppy 模式。
     "    'use strict';",
     "    const module = { exports: {} };",

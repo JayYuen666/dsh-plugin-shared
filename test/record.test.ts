@@ -1,6 +1,6 @@
 // lib/record 单元测试：unknown → Record 的窄化判断与单字段投影。
 // 为什么单独测：这两个判断是从各包逐字相同的重复定义里统一出来的**唯一来源**，
-// 一旦这里的短路顺序被改动，波及面是全仓的 unknown 投影链，
+// 一旦这里的短路顺序被改动，影响范围是全仓的 unknown 投影链，
 // 而各包自己的测试只会间接经过它——四项 100% 阈值要求三个拒绝子句各被判过一次假。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
@@ -72,7 +72,7 @@ describe("fieldOf（从 unknown 投影单个字段）", () => {
   it("跨 realm 判定成立（判据不是 instanceof / 本域 Array）", () => {
     // iframe、vm 上下文、worker 造出来的对象都不是本 realm 的构造器产物。若判据写成
     // value instanceof Object 或 value instanceof Array，这两种形状都会判错，而客户端
-    // 卡片那条腿拿到的正是外来 realm 的载荷。
+    // 卡片那一条路径拿到的正是外来 realm 的载荷。
     const foreignObject: unknown = runInNewContext("({ a: 1 })");
     assert.equal(isRecord(foreignObject), true);
     assert.equal(fieldOf(foreignObject, "a"), 1);
@@ -82,7 +82,7 @@ describe("fieldOf（从 unknown 投影单个字段）", () => {
   });
 });
 
-describe("hasMethods（服务面校验）", () => {
+describe("hasMethods（服务接口校验）", () => {
   it("非 Record 的五种形状全部拒绝", () => {
     for (const value of [null, undefined, 1, "x", []]) {
       assert.equal(hasMethods(value, ["kill"]), false, `不该认 ${String(value)}`);
@@ -93,7 +93,7 @@ describe("hasMethods（服务面校验）", () => {
     assert.equal(hasMethods({ kill: callable, read: "x" }, ["kill", "read"]), false);
   });
 
-  it("全部可调用才算服务面", () => {
+  it("全部可调用才算服务接口", () => {
     assert.equal(hasMethods({ kill: callable, read: callable }, ["kill", "read"]), true);
   });
 
@@ -101,7 +101,7 @@ describe("hasMethods（服务面校验）", () => {
     assert.equal(hasMethods({}, []), true);
   });
 
-  it("原型链的默认成员（Object.prototype 一类）不算服务实现：普通对象冒充不了服务面", () => {
+  it("原型链的默认成员（Object.prototype 一类）不算服务实现：普通对象冒充不了服务接口", () => {
     // 判断是身份（解析到的函数正是 Object.prototype 上那一个才排除），不是「在原型链上」：
     // 类/中间原型上的真实实现照常可识别，cordis 方法挂原型那条关键读取不受影响。
     assert.equal(hasMethods({}, ["toString"]), false);

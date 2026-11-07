@@ -1,4 +1,4 @@
-// 纯函数层的属性面。期望值来自各模块头注写明的契约（配额例外、代理对安全、
+// 纯函数层的属性测试。期望值来自各模块头注写明的契约（配额例外、代理对安全、
 // 绝不抛错、键格式），不从实现派生。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
@@ -88,7 +88,7 @@ describe("truncate 两端的代理对安全", () => {
     );
   });
 
-  it("maxChars ≤ 0 或 NaN ⇒ 空串（两端同口径）", () => {
+  it("maxChars ≤ 0 或 NaN ⇒ 空串（两端同做法）", () => {
     for (const budget of [0, -1, Number.NaN]) {
       assert.equal(truncateEnd("abc", budget), "");
       assert.equal(truncateStart("abc", budget), "");
@@ -185,7 +185,7 @@ const keySegmentListArb = fc.array(fc.stringMatching(/^[a-z][a-z0-9-]{0,10}$/u),
   maxLength: 4,
 });
 
-describe("deriveProjectKey 的注入面性质", () => {
+describe("deriveProjectKey 的注入性质", () => {
   it("输出恒匹配 <stem>-<8 位十六进制> 或 default（POSIX 注入）", () => {
     fc.assert(
       fc.property(keySegmentListArb, (segments) => {

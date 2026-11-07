@@ -82,7 +82,7 @@ function boomSonarjs(): string {
   throw new Error(SONARJS_MISSING);
 }
 
-/** 读一条 JS plugin 的模块面：有的包把 plugin 挂在 default 上，两形都认。 */
+/** 读一条 JS plugin 的模块导出：有的包把 plugin 挂在 default 上，两形都认。 */
 interface PluginModule {
   rules?: Record<string, unknown>;
   configs?: Record<string, { rules?: Record<string, unknown> }>;
@@ -93,7 +93,7 @@ function entryText(entry: ExternalPluginEntry): string {
   return typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
 }
 
-/** 包名各写一次常量：require 那一侧必须是字面量（import/no-dynamic-require），
+/** 包名各写一次常量：`require(...)` 里的包名必须是字面量（import/no-dynamic-require），
  *  但键与 loadPlugin 的调用走常量，避免同一字面量在用例里出现三次触发 no-duplicate-string。 */
 const REGEXP_PLUGIN_ID = "eslint-plugin-regexp";
 const ZOD_PLUGIN_ID = "eslint-plugin-zod";
@@ -325,7 +325,7 @@ describe("关规则依据表要自洽（OFF_JUSTIFICATIONS）", () => {
     expect(Array.isArray(setting) ? setting[1] : undefined).toStrictEqual({
       allowedPrefixes: ["UsageWatch", "CSRF"],
     });
-    // 没报名字时这条设置退回基线的裸 "error"（默认设置不放宽）
+    // 没报名字时这条设置退回基线的不带名字的 "error"（默认设置不放宽）
     expect(severity(makeTestFileOverrides().rules?.["vitest/prefer-lowercase-title"])).toBe(
       "error",
     );

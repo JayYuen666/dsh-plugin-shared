@@ -6,8 +6,8 @@
 // 各有一份**逐字节相同**的副本，而本包 README 的收录标准恰恰是「同一份样板在两处以上逐字相同地
 // 重复才收录进来」——自己给自己开了例外。两份各自漂移的代价已经显现：asRecord 的注释就不一样。
 //
-// 外部化规则（与全部兄弟包同一条）：dependencies / peerDependencies 一律外部化，产物里保留裸
-// 说明符。shared 曾是**唯一**没有 external 选项的 build-host.mjs，理由是「本机运行走源码不走
+// 外部化规则（与全部兄弟包同一条）：dependencies / peerDependencies 一律外部化，产物里保留只写
+// 包名的模块说明符。shared 曾是**唯一**没有 external 选项的 build-host.mjs，理由是「本机运行走源码不走
 // dist」——那句只对了一半：本包是**发布件**，消费方安装的是位于 node_modules 里的 dist/，那边没有
 // 源码可用。不外部化就把官方 truncateWithoutSplittingSurrogatePair 的函数体复制进 shared 的
 // chunk，于是同一进程里官方截断实现有两份身份（宿主一份 + shared dist 一份），而 shared 自己还要
@@ -35,7 +35,7 @@ function asRecord(raw) {
 }
 
 /**
- * 取依赖表里的包名清单（值即外部化说明符）。
+ * 取依赖表里的包名清单（返回值即外部化用的说明符）。
  * @param {Record<string, unknown>} pkgJson
  * @param {string} field
  * @returns {string[]}
@@ -89,7 +89,7 @@ function packageNameOf(id) {
  */
 export async function createIsExternal(root, extraNames = []) {
   const manifestPath = path.join(root, "package.json");
-  // 读不到或不是合法 JSON 时给一条写明文件路径的错误：裸的 SyntaxError 只会说「Unexpected token」，
+  // 读不到或不是合法 JSON 时给一条写明文件路径的错误：不带文件路径的 SyntaxError 只会说「Unexpected token」，
   // 而这个函数是三条构建链的共同前置，报错不写明文件时排查方向会先错到 rolldown 上去。
   let raw;
   try {

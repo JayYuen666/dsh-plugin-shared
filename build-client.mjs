@@ -2,7 +2,7 @@
 /// <reference types="node" />
 // 构建 dist/client.js：共享客户端行的 UMD bundle。消费者只 require
 // `@jayyuen66/dsh-plugin-shared/client`，宿主模块图层按包名提供这一份。
-// 入口与产物路径是手写约定；共用编排仍住在 lib/build-client.ts（本包不能引用自己
+// 入口与产物路径是手写约定；共用编排仍定义在 lib/build-client.ts（本包不能引用自己
 // 尚未发布的 dist/build 面，故直接取源码）。
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";

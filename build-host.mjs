@@ -4,10 +4,10 @@
 // 为什么必须有这一步：Node 对 node_modules 里的 .ts 直接抛
 // ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING（实测），而发布出去的包正是在
 // node_modules 里被 dsh 载入的——官方包入口也一律是编译产物（packages/bundle/base
-// 的 main 就是 lib/index.js）。本仓源码住在 lib/ 下，故产物落 dist/，不与源码混目录。
+// 的 main 就是 lib/index.js）。本仓源码位于 lib/ 下，故产物落 dist/，不与源码混目录。
 // 类型产物：各模块由 tsc -p tsconfig.build.json 出 dist/types/*.d.ts；barrel 的
 // d.ts 在此生成——源码里 `export * from "./record.ts"` 是类型剥离形态所需，原样进
-// d.ts 会让消费方解析不到（.ts 不是可解析的类型说明符），故重写成 ./types/x.js。
+// d.ts 会让消费方解析不到（`.ts` 后缀不是可解析的说明符），故重写成 ./types/x.js。
 // 顶部 node reference：oxlint 类型检查对 .mjs 不自动加载 @types/node，需显式声明
 // 才能解析 node:fs/promises、process、import.meta（否则整文件按 error 类型误报 unsafe）。
 import { mkdir, writeFile } from "node:fs/promises";
@@ -40,7 +40,7 @@ export const facets = [
 ];
 
 /** barrel 之外还要单独出的入口：lib/index.ts 聚合同运行时行为。
- *  `canonicalize-region-paths` 不进 barrel——它是 builder 期的文本后处理代码，塞进根导入面
+ *  `canonicalize-region-paths` 不进 barrel——它是 builder 期的文本后处理代码，塞进根 barrel 的导入名单
  *  会让每个运行时消费方都为它多一次导入；各包 build-*.mjs 按子路径取用。 */
 const entries = [
   "lib/index.ts",
@@ -66,7 +66,7 @@ function barrelTypes() {
 }
 
 /**
- * 落盘项（元组而非数组，Map 构造才拿到 [路径, 文本] 的类型）。
+ * 写到磁盘项（元组而非数组，Map 构造才拿到 [路径, 文本] 的类型）。
  * @param {string} file
  * @param {string} code
  * @returns {[string, string]}
@@ -76,14 +76,14 @@ function artifact(file, code) {
 }
 
 /**
- * 打出全部入口，返回「落盘绝对路径 → 文件文本」。多入口由 rolldown 自动
+ * 打出全部入口，返回「写到磁盘绝对路径 → 文件文本」。多入口由 rolldown 自动
  * code-split，共用实现只落一份 chunk；构建编排模块另起一组 rolldown，产物落 dist/build/
  * （两组之间不共享 chunk，运行期模块不会为构建编排代码多付一个共享 chunk 的字节）。
  * @returns {Promise<Map<string, string>>}
  */
 export async function buildHost() {
   // entryFileNames 用的是 `[name]`：两个入口若解析出同一个 name（如不同目录下的 index.ts），
-  // rolldown 会让后一个覆盖前一个，而 find 出去的是 Map 的键（落盘路径），构造时后写覆盖先写
+  // rolldown 会让后一个覆盖前一个，而 find 出去的是 Map 的键（写到磁盘路径），构造时后写覆盖先写
   // ，于是静默少一件产物。入口清单是手写的，这类重名在改名时才会出现，故显式判一次。
   const allEntries = [...entries, ...buildFacets.map((facet) => `lib/${facet}.ts`)];
   const entryNames = allEntries.map((entry) => path.basename(entry).replace(/\.[^.]+$/u, ""));
@@ -124,10 +124,10 @@ export async function buildHost() {
       throw new Error("rolldown generate returned no chunk output");
     }
     // `//#region` 行的路径由 rolldown 按 process.cwd() 算出，同一份源码有两种字节。改写 canonical
-    // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两侧），写盘那一侧不再是
+    // 落在返回值之前（test/host-freshness.ts 比的是内存 Map 与磁盘 dist 两份），写盘那一步不再是
     // 唯一的规范化点。
     //
-    // 开了 minify 之后这步对本包自己的产物是空转：压缩会剥掉 region 注释，实测本批 chunk 里
+    // 开了 minify 之后这步对本包自己的产物没有实际作用：压缩会去掉 region 注释，实测本批 chunk 里
     // 仍含 "//#region" 字样的那一个只是 canonicalize-region-paths.js 里正则的字面量，不是标记。
     // 保留调用是因为它无成本、且各兄弟包的 build-*.mjs 仍在未压缩的产物上真正依赖它；
     // 万一将来关掉 minify，这一步立刻重新生效，不必回头改这里。

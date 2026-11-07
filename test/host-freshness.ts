@@ -1,4 +1,4 @@
-// test/host-freshness.ts —— host 侧产物新鲜度指纹检查（各包共用，复制式分发，同 client-freshness.ts）。
+// test/host-freshness.ts —— host 侧产物一致性检查（指纹比对）（各包共用，复制式分发，同 client-freshness.ts）。
 // 本包副本形态：只提供**证据**（磁盘 host 产物 vs 当期内存构建产物 + 包名与包根），用例注册留在
 // test/build-host.test.ts 的 describe 里。共享测试数据一旦自行 it()，它就变成用例文件，
 // vitest 的结构类规则（require-hook / consistent-test-it / valid-title）全部落到它上面。
@@ -7,14 +7,14 @@
 // 早就有这道检查（test/client-freshness.ts），host 侧缺这道检查时真实漏过一次：
 // danger-guard/host.js 的生成时间早于 host.ts 的下一次改动——产物已过期，而没有任何检查会报出来。
 // settings.js 由同一份 builder 的另一条导出产出，同样没人核对，所以它进的是同一道检查。
-// mtime 断言在 git clone / touch 下不稳定，故用**内容指纹**：内存构建（build-host.mjs 的纯函数
+// mtime 断言在 git clone / touch 下不稳定，故用**指纹逐字节比对**：内存构建（build-host.mjs 的纯函数
 // 导出，不写入磁盘）vs 磁盘产物逐字节比对。源任何变更未重建，字节必不同，检查即失败。
 //
 // 用法（各包 test/build-host.test.ts 的指纹用例里）：
 //   const evidence = await hostFreshnessEvidence(import.meta.url)
 //   —— 自动定位 ../host.js 与 ../build-host.mjs 的 buildHost()。第二个参数指名「另一条导出 +
 //   另一个产物文件」：danger-guard 的设置半走 builder: buildSettings、artifact: settings.js，
-//   两个产物各自比字节。导出名不在检查这一侧统一，因为改 builder 的导出面比写清选项代价大。
+//   两个产物各自比字节。导出名不在这里统一，因为改 builder 的导出名字比写清选项代价大。
 //
 // 形态自适应：构建函数返回字符串时按单文件逐字节比较；返回「待写入路径 → 正文」的 Map 时
 // （shared 的多入口 dist 产物，它根本不产 host.js，检查不替它硬造一个），两侧都转换成按路径排序的
@@ -97,7 +97,7 @@ function packageNameOf(pkgDir: string): string {
  * @returns 可直接与另一侧逐字节相等的清单文本
  */
 function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolean): string {
-  // 空清单不算通过：零个产物时两侧都转换成 "\n"，逐字节相等的断言恒真，一条永远通过的检查比
+  // 空清单不算通过：零个产物时两侧都转换成 "\n"，逐字节相等的断言永远成立，一条永远通过的检查比
   // 没有检查更坏——它会让人以为多产物形态被覆盖了。builder 交回空 Map 是构建实现坏了。
   if (files.size === 0) {
     throw new Error(
@@ -129,7 +129,7 @@ export async function hostFreshnessEvidence(
   const builder = options.builder ?? DEFAULT_BUILDER;
   const artifact = options.artifact ?? DEFAULT_ARTIFACT;
   const pkgName = packageNameOf(pkgDir);
-  // 动态导入 .mjs 对 TS 为 any，先收窄到调用面再 await（避免 no-unsafe-*）。
+  // 动态导入 .mjs 对 TS 为 any，先收窄到调用处再 await（避免 no-unsafe-*）。
   const mod = (await import(
     pathToFileURL(path.resolve(pkgDir, "build-host.mjs")).href
   )) as unknown as Record<string, (() => Promise<BuiltArtifacts>) | undefined>;

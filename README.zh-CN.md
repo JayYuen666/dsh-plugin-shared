@@ -74,7 +74,7 @@ pnpm add @jayyuen66/dsh-plugin-shared
 import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 ```
 
-终端用户不需要单独安装或启用它：任一消费包安装时都会自动包含它。它缺失时的失败是 `ERR_MODULE_NOT_FOUND`（说明符指向 `@jayyuen66/dsh-plugin-shared/...`），不会静默变成其他行为。本包没有 default 导出；请从 barrel 或子路径使用具名导入。
+终端用户不需要单独安装或启用它：任一消费包安装时都会自动包含它。它缺失时的失败是 `ERR_MODULE_NOT_FOUND`（那条说明符指向 `@jayyuen66/dsh-plugin-shared/...`），不会静默变成其他行为。本包没有 default 导出；请从 barrel 或子路径使用具名导入。
 
 | 要求 | 值 |
 | --- | --- |
@@ -93,12 +93,12 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 - **宿主包写进 `dependencies` 会让消费方的宿主无法工作。** profile 用 `nodeLinker: hoisted` 与 `autoInstallPeers: false` 安装，于是列在 `dependencies` 里的宿主包会被安装成真实目录，与宿主进程已加载的那份并存。`@deepseek-ai/dsh-tools` 的工具运行期调度键是普通 `Symbol`（不是 `Symbol.for`），符号身份按模块实例计算：宿主从副本上读那个键得到 `undefined`，于是每一次原生工具调用都抛错。构建、类型检查与测试在此之前全部通过；这条不变式只能写在 manifest 上。
 - **`@deepseek-ai/dsh-output-retention` 是唯一必需 peer。** 它是值导入（`truncateEnd`），运行期由宿主提供；在 `peerDependenciesMeta` 里明写成 `"optional": false`，不靠"没写就等于必需"，因为没写进那张表对 npm 7+ 就是硬要求。
 - **其余 peer 都是 optional。** 除裸 `@deepseek-ai/dsh`（只声明宿主版本线）外，它们只承载类型声明。`devDependencies` 保存精确的开发线，其中包括本包 PTC 声明所引用的 `@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-util-values`，以及只有对照断言会读其类型的 `@deepseek-ai/dsh-tool-executor-ptc`。profile 不装 peer，所以不会产生副本。
-- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 写同一条窗口，而这条窗口点明两条宿主线：caret 的预发布比较只吃自己那条 patch 元组，单写 `^0.2.1-rc.5` 收不进 `0.2.2-alpha.*`——用本工作区的 semver 实测 `satisfies('0.2.2-alpha.3','^0.2.1-rc.5')` 为 false，带 `{includePrerelease:true}` 才为 true，而宿主自己那道比较正是带这一档。代价是量出来写在这里的：npm 逐条 peer 独立解析，宿主家族每一枚包内部又把自己的那条线精确钉住（`0.2.1-rc` 线上任一成员要求 cordis `~4.0.5`，`0.2.2-alpha.2` 宿主要求 `~4.0.6-alpha.1`，`0.2.2-alpha.3` 要求 `~4.0.6-alpha.2`，`0.2.2-rc.1` 要求 `~4.1.0`），所以消费者把宿主钉在旧那条线时仍可能止步 `ERESOLVE`，同一条树落在最新线上则可解。并集窗口也收得进同一 `0.2.2` 元组里更晚的预发布，例如 `0.2.2-rc.1`；那只是范围语义，不是兼容性取证。本版实际取证的基线是 `0.2.2-rc.1`；dev 钉版与宿主对照断言已同步到这一线。pnpm——本工作区支持、也是宿主 `dsh plugin add` 在用的安装器——两种形状都解得出，只打一条 peer 告警。装载门两边都不受影响。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-rc.1`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.1.0`，peer 范围 `^4.0.5||^4.0.6-alpha.1` 同时覆盖 rc 线与 alpha 线——单独一枚包不存在宿主家族那种混线问题：alpha.2 要求 `~4.0.6-alpha.1`，alpha.3 要求 `~4.0.6-alpha.2`，该范围也收得下 `4.1.0`。cordis 这条并集在 `||` 两侧不带空格；类型面 peer 安装现已按行逐枚读取，dsh 家族窗口保留空格。`test/publish-manifest.test.ts` 分别检查这三件事。
+- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 写同一条窗口，而这条窗口点明两条宿主线：caret 的预发布比较只吃自己那条 patch 元组，单写 `^0.2.1-rc.5` 收不进 `0.2.2-alpha.*`——用本工作区的 semver 实测 `satisfies('0.2.2-alpha.3','^0.2.1-rc.5')` 为 false，带 `{includePrerelease:true}` 才为 true，而宿主自己那道比较正是带这一档。代价是量出来写在这里的：npm 逐条 peer 独立解析，宿主家族每一枚包内部又把自己的那条线精确钉住（`0.2.1-rc` 线上任一成员要求 cordis `~4.0.5`，`0.2.2-alpha.2` 宿主要求 `~4.0.6-alpha.1`，`0.2.2-alpha.3` 要求 `~4.0.6-alpha.2`，`0.2.2-rc.1` 要求 `~4.1.0`），所以消费者把宿主钉在旧那条线时仍可能止步 `ERESOLVE`，同一条树落在最新线上则可解。并集窗口也收得进同一 `0.2.2` 元组里更晚的预发布，例如 `0.2.2-rc.1`；那只是范围语义，不是兼容性取证。本版实际取证的基线是 `0.2.2-rc.1`；dev 钉版与宿主对照断言已同步到这一线。pnpm——本工作区支持、也是宿主 `dsh plugin add` 在用的安装器——两种形状都解得出，只打一条 peer 告警。装载门两边都不受影响。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-rc.1`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.1.0`，peer 范围 `^4.0.5||^4.0.6-alpha.1` 同时覆盖 rc 线与 alpha 线——单独一枚包不存在宿主家族那种混线问题：alpha.2 要求 `~4.0.6-alpha.1`，alpha.3 要求 `~4.0.6-alpha.2`，该范围也收得下 `4.1.0`。cordis 这条并集在 `||` 两侧不带空格；类型上 peer 安装现已按行逐枚读取，dsh 家族窗口保留空格。`test/publish-manifest.test.ts` 分别检查这三件事。
 - 已知上游限制：`@deepseek-ai/dsh-llm` 的声明文件引用了它自己没声明的 `@deepseek-ai/dsh-attachment`。它经 `dsh-session` 传递进来，所以开 `skipLibCheck: false` 的消费方会看到来自那个包的 `TS2307`，不是来自本包。发布出去的 `./lib/tool-events` 声明还引用了 `@deepseek-ai/dsh-util-values`，它经 `dsh-session` / `dsh-tools` 传递进来；开 `skipLibCheck: false` 的消费方同样必须能解析到这个包。
 
 ### shared 的版本下限
 
-消费者的 profile 可以用 pnpm `overrides` 把本包固定在某个版本。固定得低于某个 `./lib/...` 子路径首次出现的版本，宿主启动时就会报 `N entries did not activate` 与 `does not provide an export named ...`：包装得上、永远不加载，而任何单仓 CI 都看不见。要固定版本请先对照本包的 `exports` 与 CHANGELOG。
+消费者的 profile 可以用 pnpm `overrides` 把本包钉在某个版本。钉得低于某个 `./lib/...` 子路径首次出现的版本，宿主启动时就会报 `N entries did not activate` 与 `does not provide an export named ...`：包装得上、永远不加载，而任何单仓 CI 都看不见。要钉版本请先对照本包的 `exports` 与 CHANGELOG。
 
 ### 随包发什么
 
@@ -136,7 +136,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 | `./lib/card-diff` | `diffTouched`：touched 层里哪些字段真的与快照不同，按表单值比较。`undefined`、`null` 与键缺失是同一种值；数组与对象逐元素比较；循环引用也能正常结束 |
 | `./lib/card-ui` | 客户端专用设置卡组件：`CardForm`、`Section`、`FieldGrid`、`StatusBar`、`Field`、`FieldLabel`、`InfoTip`、`ToggleField`、`NumberField`、`TextField`、`ListField`、`SelectField`、`SaveBar`、`splitHint` 与样式字符串 `CARD_UI_CSS`。只用 `createElement`；`react` 是 optional peer，该子路径永不进根 barrel。只用 React 18 运行时 API（`useId`、`useState`、`useEffect`、refs） |
 | `./client` | 浏览器客户端行：宿主模块图只提供一份的 `__ModuleLoader__` bundle。消费者外置这个说明符，并在自己的 patch 里以无 id 条目启用这一行 |
-| `./client-node` | 同一客户端面的 Node/ESM 形态，供测试与类型感知的 Node 消费方使用 |
+| `./client-node` | 同一份客户端接口的 Node/ESM 形态，供测试与类型感知的 Node 消费方使用 |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`：cwd → `尾目录名-<sha256(norm) 前 8 位 hex>`；非字符串、空串或归一后的根目录归入 `default`。`realpathSync` 会解析软链接，失败则退回解析后的路径。Windows 的 `\` 与 `/` 产生同一个键 |
 | `./lib/locale` | `Locale`（官方 `BuiltInLocaleId` 的别名）、`DEFAULT_LOCALE`、`resolveLocale`、`resolveLocalePreference`、`messagesFor`、`MessagesCatalog`，加 `LOCALE_SETTINGS_NAMESPACE` 与 `LOCALE_PREFERENCE_FIELD`。只负责宿主侧字典；客户端用官方 locale 包 |
 | `./lib/lesson-bus` | `settleLessonCall`：同步抛错与异步 rejection 归到同一个 `onFailure` 出口。函数型 thenable 也算可等待；`onFailure` 自己抛错或拒绝时被统一处理，不会分成"抛给调用方"或"未处理拒绝"两种结果 |

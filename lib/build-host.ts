@@ -70,7 +70,7 @@ export interface HostArtifact {
 }
 
 /**
- * 取依赖表里的包名清单（值即外部化说明符）。
+ * 取依赖表里的包名清单（返回值即外部化用的说明符）。
  *
  * 两类坏形状都立即失败，不折成空集静默继续：表存在但不是对象时，外部化名单会整表失效；
  * 条目值不是字符串时，那个包会被静默少外部化一个。两种形态的症状都只出现在宿主运行期
@@ -125,7 +125,7 @@ function externalNamesOf(
  * `moduleIds` 必须是**非空的字符串数组**。
  *
  * 只判「是数组」会让两种坏形状通过检查：空清单（下游「依赖一个都没被内联」这条结构性判断
- * 没有样本，于是恒真）与非字符串元素（按 `node_modules/` 切包名的那一侧会静默落空）。
+ * 没有样本，于是永远成立）与非字符串元素（按 `node_modules/` 切包名的那条分支会静默落空）。
  * @param raw - chunk 上的 moduleIds
  * @returns 是否为非空字符串数组
  */
@@ -160,7 +160,7 @@ export async function buildHostEntries(options: HostBuildOptions): Promise<HostA
   const minify = options.minify ?? false;
   const comments = options.comments ?? !minify;
   // 只在偏离缺省时下发这两个键：rolldown 对「显式缺省值」与「省略键」并不承诺逐字节
-  // 同形，而消费方的产物新鲜度检查是逐字节比对——省略键是各仓旧脚本的实际调用形状。
+  // 同形，而消费方的产物一致性检查是逐字节比对——省略键是各仓旧脚本的实际调用形状。
   const generateOptions = {
     format: "esm",
     ...(minify ? { minify: true } : {}),

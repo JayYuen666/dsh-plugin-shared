@@ -43,11 +43,11 @@ const isExternal = await createIsExternal(root, FACET_PEERS);
 const configFacets = ["oxlint.base", "vitest.base"];
 
 /**
- * 打出配置模块，返回「落盘绝对路径 → 文件文本」。
+ * 打出配置模块，返回「写到磁盘绝对路径 → 文件文本」。
  * @returns {Promise<Map<string, string>>}
  */
 export async function buildConfig() {
-  // mkdir 放在导出函数内而不是 main()：buildConfig 是导出面，被测试或别的脚本直接调用时
+  // mkdir 放在导出函数内而不是 main()：buildConfig 是对外导出的函数，被测试或别的脚本直接调用时
   // 目录不存在会让 writeFile 报 ENOENT，而「产物落在哪」是这个函数自己的约定。
   await mkdir(outDir, { recursive: true });
   const bundle = await rolldown({

@@ -1,4 +1,4 @@
-// test/build-types-facet.test.ts —— 声明产物编排（lib/build-types.ts）的行为面。
+// test/build-types-facet.test.ts —— 声明产物编排（lib/build-types.ts）的行为测试。
 //
 // 说明符改写是纯函数，负形状（字符串字面量类型、.d.ts 自身后缀、跨行、mts/cts 对侧）逐条
 // 固定；buildDeclarations 用真 tsc 跑一遍最小测试数据（成功换目录、失败保住上一轮产物），
@@ -27,7 +27,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     ...actual,
     execFileSync: ((...args: Parameters<typeof actual.execFileSync>) => {
       if (execPlan.rawThrow) {
-        // oxlint-disable-next-line eslint/no-throw-literal typescript/only-throw-error -- 刻意抛非 Error 形态：runTool 的形态守卫需要这一侧的用例。
+        // oxlint-disable-next-line eslint/no-throw-literal typescript/only-throw-error -- 刻意抛非 Error 形态：runTool 的形态守卫需要走到这一分支的用例。
         throw "raw exec failure";
       }
       return actual.execFileSync(...args);
@@ -191,7 +191,7 @@ describe("buildDeclarations", () => {
     }
   });
 
-  it("失败：草稿被清，上一轮 types/ 原样保留", async () => {
+  it("失败：scratch 目录被清掉，上一轮 types/ 原样保留", async () => {
     const root = await typesFixture();
     // 造一个必然的类型错误：导入不存在的成员。
     await writeFile(

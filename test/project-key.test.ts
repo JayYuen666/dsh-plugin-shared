@@ -28,7 +28,7 @@ function legacyKey(cwd: string): string {
 const noFs = { realpath: (target: string): string => target };
 
 /**
- * 恒等 realpath + POSIX 那一侧的整条分支。字面量键锚的是消费方在 POSIX 上生成的键，
+ * 恒等 realpath + POSIX 上的整条分支。字面量键锚的是消费方在 POSIX 上生成的键，
  * 所以判断必须显式要求 POSIX 解析，否则 runner 一换平台就不是同一件事了。
  */
 const posixKey = { ...noFs, sep: path.posix.sep };
@@ -42,7 +42,7 @@ function winPath(...segments: string[]): string {
   return segments.join(path.win32.sep);
 }
 
-/** Windows 那一侧的整条分支：恒等 realpath + win32 字形与解析。 */
+/** Windows 上的整条分支：恒等 realpath + win32 字形与解析。 */
 const winKey = { ...noFs, sep: path.win32.sep };
 
 /** 字面量断言里重复出现的两个入参路径（同一条键的多次求值，不是两个不同用例）。 */
@@ -64,7 +64,7 @@ describe("deriveProjectKey", () => {
   });
 
   it("不注入 sep：走 runner 自己的路径语义", () => {
-    // 消费方生产上就是这么调的（不带 opts）：默认臂必须与显式要 runner 分隔符同键。
+    // 消费方生产上就是这么调的（不带 opts）：默认分支必须与显式要 runner 分隔符同键。
     // 两侧 realpath 一边原生、一边恒等却仍相等，靠的正是「文件系统状态不参与键计算」。
     expect(deriveProjectKey(ABSENT_PATH)).toBe(
       deriveProjectKey(ABSENT_PATH, { ...noFs, sep: path.sep }),

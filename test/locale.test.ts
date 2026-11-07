@@ -145,7 +145,7 @@ describe("messagesFor", () => {
   });
 });
 
-describe("升级面：resolveLocale 的可认集合必须跟着官方 LOCALE_IDS 走", () => {
+describe("升级兼容：resolveLocale 的可认集合必须跟着官方 LOCALE_IDS 走", () => {
   it("官方 LOCALE_IDS 里每一门语言都能被 resolveLocale 认出来", () => {
     // 这条是本模块唯一真正的「宿主加语言」防线。现状：`Locale` 类型取自官方
     // `BuiltInLocaleId`（所以宿主加一门语言时，`MessagesCatalog` 会逼所有消费方补上那门
@@ -158,8 +158,8 @@ describe("升级面：resolveLocale 的可认集合必须跟着官方 LOCALE_IDS
     // 的**运行期**依赖（本文件头为另两个常量刻意避开了这件事）。改成测试固定，让升级时这道
     // 检查**失败**，由人决定「支持新语言」还是「明确不支持」，而不是静默取不到。
     // LOCALE_IDS 官方声明成元组（当前 `readonly ["zh", "en"]`），宿主加语言时类型跟着变成
-    // 三元组，所以下面的循环**不可能空转**——不需要再加一条长度断言（那条会被
-    // typescript/no-unnecessary-condition 判成恒真）。
+    // 三元组，所以下面的循环**不可能一次都不执行**——不需要再加一条长度断言（那条会被
+    // typescript/no-unnecessary-condition 判成永远成立）。
     for (const id of LOCALE_IDS) {
       // 主语言子标签写法同样要落位（en-US / zh-Hans-CN 都归到主语言）。
       assert.equal(resolveLocale(id), id, `官方支持的 ${id} 却选不中`);

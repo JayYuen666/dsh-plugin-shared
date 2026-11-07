@@ -25,7 +25,7 @@ const CLIENT_SURFACE = [
 ];
 
 describe("shared 客户端行", () => {
-  it("入口自己导出 Cordis 插件面与全部客户端具名", async () => {
+  it("入口自己导出 Cordis 插件接口与全部客户端具名", async () => {
     const mod = (await import("../lib/client-entry.ts")) as Record<string, unknown>;
     expect(mod["name"]).toBe("@jayyuen66/dsh-plugin-shared");
     expect(mod["apply"]).toBeTypeOf("function");

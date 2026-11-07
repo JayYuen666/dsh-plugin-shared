@@ -41,7 +41,7 @@ export interface LogRecord {
 }
 
 /** 本条用例接管到的日志：数组身份常驻（每条用例清空而不是换一份，
- *  换引用会让 `logged()` 读到旧数组——原来是模块级 `let`，被 require-hook 判成裸赋值）。 */
+ *  换引用会让 `logged()` 读到旧数组——原来是模块级 `let`，被 require-hook 判成不带声明的赋值）。 */
 const records: LogRecord[] = [];
 const originals = new Map<LogLevel, (...args: unknown[]) => void>();
 

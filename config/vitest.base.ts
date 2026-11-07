@@ -36,17 +36,17 @@ type CoverageOverride = Omit<Partial<CoverageConfig>, "include">;
 export interface PackageVitestOptions {
   /** `coverage.include` —— 本包该被统计的源文件（各包只有这里不同）；空数组/空串在工厂即抛。 */
   coverageInclude: string[];
-  /** 覆盖率覆盖项：逐键合并到公共面。要例外就在这里写，不要在 `test` 里塞 `coverage`。 */
+  /** 覆盖率覆盖项：逐键合并到公共配置。要例外就在这里写，不要在 `test` 里塞 `coverage`。 */
   coverage?: CoverageOverride;
   /** 追加/覆盖 test 字段（少用；出现即应在包内配置里写明为什么）。 */
   test?: PackageConfig["test"];
 }
 
-/** 公共覆盖率面；`include` 在工厂里由 `coverageInclude` 填入。 */
+/** 公共覆盖率配置；`include` 在工厂里由 `coverageInclude` 填入。 */
 const COVERAGE_BASE: CoverageConfig = {
   provider: "v8",
   exclude: [
-    // 两套前缀并存：裸前缀按配置所在根匹配，`**/` 前缀覆盖嵌套目录里的同名树。
+    // 两套前缀并存：不带 `**/` 的前缀按配置所在根匹配，`**/` 前缀覆盖嵌套目录里的同名树。
     "test/**",
     "node_modules/**",
     "**/test/**",
@@ -91,7 +91,7 @@ export function definePackageConfig(options: PackageVitestOptions): PackageConfi
   }
   return defineConfig({
     // 客户端行在浏览器里是 `__ModuleLoader__` UMD，Node 测试直接执行会在 window 处抛错。
-    // 测试侧把公开说明符映射到同一份 ESM 入口；宿主仍从 exports["./client"].default 取 UMD。
+    // 测试侧把公开的模块说明符映射到同一份 ESM 入口；宿主仍从 exports["./client"].default 取 UMD。
     resolve: {
       alias: {
         "@jayyuen66/dsh-plugin-shared/client": "@jayyuen66/dsh-plugin-shared/client-node",

@@ -11,7 +11,7 @@ on:
   # 但「上周没跑」不等于「上周全绿」，读结论时别把它当连续证据。
   schedule:
     - cron: "37 3 * * 1"
-# 同一分支上后到的提交取消前一个。发布用的是另一套口径（publish.yml 的
+# 同一分支上后到的提交取消前一个。发布用的是另一套规则（publish.yml 的
 # cancel-in-progress: false）——发布不能中途取消。
 # 组的键里带 event_name：周度漂移检测与 main 上的 push 都落在 refs/heads/main 上，
 # 只按 ref 分组会让后到的把先到的取消掉，而周度那一跑是「上游变了没有」的唯一信号，
@@ -20,14 +20,14 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
-# 门槛只需要读代码。写成白名单而不是省略：省略会拿到仓库默认权限，而默认可能是读写。
+# 这一道门槛只需要读代码。写成白名单而不是省略：省略会拿到仓库默认权限，而默认可能是读写。
 permissions:
   contents: read
 # pnpm 取具体补丁版本而不是主版本 12：`version: 12` 让每次运行拿上游最新的 12.x，补丁差在安装树的
 # 解法上是可观察的行为差异（本族各仓 cordis.patch.yml 就记着 pnpm 某个小版本的 add 缺陷）。取值与
-# 伞根 packageManager 同源，也是各仓 lockfile 当期由之生成的那一枚。口径：九仓 CI 都在 workflow 级
+# 伞根 packageManager 同源，也是各仓 lockfile 当期由之生成的那一枚。规则：九仓 CI 都在 workflow 级
 # env 里写这枚字面值；唯一例外是 dsh-lesson-loop，它的 package.json 自带 packageManager，由
-# pnpm/action-setup 自己读，再写 env 就成了两份真源。
+# pnpm/action-setup 自己读，再写 env 就成了两份唯一来源。
 env:
   PNPM_VERSION: 12.11.2
 jobs:
@@ -58,17 +58,41 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
       # registry-url 留空：本仓 CI 不发布，装依赖走包自己的 .npmrc（@jayyuen66 指向公共 npm）。
-      # 配上 registry-url 会让 setup-node 生成一份用户级 .npmrc，把 CI 的解析口径改成和开发者不一样。
+      # 配上 registry-url 会让 setup-node 生成一份用户级 .npmrc，把 CI 的解析规则改成和开发者不一样。
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+      # Windows runner 的默认 shell 是 pwsh：pwsh 把 pnpm 解析成 .ps1 垫片时，pnpm 步会
+      # 零输出、秒退 0 而结论 success。本仓的 pnpm 步显式走 bash；这一步在每一格先把
+      # 解析到的 pnpm 路径与版本打出来，作为「工具就位」的正向证据。
+      - name: pnpm 可用性
+        shell: bash
+        run: |
+          command -v pnpm
+          pnpm --version
       # --frozen-lockfile：lockfile 与 package.json 不一致时直接失败，而不是在 CI 里静默改一份
       # lockfile 后继续跑——那样绿的是「CI 现场解出来的那棵树」，不是仓库里这一份。
-      - run: pnpm install --frozen-lockfile
-      # Windows 那一格是给 lib/project-key.ts 的分隔符归一兜底的：本机跑不到 win32 的
+      - shell: bash
+        run: pnpm install --frozen-lockfile
+      # Windows 那一格是给 lib/project-key.ts 的分隔符归一后备的：本机跑不到 win32 的
       # path.sep，注入 sep 只能测到纯字符串那半边，真实平台行为要在这台 runner 上才成立。
-      - run: pnpm run check
+      - shell: bash
+        env:
+          NO_COLOR: "1"
+        run: |
+          set -o pipefail
+          pnpm run check 2>&1 | tee "$RUNNER_TEMP/gate.log"
+      # 假绿的形态是「格子 success 但什么都没跑」（pwsh + pnpm 的历史实测）。判据落在门禁
+      # 本该产出的行上：没有 vitest 的测试汇总行就是没真跑，这里把红补上。不带 if：
+      # 门禁真红时本步不执行，不盖住真正的失败原因。
+      - name: 断言门禁真跑出测试
+        shell: bash
+        run: |
+          if ! grep -q "Test Files" "$RUNNER_TEMP/gate.log"; then
+            echo "::error::门禁日志里没有 vitest 测试汇总行——判定步骤可能没有真跑"
+            exit 1
+          fi
       # 门禁不该改写仓库内容。只在 ubuntu 格判：win32 上 core.autocrlf 会让检出本身带上
       # CRLF，那与门禁无关。
       # 覆盖率只在一次运行的日志里滚一遍就没了，翻起来费劲。落成产物之后，
@@ -99,7 +123,7 @@ jobs:
 
       # 运行页顶部的摘要：把结果留在这一页，不必点进每一步的日志里找。
       # 它必须排在 job 的最后一步：job.status 在执行到那一步时才求值，后面若还有判定步骤，
-      # 后续步骤失败而摘要早已写成 success——那一行会成为唯一的结论面，且是错的。
+      # 后续步骤失败而摘要早已写成 success——那一行会成为唯一的结论，且是错的。
       - name: 运行摘要
         if: always()
         # 脚本体是 bash 写法（`{ …; } >> "$GITHUB_STEP_SUMMARY"`）；矩阵含 windows 格，
@@ -164,14 +188,14 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/probe
-          # 两个 config facet 的产物顶层分别 import `oxlint` / `vitest/config`——它们是消费方
-          # 自备的工具链（本包不再声明为 peer，见 README 的 config 段），探针侧必须先装，
+          # config 目录下两份产物的顶层分别 import `oxlint` / `vitest/config`——它们是消费方
+          # 自备的工具链（本包不再声明为 peer，见 README 的 config 段），探测脚本这边必须先装，
           # 否则缺包报的是 execNotFound 那种形状，会把「清单漏了入口」伪装成别的故障。
           npm install -D oxlint vitest --no-audit --no-fund
           # `vitest/config` 的引擎住在 vite 里，而 vite 把原生 binding 挂在 rolldown 的**可选平台依赖**上。
           # 探针是分次加依赖的：装 tarball 那一次已经写下 package-lock，之后再进来的传递依赖不再评估可选
           # 平台包（npm/cli#4828），于是 `@rolldown/binding-<平台>` 缺席，下面那条逐子路径 import 停在
-          # "Cannot find native binding" —— 那是探针自己的安装形状，不是发布面缺入口。
+          # "Cannot find native binding" —— 那是探测脚本自己的安装形状，不是发布产物缺入口。
           # 按 vite 自己声明的那条范围把 rolldown 提成直接依赖，同一次解析就会带上本机 binding。范围读自
           # 装进来的那份 vite，不在这里抄一份版本。本机实测两个方向：先造出缺席态（--omit=optional）时
           # `./config/vitest.base` 报的正是同一行错误；提成直接依赖后 binding 落进树里，该子路径装载通过。
@@ -179,20 +203,20 @@ jobs:
           npm install -D "rolldown@${rolldown_range}" --no-audit --no-fund
           # binding 取不到就在这一步报，别让它伪装成下一刀的入口缺陷。
           node -e "import('rolldown').then(function(){console.log('rolldown binding 可用')},function(e){console.error(e);process.exit(1)})"
-          # `./lib/card-ui` 是客户端子面，产物的顶层静态 import `react`；react 是 optional peer，
+          # `./lib/card-ui` 是客户端子路径，产物的顶层静态 import `react`；react 是 optional peer，
           # npm 不会自动装。探针按消费者实际提供的宿主运行时装上它，否则这一条子路径会以
-          # ERR_MODULE_NOT_FOUND 假红，看起来像发布面缺入口。
+          # ERR_MODULE_NOT_FOUND 误报，看起来像发布产物缺入口。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           npm install -D "react@${react_range}" --no-audit --no-fund
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
-          // 名单取自装进来的那份产物自己的 exports，不在这里再抄一份：抄来的清单与发布面是
-          // 两个真相，增删切面时工作流会静默落后，探针就再也看不见漏项。
+          // 名单取自装进来的那份产物自己的 exports，不在这里再抄一份：抄来的清单与发布产物是
+          // 两个真相，增删这些产物时工作流会静默落后，探测脚本就再也看不见漏项。
           const manifest = (await import(NAME + "/package.json", { with: { type: "json" } })).default;
           // 按**目标形态**分档，不按名字分档：`.js` 那档按 ESM 装载，`.json` 那档是给 tsc
-          // `extends` 读的纯 JSON（`./config/tsconfig*.json`），裸 import() 它会以
-          // ERR_IMPORT_ATTRIBUTE_MISSING 失败——那是探针自己的写法问题，不是发布面坏了。
-          // 两档之外的目标形态直接红：静默跳过等于把新形态的入口从不检查。
+          // `extends` 读的纯 JSON（`./config/tsconfig*.json`），不带 attribute 的 import() 它会以
+          // ERR_IMPORT_ATTRIBUTE_MISSING 失败——那是探测脚本自己的写法问题，不是发布产物坏了。
+          // 两档之外的目标形态一律判失败：跳过不报错，新形态的入口就从来没被检查过。
           const jsSubs = [];
           const jsonSubs = [];
           for (const [key, spec] of Object.entries(manifest.exports)) {
@@ -227,16 +251,16 @@ jobs:
           set -euo pipefail
           cd /tmp/probe
           npm install -D typescript@7.0.2 @types/node@26.6.3 --no-audit --no-fund
-          # `./lib/card-ui` 的 .d.ts 引 `react` 类型；react 包不自带 .d.ts，类型面必须另装
+          # `./lib/card-ui` 的 .d.ts 引 `react` 类型；react 包不自带 .d.ts，类型声明要另装
           # @types/react，否则 surface.ts 会对这份声明报 TS2307。
           npm install -D @types/react@19.3.0 --no-audit --no-fund
-          # 类型面的 peer 必须现量装齐再判：本包把 5 个只承载类型的 @deepseek-ai/* 声明为
+          # 只承载类型的 peer 必须按当场读到的清单装齐再判：本包把 5 个这样的 @deepseek-ai/* 声明为
           # optional peer，npm 于是不装它们，而 dist/**/*.d.ts 直接引它们的类型 ⇒ 裸装下 ① 收到
           # 7 条指向**本包自己** .d.ts 的 TS2307（"dsh-plugin-shared"这三个词命中的是文件路径，
           # 不是外部包名）、② 因类型退化成 any 收不到 TS2322。实测：装齐这几个 peer 后两支都转绿。
-          # 清单不手抄：只取「产物 .d.ts 里引到 且 package.json 里声明过」的交集——未声明的引用
+          # 清单不照抄：只取「产物 .d.ts 里引到 且 package.json 里声明过」的交集——未声明的引用
           # 因此装不进来，这道门原本要抓的"未声明依赖导致退化"照样有牙。宿主包与只作值导入的
-          # dsh-output-retention 都不在这个交集里，所以探针的安装面不因此变大。
+          # dsh-output-retention 都不在这个交集里，所以探测脚本装出来的依赖树不因此变大。
           # 清单不写成空格分隔：范围本身可能带空白（`^a||^b`），那样按空白切会把一枚说明符拆成多个参数。
           peers=$(node --input-type=module -e '
           import { readFileSync, readdirSync } from "node:fs";
@@ -260,7 +284,7 @@ jobs:
           console.log(install.join("\n"));
           ')
           echo "类型面 peer 现量（产物引到 ∩ 清单声明过，一行一枚）：${peers}"
-          # 按行读进数组再按元素展开：裸 $peers 同时受分词与 glob 影响，且会触发 SC2086。
+          # 按行读进数组再按元素展开：不加引号的 $peers 同时受分词与 glob 影响，且会触发 SC2086。
           # 上方已断言它非空，所以不存在「空数组 ⇒ 没有包名」的情况。
           mapfile -t peer_args <<< "$peers"
           npm install -D "${peer_args[@]}" --no-audit --no-fund
@@ -268,9 +292,9 @@ jobs:
           # `vitest/config`——那是消费方自备的工具链（本包刻意不声明为 peer）。上一步「逐子路径
           # import」已经装过，这里再写一次是幂等的：不把"这一步必须在另一步之后跑"变成隐含前提。
           npm install -D oxlint vitest --no-audit --no-fund
-          # ① 得覆盖**整个**公共类型面，不能只判 consumer.ts 引到的那几份 .d.ts：实测把一条未声明
-          # 依赖插进 dist/types/text.d.ts，这一整步仍然 exit 0（绿着放过了）。切面清单同样不手抄，
-          # 从装进来的那份 exports 现量取，分档纪律与「逐子路径 import」一致：`.json` 那两档是给
+          # ① 得覆盖**全部**公共类型声明，不能只判 consumer.ts 引到的那几份 .d.ts：实测把一条未声明
+          # 依赖插进 dist/types/text.d.ts，这一整步仍然 exit 0（照样报通过）。产物清单同样不照抄，
+          # 从装进来的那份 exports 当场读出来取，分档纪律与「逐子路径 import」一致：`.json` 那两档是给
           # tsc `extends` 读的纯 JSON、不是模块，不进 program。
           node --input-type=module -e '
           import { writeFileSync } from "node:fs";
@@ -305,7 +329,7 @@ jobs:
           # 必须是 bash **数组**：写成带引号的字符串再未加引号展开，IFS 会按空格切开，
           # 第一个 token 变成 `(--noEmit`、最后一个变成 `--ignoreConfig)`，tsc 立刻 TS5023
           # 中止、**一个文件都没编译**。那样两道判定同时失真：上面那道 grep 必然无命中而空过，
-          # 下面那道因拿不到 TS2322 而恒真 → job 必红，且报的是「类型退化成 any」这种
+          # 下面那道因拿不到 TS2322 而永远成立 → job 必红，且报的是「类型退化成 any」这种
           # 指向错误方向的诊断。数组 + "${base[@]}" 才是逐槽位传参。
           base=(--noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2024 --types node --ignoreConfig)
           # 两道判定都**先捕获输出再匹配**，不写成 `tsc … | grep`：
@@ -316,12 +340,12 @@ jobs:
           #
           # ① 本包自己的声明文件不得再有 TS2307（未声明的类型依赖）。这里必须 skipLibCheck=false：
           #    只有关掉它，tsc 才会走进去看本包 .d.ts 内部那条 import。program 里同时放 surface.ts
-          #    （上面按 exports 现量生成的全部 .js 切面）——只判 consumer.ts 引到的那几份会漏掉其余切面。
+          #    （上面按 exports 当场读出来生成的全部 .js 产物）——只判 consumer.ts 引到的那几份会漏掉其余产物。
           consumer_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck false consumer.ts surface.ts 2>&1) || true
           if printf '%s\n' "$consumer_out" | grep -q 'dsh-plugin-shared'; then
             echo "本包声明文件仍有未解析的类型依赖"; exit 1
           fi
-          # ② 退化探针：公共类型若因未声明的依赖退化成 any，非法入参就拦不住了。
+          # ② 退化探测：公共类型若因未声明的依赖退化成 any，非法入参就拦不住了。
           #    这道是 skipLibCheck **true**（布尔开关不带值即 true）——与 ① **不同档**，
           #    故注释不写「同一档」：这里只求入参被判死，不需要看 .d.ts 内部。
           degrade_out=$(./node_modules/.bin/tsc "${base[@]}" --skipLibCheck degrade.ts 2>&1) || true
@@ -335,15 +359,15 @@ jobs:
           mkdir -p /tmp/probe-pn && cd /tmp/probe-pn
           npm init -y >/dev/null
           pnpm add "$tarball"
-          # 客户端子面静态 import `react`；optional peer 在 pnpm 下同样不会自动装。
+          # 客户端子路径静态 import `react`；optional peer 在 pnpm 下同样不会自动装。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           pnpm add -D "react@${react_range}"
           # 不能只停在「装上了」：publish.yml 真正用的发布器是 pnpm，npm 侧那套逐子路径
-          # import 与消费方类型探针在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
+          # import 与消费方类型探测在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
-          // 只跑 lib 面：config 两面要消费方自备 oxlint / vitest 工具链，本目录没装（上面
-          // 那条 npm 侧探针是专门装了才跑的）。名单同样读自产物的 exports。
+          // 只跑 lib 目录：config 那两份要消费方自备 oxlint / vitest 工具链，本目录没装（上面
+          // npm 侧那次探测是专门装了才跑的）。名单同样读自产物的 exports。
           const manifest = (await import(NAME + "/package.json", { with: { type: "json" } })).default;
           const subs = Object.keys(manifest.exports).filter((s) => s.startsWith("./lib/"));
           if (subs.length === 0) throw new Error("exports 的 lib 面为空，这一档探针等于没跑");
@@ -356,7 +380,7 @@ jobs:
           # 这个目录是 pnpm 管的（上面刚 `pnpm add` 过），装 devDep 也得用 pnpm：
           # 实测在 pnpm 布局的项目里跑 `npm install -D` 会以
           # "Cannot read properties of null (reading 'matches')" 崩掉——那是 npm 读不懂
-          # pnpm 留下的 node_modules 树，与本包无关，但足以让这一档假红。
+          # pnpm 留下的 node_modules 树，与本包无关，但足以让这一档误报。
           pnpm add -D typescript@7.0.2 @types/node@26.6.3
           cat > probe.ts <<'TS'
           import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
@@ -369,7 +393,7 @@ jobs:
   # 来源证明是给「这次运行打出来的这份产物」出的第三方可验凭据，不是多一步验证：
   # 签在 PR 上，那张证明看起来属于本仓，指向的却是 PR 里 prepack 脚本产出的字节。
   # 它也不能靠在同一 job 里给某一步加 if 来做——id-token 与 attestations 是 job 级权限，
-  # 挂上去就等于 PR 也拿到了写入能力，权限面不会因为某一步被跳过而收窄。所以拆成独立 job。
+  # 挂上去就等于 PR 也拿到了写入能力，权限范围不会因为某一步被跳过而收窄。所以拆成独立 job。
   attest:
     needs: install-matrix
     if: github.event_name != 'pull_request'
@@ -443,7 +467,7 @@ jobs:
             "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz"
           printf '%s  %s\n' "$sha256" /tmp/actionlint.tar.gz | sha256sum -c -
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
-          # -ignore SC2016：探针脚本刻意用单引号包住 JS（脚本体里有 JS 模板串，
+          # -ignore SC2016：探测脚本刻意用单引号包住 JS（脚本体里有 JS 模板串，
           # 交给 shell 展开就坏了）。这是 shellcheck 的误报，而 shellcheck 指令在
           # 跨行单引号构造上不被采信（已实测），所以只忽略这一条规则。
           # shell 先把 glob 展开，再把文件清单交给它。

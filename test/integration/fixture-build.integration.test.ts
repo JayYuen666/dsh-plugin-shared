@@ -52,7 +52,7 @@ async function makeFixture(): Promise<Fixture> {
     "utf8",
   );
   await writeFile(path.join(root, "src", "data.json"), JSON.stringify({ count: 7 }), "utf8");
-  // 客户端入口：React 运行时是缺省外置面（REACT_RUNTIME_MODULES）。
+  // 客户端入口：React 运行时在默认的外置名单里（REACT_RUNTIME_MODULES）。
   await writeFile(
     path.join(root, "client-entry.ts"),
     `import { createElement } from "react";\nexport const el = createElement("div");\n`,
@@ -84,7 +84,7 @@ describe("真 rolldown 的 fixture 构建链", () => {
       // 外部化：裸说明符原样保留（外部名单内的包名一旦内联即缺陷）。
       assert.ok(artifact.code.includes("some-external-dep"), "依赖未外部化");
       assert.ok(artifact.code.includes("some-optional-dep"), "可选依赖未外部化");
-      // 无残缺的相对 TS 说明符（./x.ts 残留是构建回归的典型形状）。
+      // 无残缺的相对 `.ts`说明符（./x.ts 残留是构建回归的典型形状）。
       assert.equal(
         /from\s+["']\.\.?\/[^"']*\.ts["']/u.test(artifact.code),
         false,

@@ -1,7 +1,7 @@
 // test/publish-manifest.test.ts —— 发布形态检查：入口必须**与发布器无关**地可解析。
 //
 // 为什么值得一条测试：其余检查都在源码侧（内存构建 vs 磁盘 dist），而真实故障都发生在装出去
-// 之后。两类问题都在那一侧：入口指向没随包发出去的文件；入口覆盖写在 `publishConfig` 里——
+// 之后。两类问题分别是：入口指向没随包发出去的文件；入口覆盖写在 `publishConfig` 里——
 // pnpm 发布时把它合并到顶层，npm 不合并，同一个仓库换个发布器就发出一个 import 必失败的包，
 // 而构建全部通过、测试全部通过。这里不模仿任何发布器的实现，而是把不变式写成断言：**顶层入口自己就
 // 完整可解析，且 publishConfig 不再承载入口字段**，于是两套发布器语义的差恒为空。
@@ -33,10 +33,10 @@ const FORBIDDEN_IN_ARTIFACTS: readonly RegExp[] = [
   /\b(?:quality-gate|danger-guard|zvec-grep|ocr-review|lesson-loop|session-rescue|ctx-observe|dir-prep|memory-insight|plugin-hot-reload)\b/u,
 ];
 
-/** `publishConfig` 里唯一允许出现的字段：可见性与源，都不是入口面。 */
+/** `publishConfig` 里唯一允许出现的字段：可见性与源，都不是入口字段。 */
 const ALLOWED_PUBLISH_CONFIG = new Set(["access", "registry"]);
 
-/** package.json 里与入口面有关的那部分形状；其余字段本测试不关心。 */
+/** package.json 里与入口有关的那部分形状；其余字段本测试不关心。 */
 interface Manifest {
   readonly main?: string;
   readonly types?: string;
@@ -326,7 +326,7 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     // `pnpm add @deepseek-ai/dsh-session` 装成远古版本」这件事不可能发生的最小条件；
     // 一旦放宽成 `^`/`~`，宿主某天发 0.3.0 就会自动跟上去，而插件与宿主 ABI 耦合，
     // 那等于让本包在没有测试的情况下换掉编译用的宿主类型声明。
-    // 只判 dev 这一侧：它才是本包真正装下来的那一份。peer 记录的是「运行期由宿主提供」，
+    // 只判 dev这一侧 段：它才是本包真正装下来的那一份。peer 记录的是「运行期由宿主提供」，
     // 装什么版本由宿主决定，判据在下面那条。
     const { manifest } = await readSurface();
     const dshDev = Object.entries(manifest.devDependencies ?? {}).filter(([name]) =>
@@ -341,7 +341,7 @@ describe("宿主依赖的版本形状（升级保护）", () => {
   });
 
   it("devDependencies 里的 dsh-* 全部同版本（不许装出第二份宿主类型）", async () => {
-    // 宿主类型面被这些包以 type-only 方式消费；同一次安装里出现两个 dsh-session 的拷贝，
+    // 宿主类型被这些包以 type-only 方式消费；同一次安装里出现两个 dsh-session 的拷贝，
     // nominal 类型（官方加标识的字符串、投影状态）会开始互相不认，而那不报编译错、只报运行期
     // 「认不出这个 callId」。同版本是让这件事不发生的最小条件。
     const { manifest } = await readSurface();
@@ -359,7 +359,7 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     // peer 由宿主拿自己安装的那版去满足：钉成精确版本等于要求两者版本号完全相等，而滚动支持
     // 窗口本来就含三个版本。宿主侧只在 manifest 没有 engines.dsh 时才读 peer（app-boot 的
     // plugin-compatibility 里 engines.dsh 存在即独判），所以这一位是发布元数据的含义问题——
-    // 那就让它与真正当闸门的那一条写成同一个范围，两处口径说的才是同一件事。
+    // 那就让它与真正起作用的那一条写成同一个范围，两处规则说的才是同一件事。
     const { manifest } = await readSurface();
     const bare = manifest.peerDependencies?.["@deepseek-ai/dsh"];
     expect(bare, "裸 dsh 的 peer 缺失：支持窗口就失去基准了").toMatch(/^\^/u);
@@ -375,8 +375,8 @@ describe("宿主依赖的版本形状（升级保护）", () => {
 
   it("cordis 的 peer 范围同时覆盖两条宿主线，且不带空格", async () => {
     // cordis 是唯一跨宿主线版本不同的 peer：`npm view @deepseek-ai/dsh@0.2.1-rc.5` 声明
-    // `~4.0.5`，`@0.2.2-rc.1` 声明 `~4.1.0`（两处都是 registry 现量）。peer 写并集是为了两条线
-    // 各自的宿主副本都落在满足面里；钉成其中一条线的精确版本，另一条线上的干净目录 npm 安装会
+    // `~4.0.5`，`@0.2.2-rc.1` 声明 `~4.1.0`（两处都是 registry 当场实测）。peer 写并集是为了两条线
+    // 各自的宿主副本都落在满足范围里；钉成其中一条线的精确版本，另一条线上的干净目录 npm 安装会
     // ERESOLVE（install-matrix 实测）。
     // 这里唯一一条不带空格的并集就是 cordis：manifest 里 dsh 家族窗口保留空格，install-matrix
     // 已改成一行一枚说明符、按行读取，不再依赖按空白切分。
@@ -445,7 +445,7 @@ describe("模块与 exports 的一致性（新增/改名模块时的静默失败
     const barrel = await readFile(path.join(pkgDir, "lib", "index.ts"), "utf8");
     const subpath = "./lib/canonicalize-region-paths";
     expect(manifest.exports).toHaveProperty(subpath);
-    // 不在 barrel：进了根导入面，每个运行期消费方都要为它多一次导入。
+    // 不在 barrel：进了根 barrel 的导入名单，每个运行期消费方都要为它多一次导入。
     expect(barrel).not.toContain("canonicalize");
   });
 });

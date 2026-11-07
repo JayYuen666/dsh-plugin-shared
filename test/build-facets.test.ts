@@ -1,8 +1,8 @@
 // test/build-facets.test.ts —— host / client 两条统一构建编排（lib/build-host.ts 与
-// lib/build-client.ts）的行为面。
+// lib/build-client.ts）的行为测试。
 //
 // rolldown 用受控 stub 代替：这里测的是**编排**（外部化规则、传给 rolldown 的选项、输出检查、
-// 规范化与外壳拼装），不是打包器本身；stub 可以精确交出坏形状（多 chunk、空正文、缺
+// 规范化与 外壳 拼装），不是打包器本身；stub 可以精确交出坏形状（多 chunk、空正文、缺
 // moduleIds），那正是各包脚本此前各自漏测的负形状。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
@@ -155,7 +155,7 @@ async function cleanup(...roots: readonly string[]): Promise<void> {
 }
 
 describe("buildHostEntries", () => {
-  it("单入口：产物 = 头 + 正典化正文；选项按缺省值下发", async () => {
+  it("单入口：产物 = 头 + 规范化后的正文；选项按缺省值下发", async () => {
     const { factory, calls } = stubRolldown({
       outputs: [[chunkOf("//#region ../lib/a.ts\nexport {};")]],
     });
@@ -416,7 +416,7 @@ describe("buildHostEntries", () => {
 });
 
 describe("buildClientBundle", () => {
-  it("外壳形状：头、id、指令序言与收尾；缺省选项下发", async () => {
+  it("外壳 形状：头、id、指令序言与收尾；缺省选项下发", async () => {
     const { factory, calls } = stubRolldown({ outputs: [[chunkOf("module.exports = 1;")]] });
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
@@ -502,7 +502,7 @@ describe("buildClientBundle", () => {
     }
   });
 
-  it("store 路径折叠：相对前缀、反斜杠与中段形态都折到 node_modules/ 一层", async () => {
+  it("store 路径折叠（collapseStorePaths）：相对前缀、反斜杠与中段形态都折到 node_modules/ 一层", async () => {
     const code = [storeLine("../../", "/"), storeLine("", "\\"), "export {};"].join("\n");
     const { factory } = stubRolldown({ outputs: [[chunkOf(code)]] });
     const root = await fixtureRoot(BASE_MANIFEST);
@@ -555,7 +555,7 @@ describe("buildClientBundle", () => {
     );
   });
 
-  it("collapseStorePaths 单测：非注释行携带 .pnpm 串仍然判红（兜底不因扩面放松）", () => {
+  it("collapseStorePaths 单测：非注释行携带 .pnpm 串仍然判红（兜底不因扩大范围放松）", () => {
     assert.throws(
       () => collapseStorePaths("const p = 'node_modules/.pnpm/x@1/node_modules/x';"),
       /未折叠/u,

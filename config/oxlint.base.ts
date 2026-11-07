@@ -118,7 +118,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     note: "同族，放宽成 toFalsy() 同样是削弱断言",
   },
 
-  // ===== 仅限特定文件：JS plugin 的按文件面收窄 =====
+  // ===== 仅限特定文件：JS plugin 的按文件收窄 =====
   // 实测方法同本表头：把该规则临时翻成 error 再跑九包，按 lib/src/host 与 test/scripts 分开数。
   "regexp/no-super-linear-backtracking": {
     kind: "仅限特定文件",
@@ -373,7 +373,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   },
 
   // ===== react 插件（owner 决定启用）的存量处置 =====
-  // 前五条是 React Compiler 实验面（上游默认关闭），与 client 卡片的「宿主挂载适配器」形态
+  // 前五条是 React Compiler 的实验性规则（上游默认关闭），与 client 卡片的「宿主挂载适配器」形态
   // 整体冲突：卡片在 effect 里同步宿主态到 store、渲染期读 ref、内联闭包传 hook，是适配器
   // 形态而非交互组件渲染形态。单项收敛（useSyncExternalStore 化、闭包提升）留给源码收敛批次；
   // measured 为启用后实测条数（58 条里除 react-hooks 7 条外的全部）。
@@ -421,7 +421,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
  * override 层的 off（这个测量方法见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
  * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 正是这一类，
  * 它的收窄在 SCRIPTS_OVERRIDES 里，不在这里。`eslint/no-await-in-loop` 则两侧都开着
- * （实测探针对 .mjs 照样报），两边都按代码写到位，没有收窄层。
+ * （实测探测对 .mjs 照样报），两边都按代码写到位，没有收窄层。
  */
 export const RETIRED_OFFS: string[] = ["typescript/no-empty-object-type"];
 
@@ -443,8 +443,8 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
   "promise",
   "vitest",
   "import",
-  // react（捆 react / react-hooks / react-refresh / React Compiler 四个规则面）+ jsx-a11y：
-  // 11 个带客户端部分的包的卡片界面是 React（createElement 形态），这两个规则面是 owner 决定要启用的。
+  // react（捆 react / react-hooks / react-refresh / React Compiler 四组规则）+ jsx-a11y：
+  // 11 个带客户端部分的包的卡片界面是 React（createElement 形态），这两组规则是 owner 决定要启用的。
   // 存量按本仓的规则处置：能修的修，确属形态冲突的进 OFF_JUSTIFICATIONS（kind+measured+note）。
   "react",
   "jsx-a11y",
@@ -464,9 +464,9 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
  *
  * 惰性求值而不是模块顶层常量：这些包是消费方自备的工具链（不进 peerDependencies——npm 7+
  * 会去满足 optional peer，而 oxlint 的 peerOptional `vite-plus` 把 vitest 钉成 5.0.1，
- * 与 `vitest >= 5.0.2` 无交集，结果是消费方装本包直接 ERESOLVE）。顶层求值会让**不用配置面**
+ * 与 `vitest >= 5.0.2` 无交集，结果是消费方装本包直接 ERESOLVE）。顶层求值会让**不读这套配置的**
  * 的消费者也在 `import` 那一刻撞 MODULE_NOT_FOUND；挪进来之后缺包只影响真正调用
- * `definePluginConfig()` 的那一侧，且报的是能照着做的话。
+ * `definePluginConfig()` 的那条路径，且报的是能照着做的话。
  */
 interface BundledJsPlugin {
   /** 报错与调用方入口识别用的插件名。 */
@@ -637,7 +637,7 @@ const SONARJS_RULES: RuleTable = {
 /**
  * `eslint-plugin-regexp` recommended 里带 `regexp/` 前缀的全部规则（63 条）。
  *
- * 不带它同 preset 的 4 条裸 eslint 规则（no-control-regex / no-misleading-character-class /
+ * 不带它同 preset 的 4 条不带插件前缀的 eslint 规则（no-control-regex / no-misleading-character-class /
  * no-regex-spaces / prefer-regex-literals）：oxlint 的内建 eslint 插件已有同名规则，重复挂只会
  * 把同一个缺陷报两遍。
  *
@@ -721,10 +721,10 @@ export const REGEXP_RULES: RuleTable = {
  *  - `no-number-schema-with-int` 5 条（`z.number().int()` → `z.int()`，fixer 可修）。
  *  - `require-error-message` 5 条待按代码补错误文案。
  *  - `consistent-schema-var-name` 71 条**不挂**：本仓的 schema 常量是大写词（`MAX_DENIES_SCHEMA`、
- *    `STATS_SNAPSHOT_SCHEMA`），规则的默认口径是把 `Schema` 后缀再拼一次，得到
+ *    `STATS_SNAPSHOT_SCHEMA`），规则的默认做法是把 `Schema` 后缀再拼一次，得到
  *    `MAX_DENIES_SCHEMASchema` 这类坏名字；把它当命名缺陷改 71 处只是风格迁移，不指向缺陷。
  *
- * 该插件只对真的 import zod 的文件生效；本仓九个包都声明了 zod，规则面不会空转。
+ * 该插件只对真的 import zod 的文件生效；本仓九个包都声明了 zod，这些规则不会没有实际校验作用。
  */
 export const ZOD_RULES: RuleTable = {
   "zod/consistent-import": ["error", { syntax: "named" }],
@@ -813,7 +813,7 @@ const BASE_OPTIONS: NonNullable<OxlintConfig["options"]> = {
 };
 
 /**
- * 排除面只留"生成物与非源码树"：`client.js`/`host.js` 是 build 产物，`coverage/`、`dist/`、
+ * 排除名单只留"生成物与非源码树"：`client.js`/`host.js` 是 build 产物，`coverage/`、`dist/`、
  * `.toolchain/`、`node_modules/` 同理。
  *
  * 原则是"**人写的源码一律在 lint 范围内**"：配置文件与 bundler 脚本（`*.config.ts`、
@@ -980,7 +980,7 @@ export const BASE_RULES: RuleTable = {
   "eslint/no-duplicate-imports": "off",
   // require-await 一族：`eslint/require-await` 与 `typescript/require-await` 是同一条判断的两份实现，
   // 同开会把一个缺陷报两次（实测同一段无 await 的 async 函数在 --type-aware 下报 2 errors / 1 defect）。
-  // 按 typescript-eslint 对 extension rule 的官方处理留扩展那条、关基线那条；全仓实测两面的判断
+  // 按 typescript-eslint 对 extension rule 的官方处理留扩展那条、关基线那条；全仓实测两份实现的判断
   // 范围在非用例代码上重合（逐行去重：514 行同点、typescript 独有 0 行、eslint 独有只有本配置
   // 自己的一份中间态），而 `options.typeAware: true` 是常开的 ⇒ .mjs/.cjs 也归扩展那条管
   //（实测 --type-aware 下它对 .mjs 同样报出）。用例文件仍整族豁免（见 TEST_OVERRIDES）。
@@ -1051,11 +1051,11 @@ export const BASE_RULES: RuleTable = {
   "unicorn/no-array-reduce": ["error", { allowSimpleOperations: true }],
   "unicorn/no-null": "off",
   "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
-  // ===== react 插件的 React Compiler 实验面（上游默认关闭）：与 client 卡片的「宿主挂载
+  // ===== react 插件的 React Compiler 的实验性规则（上游默认关闭）：与 client 卡片的「宿主挂载
   // 适配器」形态整体冲突（effect 同步宿主态到 store、渲染期读 ref、内联闭包传 hook 是
   // 适配器形态而非交互组件渲染形态）。单项整改（useSyncExternalStore 化、闭包提升）留给
-  // 源码整改批次；measured 为开面实测条数，依据逐条在 OFF_JUSTIFICATIONS。
-  // react-hooks/exhaustive-deps 与 rules-of-hooks 不在豁免面内：前者 src 侧 4 条已逐站点
+  // 源码整改批次；measured 是放开后的实测条数，依据逐条在 OFF_JUSTIFICATIONS。
+  // react-hooks/exhaustive-deps 与 rules-of-hooks 不在豁免名单内：前者 src 侧 4 条已逐站点
   // 结构性修复（稳定化回调 + 补依赖），后者只对用例文件在 TEST_FILE_OVERRIDES 豁免。
   "react/set-state-in-effect": "off",
   "react/no-deriving-state-in-effects": "off",
@@ -1075,7 +1075,7 @@ export const BASE_RULES: RuleTable = {
 };
 
 /**
- * 两种测试文件的形态规则，单源，不许两处各写一份：
+ * 两种测试文件的形态规则，唯一来源，不许两处各写一份：
  *  - {@link CASE_FILE_PATTERNS}：**用例文件**本身（vitest 结构类判断只落在这里）；
  *  - {@link SPEC_FILE_PATTERNS}：spec 命名的用例，只认目录约定下的位置（`__tests__/`
  *    与 `test/`），散在源码树里的 `*.spec.ts` 不算——那更可能是与 vitest 无关的规格件；
@@ -1105,13 +1105,13 @@ export const TEST_OVERRIDES: OxlintOverride = {
     "eslint/max-lines": "off",
     "eslint/max-lines-per-function": "off",
     "node/no-top-level-await": "off",
-    // 测试夹具里的宽正则只跑短输入；生产与脚本侧保持开启（依据见 OFF_JUSTIFICATIONS）。
+    // 夹具里的宽正则只跑短输入；生产与脚本侧保持开启（依据见 OFF_JUSTIFICATIONS）。
     "regexp/no-super-linear-backtracking": "off",
   },
 };
 
 /**
- * 生产代码面的 override：目前只有 `e18e/prefer-static-regex`。
+ * 针对生产代码的 override：目前只有 `e18e/prefer-static-regex`。
  *
  * 该规则在全仓 1778 条（生产 78、测试 1672、其余 28），没有 fixer；全局 off、这里 on，
  * 既保住「生产代码里的内联正则提到模块作用域」这条要求，又不把测试断言与构建脚本逼成
@@ -1235,7 +1235,7 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
     "node/no-top-level-await": "off",
     // 唯一命中是 ocr-review 脚本对 js-yaml mark.snippet 的依赖（依据见 OFF_JUSTIFICATIONS）。
     "e18e/ban-dependencies": "off",
-    // 这一族是**类型信息**规则：它们判的是「值在类型面上是 any/unknown」。
+    // 这一族是**类型信息**规则：它们判的是「这个值的类型是不是 any/unknown」。
     // `scripts/*.mjs` 是 node 直接跑的检查脚本，仓内没开 `checkJs`，也没有 TS 类型标注
     // ⇒ 每个值都落进隐式 any，实测 1658 条里 1428 条是这一族（不是 1428 个缺陷，
     // 而是这些规则在这里无从计算）。真正能判的仍全量保留：no-undef、no-unused-vars、

@@ -2,7 +2,7 @@
 //
 // 覆盖率公共配置是四项 100% 阈值的关键保障：覆盖项必须逐键合并、`test` 里不许塞 `coverage`，
 // 这两条一旦松动，某个包的一次局部改配就会静默变成整组检查失效。这里把两条固定在运行期；
-// 统计范围的单源约束（include 只由 coverageInclude 供给）固定在文末的编译期负向断言上。
+// 统计范围的唯一来源约束（include 只由 coverageInclude 供给）固定在文末的编译期负向断言上。
 
 import { describe, expect, it } from "vitest";
 import { definePackageConfig } from "../config/vitest.base.ts";

@@ -30,7 +30,7 @@ describe("jobOutcomeOf", () => {
     expect(jobOutcomeOf(settled()).detail).toBe("exit code: 0");
   });
 
-  it("completed 但没报退出码 ⇒ 按 0 记账（与宿主 bash 同口径）", () => {
+  it("completed 但没报退出码 ⇒ 按 0 记录（与宿主 bash 同做法）", () => {
     // 卡片侧不受影响：zvec-grep 的投影直接读 proc.exitCode 原样下发，这里只影响
     // 官方作业列表里那一行理由。
     expect(jobOutcomeOf(settled({ exitCode: null })).detail).toBe("exit code: 0");

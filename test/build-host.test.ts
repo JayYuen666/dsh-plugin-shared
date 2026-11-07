@@ -42,7 +42,7 @@ describe("shared buildHost()", () => {
     // 这里按同一规则写成 \s*（星号：压缩后一个空格都不剩）。
     assert.ok(
       /from\s*["']@deepseek-ai\/dsh-output-retention["']/u.test(out),
-      "官方截断件必须以裸说明符留在 dist 里（口径 A：值导入的官方件一律外部化）",
+      "官方截断件必须以裸说明符留在 dist 里（做法 A：值导入的官方件一律外部化）",
     );
     // 「没有被内联」由上面那条完整表达：一旦内联，这条 import 就不复存在。
     // 原先那条 /^function truncateWithoutSplittingSurrogatePair\(/mu 在压缩后恒不成立
@@ -59,11 +59,11 @@ describe("shared buildHost()", () => {
     const out = await chunkText();
     assert.ok(
       !/from\s+["'][^"']*\.ts["']/u.test(out),
-      "残留 .ts 说明符会让 Node 载入 dist 时抛 ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING",
+      "残留 .ts说明符会让 Node 载入 dist 时抛 ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING",
     );
   });
 
-  it("产物：F3 的两枚官方件只作类型面，不得留运行时说明符", async () => {
+  it("产物：F3 的两枚官方件只当类型用，不得留运行时说明符", async () => {
     const out = await chunkText();
     // lib/job-outcome 只 import type：注册表实例由宿主注入，本包连 dsh-jobs 都不该在
     // dependencies 里（它只在 devDependencies，供 tsc 解析声明）。哪天有人值导入，
@@ -71,15 +71,15 @@ describe("shared buildHost()", () => {
     // 判断只看 `from "…"` 位置：源码注释会随产物一起留下，整串匹配会被注释误伤。
     assert.ok(
       !/from\s*["']@deepseek-ai\/dsh-jobs/u.test(out),
-      "dsh-jobs 只能是类型面：产物里出现它的 from 说明符即值导入",
+      "dsh-jobs 只能是类型面：产物里出现它的 from说明符即值导入",
     );
     assert.ok(
       !/from\s*["']@deepseek-ai\/dsh-shell/u.test(out),
-      "dsh-shell 只能是类型面：产物里出现它的 from 说明符即值导入",
+      "dsh-shell 只能是类型面：产物里出现它的 from说明符即值导入",
     );
   });
 
-  it("facets 与 lib/ 下切面一一对应（barrel 类型面的同源清单不许漂移）", async () => {
+  it("facets 与 lib/ 下的切面一一对应（barrel 类型的同源清单不许漂移）", async () => {
     // 新增模块只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，dist/index.d.ts 会
     // 静默缺成员而其余检查全部通过——index.test.ts 管 barrel↔lib、publish-manifest 管
     // exports↔lib，只有这份清单两边都搭不上。

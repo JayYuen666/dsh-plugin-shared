@@ -49,7 +49,7 @@ describe("truncateEnd（前切，防尾部孤立高代理）", () => {
     assert.equal(truncateEnd("abcdefgh", Number.NEGATIVE_INFINITY), "");
   });
 
-  it("NaN 预算 ⇒ 空串（与 truncateStart 同口径，文件头那句声明靠这一条成立）", () => {
+  it("NaN 预算 ⇒ 空串（与 truncateStart 同做法，文件头那句声明靠这一条成立）", () => {
     // 调用方把预算算成 `余量 - 已用量` 就可能交出 NaN（0/0、Infinity-Infinity）。
     // 这里不是在找规则漏洞：NaN 走不进 `text.length <= maxChars`，也不走 `slice(0, 0)`，
     // 它是**第三条**通路；两端必须逐条对上。
@@ -83,13 +83,13 @@ describe("truncateStart（后切，防首部孤立低代理）", () => {
     assert.equal(truncateStart("短文本", 500), "短文本");
   });
 
-  it("零/负预算 ⇒ 空串，与 truncateEnd 同口径（不是把整串吐回去）", () => {
+  it("零/负预算 ⇒ 空串，与 truncateEnd 同做法（不是把整串吐回去）", () => {
     assert.equal(truncateStart("abc", 0), "");
     assert.equal(truncateStart("abc", -5), "");
     assert.equal(truncateStart("", 0), "");
   });
 
-  it("NaN 预算 ⇒ 空串，与 truncateEnd(text, NaN) 同口径", () => {
+  it("NaN 预算 ⇒ 空串，与 truncateEnd(text, NaN) 同做法", () => {
     // 改动前这里是"整串"：`NaN <= 0` 为 false 走不进守卫，`slice(-NaN)` 即 `slice(0)`。
     // 判定力度：把守卫写成 `minChars <= 0` 这条就会失败（两端"行为相同"那句话又变成假话）。
     assert.equal(truncateStart("abc", Number.NaN), "");
@@ -132,8 +132,8 @@ describe("两端拼接（failureDetail 的用法）", () => {
     }
   });
 
-  it("两端在无限预算下同口径：整串原样返回（而不是空串）", () => {
-    // NaN 那一侧两条路径已经各有用例固定；Infinity 是另一侧的"预算不可用"形态：
+  it("两端在无限预算下同做法：整串原样返回（而不是空串）", () => {
+    // NaN 的两条路径已经各有用例钉住；Infinity 是另一种"预算不可用"的形态：
     // truncateStart 走 `text.length <= Infinity` 直接交回整串，truncateEnd 交给官方件
     // 的 slice(0, Infinity) 也交回整串。两者必须同向，否则"预算取自配置"时两端会分叉。
     const text = "abc\u{1F600}def";
@@ -156,7 +156,7 @@ describe("两端拼接（failureDetail 的用法）", () => {
   });
 });
 
-describe("兼容面：truncateEnd 依赖的官方件仍在装着的 DSH 里", () => {
+describe("兼容：truncateEnd 依赖的官方件仍在装着的 DSH 里", () => {
   it("官方 truncateWithoutSplittingSurrogatePair 存在且可调用", async () => {
     // lib/text.ts 的文件头记着：官方件在 0.2.0-rc.2 存在、在 0.1.7-alpha.1 不存在。
     // 类型检查挡得住"导出被删"（tsc 会报错），但挡不住**运行期拿到 undefined**——例如

@@ -103,7 +103,7 @@ export function SelectField(
         return;
       }
       const option = options[index];
-      /* v8 ignore next 3 -- disabled 选项在浏览器里不派发 click；越界下标由调用面保证 */
+      /* v8 ignore next 3 -- disabled 选项在浏览器里不派发 click；越界下标由调用方保证 */
       if (option === undefined || option.disabled === true) {
         return;
       }

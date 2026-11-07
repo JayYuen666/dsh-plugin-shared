@@ -16,12 +16,12 @@
 //
 // 事件形状取官方判别联合 `@deepseek-ai/dsh-session` 的 `SessionEvent`，不再本地声明
 // 「最小投影」：按 `event.type` 分支即收窄 `event.data`，宿主改名/换形状在编译期暴露，
-// 而不是靠注释手抄 d.ts 行号。
+// 而不是靠注释照抄 d.ts 行号。
 //
 // 两个 PTC 事件是这条规则的**例外**，载荷在本包内声明：官方把这两个变体增强进
 // `SessionEventMap` 的那份声明**换过宿主包**，而支持窗口同时含换之前与换之后的版本，
 // 新包在旧版宿主上根本没发布——从任何一侧具名 re-export 都会在另一侧解析不到。
-// `skipLibCheck` 只豁免被消费的 `.d.ts`，不豁免本包自己的源码，所以那一侧是构建硬失败
+// `skipLibCheck` 只豁免被消费的 `.d.ts`，不豁免本包自己的源码，所以解析不到的那一次是构建硬失败
 // 而不是消费方的隐患。自己声明接口、自己做那份增强，两条宿主线上都成立。
 // 与宿主真实定义是否仍同形由 test/tool-events-host-parity.ts 的双向可赋值断言钉住——那是
 // 一条**编译期**判据，只有 tsc 兑现得了（该文件头记了为什么不能包成用例）。
@@ -44,11 +44,11 @@ export interface PtcDispatchStartEventData {
   arguments: unknown;
 }
 
-/** 一枚 PTC 子调度**结算**时记下的载荷：结算面沿用 `tool/result` 自己的词表。 */
+/** 一枚 PTC 子调度**结算**时记下的载荷：结算沿用 `tool/result` 自己的词表。 */
 export interface PtcDispatchEventData extends PtcDispatchStartEventData {
   isError: boolean;
   content: ContentBlock[];
-  /** 可重放的工具侧呈现元数据，与模型可见内容分开记账。 */
+  /** 可重放的工具侧呈现元数据，与模型可见内容分开记录。 */
   meta?: JsonValue;
   /** 可选的失败身份与原始用户可见细节，不在模型可见内容里。 */
   error?: {
@@ -83,7 +83,7 @@ export interface ToolCallRecord {
    * 只读判定、检查侧的 EDIT_TOOLS 与 refSearchTools 名单——而 editPathOf 的回退分支会把任何
    * 非 str_replace_editor 的调用一律判成 write。无名调用一旦进了记录，只要它的 arguments
    * 里有 file_path 就算成写操作。现在是靠三个消费方各自记得先判一次才没出事——那是同一条
-   * 不变式的三份手抄，漏一份就出事。
+   * 不变式的三份抄本，漏一份就出事。
    *
    * 与 callId 的差别是**为什么一个必选、一个可空**：callId 由 usableCallId 回退，且它有
    * `nc:<seq>` 回退值（消费方的 noCallId 组专门收那种行），缺了不影响归类；name 一旦缺了
@@ -127,7 +127,7 @@ function isTrueFlag(value: unknown): boolean {
 
 /** 官方保证每个事件必带对象 `data`。这里仍校验：扫描器跑在检查/证据链的同步路径上，
  *  约定是「零星坏事件静默跳过、不抛错」，而重放或跨边界数据可以送来临时缺 data 的事件。
- *  类型声明已把 data 记为必选，所以这个检查在 TS 里是恒真——它防的是类型外的输入。 */
+ *  类型声明已把 data 记为必选，所以这个检查在 TS 里是永远成立——它防的是类型外的输入。 */
 function hasObjectData(event: SessionEvent): boolean {
   return isRecord(event.data);
 }
@@ -326,7 +326,7 @@ export type EditTarget =
 
 /**
  * 一条 `apply_patch` 补丁操作的目标。`moveTo` 只出现在 update 上；源路径与目的路径
- * 都是文件效应，调用方需要分别记账。
+ * 都是文件效应，调用方需要分别记录。
  */
 export interface ApplyPatchTarget {
   readonly kind: "add" | "update" | "delete";

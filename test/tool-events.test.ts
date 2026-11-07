@@ -2,8 +2,8 @@
 // 约定与 quality-gate collectEdits / danger-guard scanToolCalls+resolveResultLedger
 // 对齐（callId 串联、arguments 双形态、view 只读语义）。
 //
-// 事件一律经 ./fixtures/events.ts 的构造器产出：生产面绑官方 SessionEvent 后，事件必填
-// 位与 ToolCallId/MessageId/SessionSeq 这些官方标识类型都得补齐。类型面不可表示的畸形形状（缺 callId、
+// 事件一律经 ./fixtures/events.ts 的构造器产出：生产代码绑官方 SessionEvent 后，事件必填
+// 位与 ToolCallId/MessageId/SessionSeq 这些官方标识类型都得补齐。类型声明里不可表示的畸形形状（缺 callId、
 // 缺 subCallId、retired 的 content[0].isError……）显式走 badEvent()——那是用例明说的意图。
 
 import { describe, expect, it } from "vitest";
@@ -57,7 +57,7 @@ function argsOf(
     : { arguments: row.arguments, badArguments: row.badArguments };
 }
 
-describe("arguments 归一（经 toolEventRowsOf 这条公开面）", () => {
+describe("arguments 归一（经 toolEventRowsOf 这条公开接口）", () => {
   it("string JSON 解析；非法字符串回空对象并标记为无效参数", () => {
     expect(argsOf('{"a":1}')).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
     expect(argsOf("{bad")).toStrictEqual({ arguments: {}, badArguments: true });
@@ -181,7 +181,7 @@ describe("scanToolEvents", () => {
   });
 });
 
-describe("成败位读取（经 toolEventRowsOf 这条公开面）", () => {
+describe("成败位读取（经 toolEventRowsOf 这条公开接口）", () => {
   it("message.isError===true 判失败；false/缺失按成功（v4 message 级）", () => {
     resetSeq();
     expect(isErrorOf(result("r1", true))).toBe(true);
@@ -305,11 +305,11 @@ describe("apply_patch 目标解析", () => {
     expect(editPathsOf(applyPatchCall(repeated))).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
   });
 
-  it("editPathOf 对 apply_patch 只交回第一条目标（单目标兼容面）", () => {
+  it("editPathOf 对 apply_patch 只交回第一条目标（单目标兼容）", () => {
     expect(editPathOf(applyPatchCall(patch))).toStrictEqual({ kind: "write", path: "a.ts" });
   });
 
-  it("editPathsOf 对普通编辑器沿用单路径口径（view 与无路径不成行）", () => {
+  it("editPathsOf 对普通编辑器沿用单路径做法（view 与无路径不成行）", () => {
     expect(
       editPathsOf({
         name: "edit",
@@ -430,7 +430,7 @@ describe("规模面：万级事件流", () => {
   /** 规模用例的事件对数。1 万条事件在 20s 超时下留足余量，同时足以让任何二次方复杂度的写法暴露出来。 */
   const SCALE = 5000;
 
-  it("逐项同解：两张表行数、串联键与事件位都不随规模改口径", () => {
+  it("逐项同解：两张表行数、串联键与事件位都不随规模改做法", () => {
     // 这条不是计时断言（那会变成 flaky），而是**规模下的等价性**：扫描器每条事件只读
     // 一遍常数次，两张表各自有序、seq 就是事件位。消费方（quality-gate 的 collectEdits、
     // danger-guard 的记录折叠）在长会话上跑的就是这条路径，行为不能因为事件多就变。

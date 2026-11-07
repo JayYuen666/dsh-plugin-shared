@@ -5,12 +5,12 @@
 // 的 allowImportingTsExtensions + verbatimModuleSyntax 都要求它），而 tsc 的**声明**产物会把
 // 说明符原样抄进 .d.ts——于是 `types/host.d.ts` 里留着 `from "./lib/x.ts"`，而包里根本没有
 // 那个文件（只有 `types/lib/x.d.ts`）。`rewriteRelativeImportExtensions` 解决不了这里的问题：它只作用于
-// JS 产物，不动声明。改成 `.js` 才是对的：TypeScript 把 `.js` 说明符解析到同名 `.d.ts`，
+// JS 产物，不动声明。改成 `.js` 才是对的：TypeScript 把 `.js` 形式的说明符解析到同名 `.d.ts`，
 // 消费方因此解析到本包发出去的那份声明。
 //
-// 两阶段：编译进草稿目录、改写完成后再整体换上 types/。tsc 没开 noEmitOnError，有类型
+// 两阶段：先编译进 scratch 临时目录、改写完成后再整体换上 types/。tsc 没开 noEmitOnError，有类型
 // 错误时它照样写出一部分声明；直接编译进 types/ 的失败现场就是「既非完整也非空」的目录，
-// 而调用方（测试）可能立刻读它。两阶段之后，失败留下的只是草稿目录，线上那份 types/
+// 而调用方（测试）可能立刻读它。两阶段之后，失败留下的只是那个 scratch 目录，线上那份 types/
 // 仍是上一轮完整的。
 //
 // tsc 入口由调用方解析注入（typescript 是各包自己的 devDependency；按调用方的依赖图
@@ -27,7 +27,7 @@ export interface TypesBuildOptions {
   readonly tscEntry: string;
   /** tsconfig 项目名（相对包根）。缺省 `tsconfig.types.json`。 */
   readonly tsconfig?: string;
-  /** 草稿目录绝对路径。缺省 `<root>/.tmp/types`（该目录在各包统一被 git 忽略，
+  /** scratch 临时目录的绝对路径。缺省 `<root>/.tmp/types`（该目录在各包统一被 git 忽略，
    * 且与 types/ 同一文件系统，最后一步 rename 原子且不跨设备）。 */
   readonly scratch?: string;
   /** 产物目录绝对路径。缺省 `<root>/types`。 */
@@ -53,12 +53,12 @@ const AUGMENTED_MODULE_SPECIFIER =
 /** 源码后缀 → 声明里该写的产物后缀（`.mts`/`.cts` 各自对侧，其余走 `.js`）。 */
 const OUTPUT_EXTENSIONS = { cts: "cjs", mts: "mjs", ts: "js" } as const;
 
-/** 说明符尾部（源码后缀 + 收尾引号）。 */
+/**说明符尾部（源码后缀 + 收尾引号）。 */
 const SOURCE_SUFFIX = /\.(?<extension>mts|cts|ts)(?=["']$)/u;
 
 /**
  * 把一处说明符里的源码后缀换成对侧产物后缀，引号与其内其余字符原样保留。
- * @param specifier - 带引号的说明符原文
+ * @param说明符- 带引号的说明符原文
  * @returns 改写后的说明符
  */
 function withOutputSuffix(specifier: string): string {
@@ -69,7 +69,7 @@ function withOutputSuffix(specifier: string): string {
 }
 
 /**
- * 把一段声明正文里的相对源码后缀说明符改写成对侧产物后缀。
+ * 把一段声明正文里带源码后缀的相对说明符改写成对侧产物后缀。
  *
  * 三处 replace 各自收一种句法位置，互不依赖；同一个文件里三种都出现时不漏也不重。
  * @param text - 声明文件正文
@@ -160,11 +160,11 @@ export async function buildDeclarations(options: TypesBuildOptions): Promise<str
   const scratch = options.scratch ?? path.join(options.root, ".tmp", "types");
   const outDir = options.outDir ?? path.join(options.root, "types");
   const tsconfig = options.tsconfig ?? "tsconfig.types.json";
-  // 上一轮失败留下的草稿不该参与这次编译（tsc 不清 outDir，旧声明会被当成这次的结果）。
+  // 上一轮失败留在 scratch 里的声明不该参与这次编译（tsc 不清 outDir，旧声明会被当成这次的结果）。
   await rm(scratch, { recursive: true, force: true });
   try {
     // tsc 没开 noEmitOnError，类型错误时照样写出一部分声明——编译这一步必须在 try 里，
-    // 失败时半成品草稿才会被下面的 catch 清掉。
+    // 失败时那批半成品声明才会被下面的 catch 清掉。
     runTool(
       process.execPath,
       [options.tscEntry, "-p", tsconfig, "--outDir", scratch],

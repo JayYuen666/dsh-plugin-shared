@@ -20,7 +20,7 @@ function collector(): Sink {
   return { reasons, take };
 }
 
-/** 异步拒绝面共用的失败文案，避免同一字面量散在多处。 */
+/** 异步拒绝这一路共用的失败文案，避免同一字面量散在多处。 */
 const ASYNC_DOWN = "async down";
 
 /** 没给 onRejected 时的回退出口：await 只接 fulfil 一路，拒绝路要自己造。 */
@@ -116,14 +116,14 @@ describe("settleLessonCall", () => {
     expect(reasons).toHaveLength(1);
   });
 
-  it("onFailure 自己抛错时两条失败面都不外抛（同步抛给调用方 / 异步变未处理拒绝）", async () => {
-    // 同步抛错面：settleLessonCall 自身不把异常抛给调用方
+  it("onFailure 自己抛错时两条失败都不外抛（同步抛给调用方 / 异步变未处理拒绝）", async () => {
+    // 同步抛错这一路：settleLessonCall 自身不把异常抛给调用方
     expect(() => {
       settleLessonCall(() => {
         throw new Error("call down");
       }, explodingSink);
     }).not.toThrow();
-    // 异步拒绝面：不得变成未处理拒绝
+    // 异步拒绝这一路：不得变成未处理拒绝
     expect(() => {
       settleLessonCall(() => Promise.reject(new Error(ASYNC_DOWN)), explodingSink);
     }).not.toThrow();
@@ -185,7 +185,7 @@ describe("settleLessonCall", () => {
     expect(sink.reasons).toHaveLength(1);
     expect(String(sink.reasons[0])).toContain("then getter 炸了");
     await flushMicrotasks();
-    // 排空微任务后仍是那一条：不得二次投递。
+    // 排空微任务后仍是那一条：不得二次发送。
     expect(sink.reasons).toHaveLength(1);
   });
 
