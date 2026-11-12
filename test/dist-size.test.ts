@@ -19,9 +19,10 @@ import path from "node:path";
 const pkgDir = path.resolve(import.meta.dirname, "..");
 
 /** 运行期产物预算（在实测值上加一档取整）。消费方按子路径 external 取用，这些字节是真实装载成本。
- *  card-ui 是客户端组件子路径（含统一样式表），按消费方 external 取用；本轮实测 25956 B，
- *  预算按 +25% 登记为 33000 B。 */
-const RUNTIME_BUDGET_BYTES = 33_000;
+ *  card-ui 是客户端组件子路径（含统一样式表），按消费方 external 取用；本轮实测 33266 B（0.2.7
+ *  把下拉与说明浮层共用的 anchor 探测抽成独立模块，并给说明浮层补上锚定与 light dismiss），
+ *  只按本次实际增量上调到 34000 B，不重新套用 +25%——避免正常演进吃掉护栏后门槛一路放宽。 */
+const RUNTIME_BUDGET_BYTES = 34_000;
 /** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算，单独按同一 +25% 规则登记。 */
 const CLIENT_BUDGET_BYTES = 54_000;
 /** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型声明的入口。 */

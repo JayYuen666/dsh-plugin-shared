@@ -53,7 +53,10 @@ export function SaveBar(props: {
     ),
     createElement(
       "span",
-      { className: props.error === null ? "dsu-status" : "dsu-status dsu-statusError" },
+      {
+        role: "status",
+        className: props.error === null ? "dsu-status" : "dsu-status dsu-statusError",
+      },
       status,
     ),
   );

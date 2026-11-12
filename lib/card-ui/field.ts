@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type { FocusEvent as ReactFocusEvent, ReactElement, ReactNode } from "react";
+import { cssAnchorSupported } from "./anchor.ts";
 
 /** 所有字段共享的文案与状态位。 */
 export interface FieldBase {
@@ -24,7 +25,7 @@ export interface FieldBase {
   controlId?: string;
 }
 
-/** 说明按钮与浮层：悬停/聚焦显示，点击钉住，Esc 关闭。 */
+/** 说明按钮与浮层：悬停/聚焦显示，点击钉住，Esc 或点击外部关闭。 */
 export function InfoTip(props: {
   label: string;
   detail: string;
@@ -33,11 +34,12 @@ export function InfoTip(props: {
   compact?: boolean;
 }): ReactElement {
   const id = useId();
+  const anchorId = `--dsu-tip-${id.replaceAll(/[^a-zA-Z0-9]/gu, "")}`;
   const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
   const hoveredRef = useRef(false);
   const focusedRef = useRef(false);
   const pinnedRef = useRef(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,6 +58,12 @@ export function InfoTip(props: {
     if (anchor === null || tip === null) {
       return;
     }
+    // CSS anchor 支持时位置由 position-area 跟随按钮（抗缩放/平移），不再写 JS 矩形坐标；
+    // 间距由样式表的 margin-top 提供，回退分支必须把它清零，否则与 +8 叠加。
+    if (cssAnchorSupported()) {
+      return;
+    }
+    tip.style.marginTop = "0px";
     const rect = anchor.getBoundingClientRect();
     const width = tip.offsetWidth;
     const height = tip.offsetHeight;
@@ -76,7 +84,6 @@ export function InfoTip(props: {
   const close = useCallback((): void => {
     cancelHide();
     pinnedRef.current = false;
-    setPinned(false);
     setOpen(false);
   }, [cancelHide]);
 
@@ -101,7 +108,6 @@ export function InfoTip(props: {
 
   const updatePinned = useCallback((next: boolean): void => {
     pinnedRef.current = next;
-    setPinned(next);
   }, []);
 
   useLayoutEffect(() => {
@@ -125,9 +131,19 @@ export function InfoTip(props: {
     const onResize = (): void => {
       place();
     };
+    const onPointerDown = (event: PointerEvent): void => {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- PointerEvent.target 在当前环境恒为 Node；跨 realm（iframe）场景不存在，contains 只接受 Node|null。
+      const target = event.target as Node | null;
+      if (wrapRef.current?.contains(target) === true) {
+        return;
+      }
+      close();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
     return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
@@ -158,9 +174,10 @@ export function InfoTip(props: {
       ref: anchorRef,
       type: "button",
       className: "dsu-helpBtn",
+      style: { anchorName: anchorId },
       "aria-label": `${props.label} 说明`,
-      "aria-describedby": id,
-      "aria-pressed": pinned,
+      "aria-expanded": open,
+      "aria-controls": id,
       onClick: () => {
         if (pinnedRef.current) {
           close();
@@ -198,6 +215,7 @@ export function InfoTip(props: {
       id,
       role: "tooltip",
       className: "dsu-tip",
+      style: { positionAnchor: anchorId, positionTryFallbacks: "flip-block, flip-inline" },
       hidden: !open,
     },
     props.detail,
@@ -215,6 +233,7 @@ export function InfoTip(props: {
   return createElement(
     "span",
     {
+      ref: wrapRef,
       className: "dsu-help",
       onMouseEnter: (): void => {
         hoveredRef.current = true;

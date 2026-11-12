@@ -2,6 +2,34 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.7
+
+设置卡浮层的定位与无障碍修正：下拉浮层回到触发器下方；说明浮层（InfoTip）改用同一套 CSS anchor 定位，补齐点击外部关闭与 toggletip 语义；数字字段改为失焦后报错；保存状态可被读屏播报。组件 API 与 JS 回退路径不变。
+
+### Fixed
+
+- **下拉浮层不再落到浏览器最左边**：`span-inline-start` 选中的是「行内起始列 + 中间列」，`position: fixed` 下该区域的起始边就是视口左边缘；配合 `justify-self:start`，浮层被钉在 x=0（1440px 视口实测触发器左边缘 860px、浮层左边缘 0）。改为 `span-inline-end`（中间列 + 行内结束列）后区域起点回到触发器的行内起始边，实测浮层左边缘与触发器重合、下方间距 6px。
+- **越界翻转仍然正确**：触发器贴视口右侧时 `flip-inline` 把浮层改为右对齐（右边缘与触发器齐平），贴底部时 `flip-block` 仍在上方留 6px；`justify-self` / `margin-top` / `position-try-fallbacks` 保持原样。
+- **说明浮层改用 CSS anchor 定位**：`InfoTip` 的浮层此前只靠 JS 矩形，缩放/平移会漂移，与下拉浮层不一致。现在按钮带 `anchor-name`、浮层带 `position-anchor` 与 `position-area: block-end span-inline-end`，并加 `width:max-content`（贴边时先按最大宽度量出盒子，才会真正触发 `flip-inline`，而不是被挤成一条窄柱）；实测默认下方左对齐留 8px、贴右侧翻到按钮左边并右边缘对齐、贴底部翻到上方留 8px。anchor 特性探测抽到 `lib/card-ui/anchor.ts`，下拉与说明浮层共用。
+- **说明浮层支持点击外部关闭**：钉住后点击页面其它位置会收起（点浮层内部不关），补齐 WCAG 1.4.13 的 Dismissible；Esc 与再次点击按钮的行为不变。
+- **说明按钮改用 toggletip 语义**：展开状态写 `aria-expanded`，并用 `aria-controls` 指向浮层；去掉会与按钮角色混淆的 `aria-describedby` 与表示钉住态的 `aria-pressed`。
+
+### Changed
+
+- **禁用态光标统一**：`.dsu-input:disabled` 的 `cursor` 从 `default` 改为 `not-allowed`，被禁用的文本框、数字框与下拉触发器与开关/按钮/选项给出同一种鼠标反馈；只改光标，不改变禁用逻辑。
+- **数字字段改为失焦后报错**：输入过程中只清除旧错误，不再逐键展示越界/不合步长提示；`aria-invalid` 与错误消息的 `aria-describedby` 关联同样在失焦后才挂上，修正为合法值后立即清除。只影响展示时机，拒绝写入的逻辑不变。
+- **保存条状态可播报**：状态文本加 `role="status"`，保存成功/失败与只读提示会进入读屏的礼貌播报队列。
+
+### Tests
+
+- `test/card-ui.test.ts` 钉住两条浮层的 `position-area` 方向与说明浮层的 `width:max-content`；新增说明浮层 `aria-expanded`/`aria-controls`、点击外部关闭、真实浏览器 anchor 分支（不写 JS 坐标）的用例；数字字段用例改为校验“输入中不报错、失焦后报错、修正后立即清除”。
+- 运行期产物体积因新增 anchor 模块与浮层逻辑升到 33266 B，`test/dist-size.test.ts` 只按实际增量把预算从 33000 B 调到 34000 B（未重新套用 +25%）。
+
+### Not changed, deliberately
+
+- 不支持 CSS anchor 的宿主（含 happy-dom 测试）继续走 `place()` 的 JS 矩形回退。
+- 下拉与说明浮层没有改用 Popover API：宿主 Chromium 的 `popover="hint"` 与 `interestfor` 尚未可用，仍由组件自己管理显示与关闭。
+
 ## 0.2.6
 
 `./lib/tool-events` 的结算记录新增结构化失败身份 `error`，供消费方区分“审批被拒 / 派发前取消 / 已派发中止 / 普通失败”。这是附加字段；既有读取方、投影状态与发布面不变。
@@ -51,7 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- **CSS anchor 定位不再只声明锚而缺少落位规则**：`position-anchor` 单独不会让浮层跟随触发器；补上 `position-area: block-end span-inline-start`（真实 Chromium 实测浮层落在触发器左下，滚动后仍贴合，越界会翻转），特性探测也改为检查实际依赖的 `position-area`。
+- **CSS anchor 定位不再只声明锚而缺少落位规则**：`position-anchor` 单独不会让浮层跟随触发器；补上 `position-area: block-end span-inline-start`（该值在 0.2.7 更正为 `span-inline-end`：起始列会把浮层钉到视口左边缘），特性探测也改为检查实际依赖的 `position-area`。
 - **装饰器快速门槛不再漏判 `[` / `=` 后的装饰器**：`const C = [@dec class {}]` 与 `=/*c*/@dec class {}` 原先被判定为“没有装饰器”，原文直接进产物会得到非法 JS。判据扩到可开启类表达式的结构位置，并用 `maskNonCode` 先遮蔽注释与字符串；字符串里的 `@foo` 不再白跑一次 tsc。
 - **声明说明符改写不再误伤注释与字面量类型**：`canonicalizeDeclarationSpecifiers` 先按等长遮蔽文本校验命中位置，JSDoc 示例与 `type P = 'from "./x.ts"'` 里的路径原样保留。
 - **声明产物换入失败不再丢上一轮 `types/`**：旧目录先挪到备份再换入新目录，换入失败时恢复备份；恢复也失败时错误信息点名备份路径。Windows 的 rename 退避重试复用构建机械代码里的同一实现。

@@ -33,7 +33,7 @@ export function ToggleField(
   );
 }
 
-/** 数字行：以显示单位读写，越界值不写入。 */
+/** 数字行：以显示单位读写，越界值不写入，失焦后才提示。 */
 export function NumberField(
   props: FieldBase & {
     value: number | undefined;
@@ -50,11 +50,13 @@ export function NumberField(
     typeof props.value === "number" && Number.isFinite(props.value) ? String(props.value) : "";
   const [draft, setDraft] = useState(text);
   const [invalid, setInvalid] = useState(false);
+  const [showInvalid, setShowInvalid] = useState(false);
   const lastEmitted = useRef<number | undefined>(undefined);
   const controlId = useId();
   const errorId = useId();
   const hintId = props.hint === undefined ? undefined : `${controlId}-hint`;
-  const describedByIds = [hintId, invalid ? errorId : undefined].filter(
+  const showError = invalid && showInvalid;
+  const describedByIds = [hintId, showError ? errorId : undefined].filter(
     (entry): entry is string => entry !== undefined,
   );
   const describedBy = describedByIds.length === 0 ? undefined : describedByIds.join(" ");
@@ -68,6 +70,7 @@ export function NumberField(
     lastEmitted.current = props.value;
     setDraft(text);
     setInvalid(false);
+    setShowInvalid(false);
   }, [props.value, text]);
 
   const accepts = (value: number): boolean => {
@@ -86,6 +89,8 @@ export function NumberField(
   };
 
   const change = (next: string): void => {
+    // 输入过程中只清错误，不提前报错；越界/不合步长在失焦时再展示（forms 指南的校验时机）。
+    setShowInvalid(false);
     setDraft(next);
     if (next === "") {
       setInvalid(false);
@@ -111,6 +116,11 @@ export function NumberField(
     setDraft(String(Number(draft)));
   };
 
+  const blur = (): void => {
+    setShowInvalid(invalid);
+    normalize();
+  };
+
   return createElement(
     Field,
     { ...props, controlId },
@@ -130,20 +140,20 @@ export function NumberField(
           max: props.max,
           step: props.step,
           placeholder: props.placeholder,
-          "aria-invalid": invalid || undefined,
+          "aria-invalid": showError || undefined,
           "aria-describedby": describedBy,
           "data-field": props.field,
           disabled: props.disabled === true,
           onChange: (event: { target: { value: string } }) => {
             change(event.target.value);
           },
-          onBlur: normalize,
+          onBlur: blur,
         }),
         props.unit === undefined
           ? null
           : createElement("span", { className: "dsu-unit" }, props.unit),
       ),
-      invalid
+      showError
         ? createElement("p", { className: "dsu-error", id: errorId }, props.invalidHint)
         : null,
     ),

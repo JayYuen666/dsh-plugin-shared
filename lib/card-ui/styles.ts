@@ -19,11 +19,11 @@ export const CARD_UI_CSS = `
 .dsu-helpBtn{appearance:none;border:0;background:transparent;padding:0;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);cursor:help;border-radius:50%;flex:none}
 .dsu-help:hover .dsu-helpBtn,.dsu-helpBtn:focus-visible{color:var(--dsw-alias-label-primary)}
 .dsu-helpBtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}
-.dsu-tip{position:fixed;z-index:60;box-sizing:border-box;max-width:min(340px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;overflow-wrap:anywhere;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);box-shadow:0 12px 32px rgb(0 0 0 / 45%);font-size:12px;line-height:1.6;font-weight:400;color:var(--dsw-alias-label-secondary)}
+.dsu-tip{width:max-content;position:fixed;position-area:block-end span-inline-end;justify-self:start;margin-top:8px;z-index:60;box-sizing:border-box;max-width:min(340px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;overflow-wrap:anywhere;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);box-shadow:0 12px 32px rgb(0 0 0 / 45%);font-size:12px;line-height:1.6;font-weight:400;color:var(--dsw-alias-label-secondary)}
 .dsu-input{width:100%;height:34px;padding:0 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
 .dsu-input:focus-visible{outline:none;border-color:var(--dsw-alias-state-business-primary)}
 .dsu-input[aria-invalid="true"]{border-color:var(--dsw-alias-state-error-primary)}
-.dsu-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}
+.dsu-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}
 .dsu-input::placeholder{color:var(--dsw-alias-label-tertiary)}
 .dsu-textarea{height:auto;min-height:96px;padding:8px 12px;line-height:1.6;resize:vertical}
 .dsu-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -44,7 +44,7 @@ export const CARD_UI_CSS = `
 .dsu-selectValue{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsu-chevron{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s}
 .dsu-select[aria-expanded="true"] .dsu-chevron{transform:rotate(180deg)}
-.dsu-menu{position:fixed;position-area:block-end span-inline-start;justify-self:start;margin-top:6px;z-index:70;padding:4px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);border-radius:12px;box-shadow:0 12px 32px rgb(0 0 0 / 50%);max-height:280px;overflow:auto}
+.dsu-menu{position:fixed;position-area:block-end span-inline-end;justify-self:start;margin-top:6px;z-index:70;padding:4px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);border-radius:12px;box-shadow:0 12px 32px rgb(0 0 0 / 50%);max-height:280px;overflow:auto}
 .dsu-option{appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.4;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;cursor:pointer;text-align:left}
 .dsu-option:hover,.dsu-option[data-active="true"]{background:var(--dsw-alias-bg-layer-3)}
 .dsu-option:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}

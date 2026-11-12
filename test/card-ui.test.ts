@@ -27,10 +27,13 @@ describe("card-ui 样式表", () => {
       ".dsu-field",
       "grid-template-columns:minmax(0,1fr) minmax(240px,360px)",
       ".dsu-switch",
+      ".dsu-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}",
       ".dsu-menu",
-      "position-area:block-end span-inline-start",
+      "position-area:block-end span-inline-end",
+      ".dsu-tip{width:max-content;position:fixed;position-area:block-end span-inline-end",
       "justify-self:start",
       "margin-top:6px",
+      "margin-top:8px",
       ".dsu-savebar",
       "@media (max-width:640px)",
     ]) {
@@ -163,6 +166,32 @@ describe("field 与说明浮层", () => {
     await view.unmount();
   });
 
+  it("InfoTip 用 aria-expanded 与 aria-controls 表示展开态", async () => {
+    const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+    const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
+    const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+    const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+    assert.equal(btn.getAttribute("aria-expanded"), "false");
+    assert.equal(btn.getAttribute("aria-controls"), tip.id);
+    assert.equal(btn.getAttribute("aria-pressed"), null);
+    assert.equal(btn.getAttribute("aria-describedby"), null);
+    await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
+    assert.equal(btn.getAttribute("aria-expanded"), "true");
+    await view.unmount();
+  });
+
+  it("点击外部关闭钉住的说明浮层，点击浮层内部不关闭", async () => {
+    const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+    const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+    const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+    await click(btn);
+    await fire(tip, new MouseEvent("pointerdown", { bubbles: true }));
+    assert.equal(tip.hidden, false);
+    await fire(document.body, new MouseEvent("pointerdown", { bubbles: true }));
+    assert.equal(tip.hidden, true);
+    await view.unmount();
+  });
+
   it("聚焦显示、失焦延迟隐藏", async () => {
     vi.useFakeTimers();
     const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
@@ -268,11 +297,15 @@ describe("输入字段", () => {
     await typeInto(input, "12");
     assert.deepEqual(seen, [12]);
     await typeInto(input, "99");
+    assert.equal(input.getAttribute("aria-invalid"), null);
+    assert.equal(view.container.querySelector(".dsu-error"), null);
+    await fire(input, new FocusEvent("focusout", { bubbles: true }));
     assert.equal(input.getAttribute("aria-invalid"), "true");
     assert.equal(textOf(view.container, ".dsu-error"), "越界");
     await typeInto(input, "");
     assert.deepEqual(seen, [12, undefined]);
     assert.equal(input.getAttribute("aria-invalid"), null);
+    assert.equal(view.container.querySelector(".dsu-error"), null);
     await view.unmount();
   });
 
@@ -925,6 +958,7 @@ describe("saveBar", () => {
     );
     const status = view.container.querySelector<HTMLElement>(".dsu-status")!;
     assert.equal(status.textContent, "写入失败");
+    assert.equal(status.getAttribute("role"), "status");
     assert.ok(status.classList.contains("dsu-statusError"));
     await view.unmount();
   });
@@ -959,7 +993,31 @@ describe("卡片边界交互", () => {
     await fire(globalThis, new Event("resize"));
     assert.equal(tip.style.top, "752px");
     assert.equal(tip.style.left, `${globalThis.innerWidth - 8}px`);
+    assert.equal(tip.style.marginTop, "0px");
     await view.unmount();
+  });
+
+  it("真实浏览器支持 CSS anchor 时说明浮层不写 JS 坐标", async () => {
+    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
+    delete (globalThis as { happyDOM?: unknown }).happyDOM;
+    vi.stubGlobal("CSS", { supports: () => true });
+    try {
+      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+      const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
+      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+      await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
+      assert.equal(tip.style.left, "");
+      assert.equal(tip.style.top, "");
+      assert.equal(tip.style.marginTop, "");
+      assert.match(btn.getAttribute("style") ?? "", /anchor-name:\s*--dsu-tip-/u);
+      assert.match(tip.getAttribute("style") ?? "", /position-anchor:\s*--dsu-tip-/u);
+      assert.match(tip.getAttribute("style") ?? "", /position-try-fallbacks:/u);
+      await view.unmount();
+    } finally {
+      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("关闭状态下滚动/缩放/Esc 不改变状态", async () => {
@@ -1528,6 +1586,7 @@ describe("评审修复", () => {
     );
     const input = view.container.querySelector<HTMLInputElement>("input")!;
     await typeInto(input, "99");
+    await fire(input, new FocusEvent("focusout", { bubbles: true }));
     const describedBy = input.getAttribute("aria-describedby")?.split(" ") ?? [];
     assert.equal(describedBy.length, 2);
     assert.ok(describedBy.includes(`${input.id}-hint`));
@@ -1760,6 +1819,8 @@ describe("评审修复", () => {
     const input = view.container.querySelector<HTMLInputElement>("input")!;
     await typeInto(input, "1.2");
     assert.deepEqual(seen, []);
+    assert.equal(input.getAttribute("aria-invalid"), null);
+    await fire(input, new FocusEvent("focusout", { bubbles: true }));
     assert.equal(input.getAttribute("aria-invalid"), "true");
     await typeInto(input, "1.5");
     assert.deepEqual(seen, [1.5]);

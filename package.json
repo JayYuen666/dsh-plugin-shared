@@ -1,6 +1,6 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。宿主半由各插件 import；客户端半以 ./client 共享行由插件 patch 启用，不由用户单独停用",
   "keywords": [
     "cordis",
