@@ -2,6 +2,42 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.5
+
+设置卡下拉浮层改用 CSS anchor 定位（抗缩放/平移）；宿主开发基线抬到 `0.2.2-rc.2`，支持窗口收到 `^0.2.2-rc.1`；新增两个 `./lib/*` 子路径，供消费方共用装饰器预转换与 Remote 标记。组件 API 不变；宿主窗口收窄为单条 `^0.2.2-rc.1`，钉在旧宿主线的消费方需同步宿主。
+
+### Added
+
+- **`./lib/decorator-lowering`：标准装饰器的预转换，构建与测试两条流水线共用。**
+  官方 Typert Remote 只能用 TC39 标准装饰器声明，而 rolldown/oxc 不降级它——它把
+  `@Remote("x")` 原样吐进产物（一段非法 JS，插件在宿主里加载失败而**构建报成功**），
+  oxc 驱动的 vitest 更是连文件都加载不了（`SyntaxError`）。本模块跑一次 `tsc` 把单个
+  文件编成 JS 交回流水线，导出 `needsDecoratorLowering` / `lowerStandardDecorators` /
+  `rolldownDecorators` / `viteDecorators`。tsc 入口由**调用方解析后注入**——shared 不替
+  消费方解析它自己没声明的依赖。原先只有 `dsh-danger-guard` 有一份 339 行的本地副本，
+  现在它已删除并改从这里取。
+- **`./lib/remote-marker`：`markRemote(prototype, methodName)`，`@Remote` 的程序化等价物。**
+  源码不写装饰器语法的消费方（不需要预转换流水线）用它把同一枚描述符打到类原型上；
+  实现就是按 TC39 `ClassMethodDecoratorContext` 的形状调同一个 decorator 函数。原先
+  `dsh-zvec-grep` / `dsh-lesson-loop` / `dsh-scrapling` 各有一份逐字副本（前两份 md5 相同），
+  现在它们改从这里取。`Remote` 是值导入，故本子路径的外部依赖落 **optional peer**，
+  且**不进根 barrel**（根 barrel 的消费方里有不装 typert 的插件）。
+
+### Changed
+
+- **下拉浮层抗缩放定位**：`card-ui/select` 的触发器与浮层加 CSS anchor（`anchor-name` / `position-anchor` / `position-area` / `position-try-fallbacks`）。支持 CSS anchor 的浏览器（宿主 webview）里浮层由 `position-area` 真正贴住触发器，缩放/平移不漂，越界时由 `flip-block` / `flip-inline` 翻转；不支持处（happy-dom 测试）回退既有 JS 矩形定位。浮层 DOM 结构、键盘交互与组件导出不变。
+- **宿主开发基线抬到 `0.2.2-rc.2`**：`devDependencies` 整组 `@deepseek-ai/dsh-*` 抬到 `0.2.2-rc.2`，并补上 rc.2 新增的 `@deepseek-ai/dsh-error`（`dsh-llm` 的精确 peer，`autoInstallPeers: false` 下须显式声明）。
+- **支持窗口收到 `^0.2.2-rc.1`**：`engines.dsh` 与 `@deepseek-ai/dsh*` peer 由 `^0.2.1-rc.5 || ^0.2.2-alpha.3` 改为 `^0.2.2-rc.1`（单条 0.2.2 线）。devDependencies 仍精确钉版。
+- **根 catalog 的工具链升级到最新**：`oxfmt` 0.78.0、`oxlint` 1.93.0、`oxlint-tsgolint` 7.0.2006、`rolldown` 1.3.2、`vite` 8.3.8；取值由根 `scripts/seed-root.mjs` 的 `TARGETS` 与根 `pnpm-workspace.yaml` 下发到十仓生成物，`package.json` 继续写 `catalog:`。其余第三方依赖已是 registry 上的最新版。宿主 `@deepseek-ai/*` 不跟随 `latest` 标签（它落后于本仓验证的 `0.2.2-rc.2`），保持 rc.2。
+
+### Fixed
+
+- **CSS anchor 定位不再只声明锚而缺少落位规则**：`position-anchor` 单独不会让浮层跟随触发器；补上 `position-area: block-end span-inline-start`（真实 Chromium 实测浮层落在触发器左下，滚动后仍贴合，越界会翻转），特性探测也改为检查实际依赖的 `position-area`。
+- **装饰器快速门槛不再漏判 `[` / `=` 后的装饰器**：`const C = [@dec class {}]` 与 `=/*c*/@dec class {}` 原先被判定为“没有装饰器”，原文直接进产物会得到非法 JS。判据扩到可开启类表达式的结构位置，并用 `maskNonCode` 先遮蔽注释与字符串；字符串里的 `@foo` 不再白跑一次 tsc。
+- **声明说明符改写不再误伤注释与字面量类型**：`canonicalizeDeclarationSpecifiers` 先按等长遮蔽文本校验命中位置，JSDoc 示例与 `type P = 'from "./x.ts"'` 里的路径原样保留。
+- **声明产物换入失败不再丢上一轮 `types/`**：旧目录先挪到备份再换入新目录，换入失败时恢复备份；恢复也失败时错误信息点名备份路径。Windows 的 rename 退避重试复用构建机械代码里的同一实现。
+- **注释与文档对齐**：修正 README/README.zh-CN 里过时的 dev 钉版（rc.2）、peer 值导入说明、React 版本基线、barrel/模块登记规则、CI Node 矩阵，并补上 `remote-marker` / `decorator-lowering` 的模块表条目；删除 0.2.5 条目里并不存在的 `@deepseek-ai/schemastery` peer 声明。
+
 ## 0.2.4
 
 ### Added

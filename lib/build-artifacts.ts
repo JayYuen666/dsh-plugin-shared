@@ -141,7 +141,7 @@ const RENAME_RETRY_DELAYS_MS = [50, 100, 200];
  * @param to - 目标文件
  * @param attempt - 已重试次数
  */
-async function renameWithRetry(from: string, to: string, attempt = 0): Promise<void> {
+export async function renameWithRetry(from: string, to: string, attempt = 0): Promise<void> {
   try {
     await rename(from, to);
   } catch (error) {
@@ -200,6 +200,71 @@ export async function writeArtifact(target: string, text: string): Promise<void>
     }
     throw new Error(`写产物失败：${target}（草稿 ${scratch}）：${String(error)}`, { cause: error });
   }
+}
+
+/** 把一段字符串/模板字面量按等长方式写进 out，返回结束引号之后的位置。 */
+function maskString(code: string, at: number, out: string[]): number {
+  const quote = code.charAt(at);
+  out.push(quote);
+  let index = at + 1;
+  while (index < code.length) {
+    const current = code.charAt(index);
+    if (current === "\\") {
+      // 转义对整体遮蔽；反斜杠后的换行是行延续，换行位置必须保留。
+      out.push(code.charAt(index + 1) === "\n" ? " \n" : "  ");
+      index += 2;
+    } else if (current === quote) {
+      out.push(current);
+      return index + 1;
+    } else {
+      out.push(current === "\n" ? "\n" : " ");
+      index += 1;
+    }
+  }
+  return index;
+}
+
+/**
+ * 把注释与字符串内容替换成空格，保留长度与换行；引号/反引号本身保留。
+ *
+ * 用途是给**形状判断**（装饰器语法、声明里的模块说明符）提供一份与原文逐字符对齐的
+ * “只看程序正文”文本：调用方拿同一套下标回到原文取值，既不误伤注释里的示例，也不会
+ * 把字面量类型里的 `from "./x.ts"` 当成真实说明符。
+ *
+ * 字符串里的转义对整体遮蔽；模板字面量的 `${}` 不做二次解析（本包不需要在表达式里
+ * 找装饰器或说明符）。正则字面量不做词法识别，里面的 `@` 可能造成一次多余的 tsc 调用
+ * ——方向是安全的（只多跑一次编译，不产出错字节）。
+ * @param code - 源文本
+ * @returns 与入参等长、换行位置不变的遮蔽文本
+ */
+export function maskNonCode(code: string): string {
+  const out: string[] = [];
+  let cursor = 0;
+  const blank = (from: number, to: number): void => {
+    for (let index = from; index < to; index += 1) {
+      out.push(code.charAt(index) === "\n" ? "\n" : " ");
+    }
+  };
+  while (cursor < code.length) {
+    const ch = code.charAt(cursor);
+    if (ch === '"' || ch === "'" || ch === "`") {
+      cursor = maskString(code, cursor, out);
+    } else if (code.startsWith("//", cursor)) {
+      const newline = code.indexOf("\n", cursor);
+      const end = newline === -1 ? code.length : newline;
+      blank(cursor, end);
+      cursor = end;
+    } else if (code.startsWith("/*", cursor)) {
+      const close = code.indexOf("*/", cursor + 2);
+      const end = close === -1 ? code.length : close + 2;
+      blank(cursor, end);
+      cursor = end;
+    } else {
+      out.push(ch);
+      cursor += 1;
+    }
+  }
+  return out.join("");
 }
 
 /** 异常路径上释放 rolldown bundle 的最小接口。 */

@@ -16,6 +16,14 @@ export default definePluginConfig({
       files: ["test/config-oxlint.test.ts", "test/build-types-facet.test.ts", "lib/build-types.ts"],
       apis: ["execFileSync"],
     },
+    {
+      // 装饰器预转换三件套：跑一次 `tsc` 子进程（execFileSync）、在系统临时目录里开一个
+      // scratch 目录（mkdtempSync）、收尾时删掉它（rmSync）。三个调用都在 lib/decorator-lowering.ts
+      // 里，且都在两条流水线的**同步**钩子上（rolldown/vite 的 transform 只吃同步返回），
+      // 换成 async 会与钩子的签名直接冲突。
+      files: ["lib/decorator-lowering.ts"],
+      apis: ["execFileSync", "mkdtempSync", "rmSync"],
+    },
   ],
   // 唯一一条包内例外，范围收到单个用例文件。
   // `unicorn/no-thenable` 禁的是「把 thenable 当公开 API 自造」。而 lesson-bus 的被测对象

@@ -13,6 +13,7 @@ import {
   closeQuietly,
   invokedDirectly,
   isRecord,
+  maskNonCode,
   packageNameOf,
   readManifest,
   singleEntryChunk,
@@ -110,6 +111,31 @@ describe("packageNameOf", () => {
     assert.equal(packageNameOf("pkg/sub"), "pkg");
     assert.equal(packageNameOf("@scope"), "@scope");
     assert.equal(packageNameOf("@scope/pkg/sub"), "@scope/pkg");
+  });
+});
+
+describe("maskNonCode", () => {
+  it("行注释与块注释按正文长度遮蔽，换行原样保留", () => {
+    assert.equal(maskNonCode("a // @x"), "a      ");
+    assert.equal(maskNonCode("a // @x\nb"), "a      \nb");
+    assert.equal(maskNonCode("a /* @x */ b"), "a          b");
+    assert.equal(maskNonCode("a /* @x\n@y */ b"), "a      \n      b");
+    assert.equal(maskNonCode("a /* @x"), "a      ");
+  });
+
+  it("三种字符串只保留引号，转义与换行不泄漏内容", () => {
+    assert.equal(maskNonCode('"@x"'), '"  "');
+    assert.equal(maskNonCode("'@x'"), "'  '");
+    assert.equal(maskNonCode("`@x`"), "`  `");
+    // 转义引号不结束字符串；反斜杠后的换行属于行延续，换行位置必须保留。
+    assert.equal(maskNonCode(String.raw`"a\"@x"`), '"     "');
+    assert.equal(maskNonCode('"a\\\n@x"'), '"  \n  "');
+    assert.equal(maskNonCode('"a\nb"'), '" \n "');
+  });
+
+  it("未闭合字符串吃到文件尾", () => {
+    assert.equal(maskNonCode('"@x'), '"  ');
+    assert.equal(maskNonCode("'@x"), "'  ");
   });
 });
 

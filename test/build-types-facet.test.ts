@@ -6,7 +6,7 @@
 import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -69,6 +69,22 @@ describe("canonicalizeDeclarationSpecifiers", () => {
     const out = canonicalizeDeclarationSpecifiers(text);
     assert.ok(out.includes('export type P = "./lib/foo.ts";'));
     assert.ok(out.includes('from "./types/x.d.ts"'));
+  });
+
+  it("注释与字面量里的 from / import() / declare module 不改写", () => {
+    const text = [
+      '/** 示例：import { x } from "./lib/foo.ts" */',
+      "export type P = 'from \"./lib/foo.ts\"';",
+      "export type Q = 'import(\"./lib/bar.ts\")';",
+      "export type R = 'declare module \"./lib/baz.ts\"';",
+      'import { x } from "./lib/real.ts";',
+    ].join("\n");
+    const out = canonicalizeDeclarationSpecifiers(text);
+    assert.ok(out.includes('import { x } from "./lib/foo.ts"'));
+    assert.ok(out.includes("export type P = 'from \"./lib/foo.ts\"'"));
+    assert.ok(out.includes("export type Q = 'import(\"./lib/bar.ts\")'"));
+    assert.ok(out.includes("export type R = 'declare module \"./lib/baz.ts\"'"));
+    assert.ok(out.includes('from "./lib/real.js"'));
   });
 
   it("裸说明符不动；非贪婪不吃掉 .d 段", () => {
@@ -146,6 +162,13 @@ describe("listDeclarations", () => {
 
 /** 最小测试数据应产出的声明清单（多处共用，避免字面量重复）。 */
 const EXPECTED_DECLS = ["host.d.ts", "lib/a.d.ts"] as const;
+/** 上一轮产物里的哨兵文件与正文（失败路径多条用例共用）。 */
+const SENTINEL_DECL = "sentinel.d.ts";
+const SENTINEL_TEXT = "export {};\n";
+/** 换入必失败的 rename 注入（没有旧产物可恢复的用例）。 */
+const renameToNothing = async (): Promise<void> => {
+  throw new Error("synthetic no-target failure");
+};
 
 /** 造一个最小声明测试数据：host.ts 从 ./lib/a.ts 值导入。 */
 async function typesFixture(): Promise<string> {
@@ -200,12 +223,101 @@ describe("buildDeclarations", () => {
       "utf8",
     );
     await mkdir(path.join(root, "types"));
-    await writeFile(path.join(root, "types", "sentinel.d.ts"), "export {};\n", "utf8");
+    await writeFile(path.join(root, "types", SENTINEL_DECL), SENTINEL_TEXT, "utf8");
     try {
       await assert.rejects(buildDeclarations({ root, tscEntry: tscEntryOf() }), /TS2307|missing/u);
       assert.equal(existsSync(path.join(root, ".tmp", "types")), false);
       const kept = await readdir(path.join(root, "types"));
-      assert.deepEqual(kept, ["sentinel.d.ts"]);
+      assert.deepEqual(kept, [SENTINEL_DECL]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("成功：已有 types/ 时旧目录进备份，换入后备份被删除", async () => {
+    const root = await typesFixture();
+    await mkdir(path.join(root, "types"));
+    await writeFile(path.join(root, "types", SENTINEL_DECL), SENTINEL_TEXT, "utf8");
+    try {
+      const files = await buildDeclarations({ root, tscEntry: tscEntryOf() });
+      assert.deepEqual(files.toSorted(), [...EXPECTED_DECLS]);
+      assert.equal(existsSync(path.join(root, "types", SENTINEL_DECL)), false);
+      const entries = await readdir(root);
+      assert.equal(
+        entries.some((name) => name.startsWith("types.backup-")),
+        false,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("换入失败且没有旧产物：直接抛原错误，scratch 清掉", async () => {
+    const root = await typesFixture();
+    try {
+      await assert.rejects(
+        buildDeclarations({ root, tscEntry: tscEntryOf(), rename: renameToNothing }),
+        /synthetic no-target failure/u,
+      );
+      assert.equal(existsSync(path.join(root, "types")), false);
+      assert.equal(existsSync(path.join(root, ".tmp", "types")), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("换入失败：旧 types/ 被恢复，scratch 清掉", async () => {
+    const root = await typesFixture();
+    await mkdir(path.join(root, "types"));
+    await writeFile(path.join(root, "types", SENTINEL_DECL), SENTINEL_TEXT, "utf8");
+    let calls = 0;
+    const renameOnceFails = async (from: string, to: string): Promise<void> => {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error("synthetic rename failure");
+      }
+      await rename(from, to);
+    };
+    try {
+      await assert.rejects(
+        buildDeclarations({ root, tscEntry: tscEntryOf(), rename: renameOnceFails }),
+        /synthetic rename failure/u,
+      );
+      assert.equal(calls, 3, "旧目录挪备份、新目录换入失败、备份恢复各一次");
+      const kept = await readdir(path.join(root, "types"));
+      assert.deepEqual(kept, [SENTINEL_DECL]);
+      assert.equal(existsSync(path.join(root, ".tmp", "types")), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("换入失败且恢复也失败：错误点名备份目录，备份仍在磁盘上", async () => {
+    const root = await typesFixture();
+    await mkdir(path.join(root, "types"));
+    await writeFile(path.join(root, "types", SENTINEL_DECL), SENTINEL_TEXT, "utf8");
+    let calls = 0;
+    const renameAlwaysFails = async (from: string, to: string): Promise<void> => {
+      calls += 1;
+      if (calls >= 2) {
+        throw new Error("synthetic rename failure");
+      }
+      await rename(from, to);
+    };
+    try {
+      await assert.rejects(
+        buildDeclarations({ root, tscEntry: tscEntryOf(), rename: renameAlwaysFails }),
+        /备份目录未能恢复/u,
+      );
+      assert.equal(
+        existsSync(path.join(root, "types")),
+        false,
+        "换入与恢复都失败后旧目录仅在备份里",
+      );
+      const entries = await readdir(root);
+      const backups = entries.filter((name) => name.startsWith("types.backup-"));
+      assert.equal(backups.length, 1);
+      assert.equal(existsSync(path.join(root, backups[0] ?? "")), true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

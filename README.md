@@ -12,7 +12,7 @@
   <a href="https://github.com/JayYuen666/dsh-plugin-shared/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JayYuen666/dsh-plugin-shared/ci.yml?branch=main&style=flat-square&label=ci" alt="ci" /></a>
   <img src="https://img.shields.io/badge/license-MIT-4c1?style=flat-square" alt="MIT" />
   <img src="https://img.shields.io/badge/node-%3E%3D24.9-4c1?style=flat-square&logo=nodedotjs&logoColor=white" alt="node" />
-  <img src="https://img.shields.io/badge/dsh-%5E0.2.1--rc.5-658EFF?style=flat-square" alt="dsh" />
+  <img src="https://img.shields.io/badge/dsh-%5E0.2.2--rc.1-658EFF?style=flat-square" alt="dsh" />
   <a href="https://github.com/deepseek-ai/deepseek-harness"><img src="https://img.shields.io/badge/powered_by_dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white" alt="powered by dsh" /></a>
 </p>
 
@@ -31,18 +31,23 @@
 
 ## <img src="https://api.iconify.design/lucide/file-text.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> Contents
 
-- [What it does](#what-it-does)
-- [Install](#install)
-- [Verify it is live](#verify-it-is-live)
-- [What it does not provide](#what-it-does-not-provide)
-- [Modules](#modules)
-- [The config exports](#the-config-exports)
-- [Known boundaries](#known-boundaries)
-- [Data and privacy](#data-and-privacy)
-- [Versioning and compatibility](#versioning-and-compatibility)
-- [FAQ](#faq)
-- [Development](#development)
-- [License](#license)
+- [ Contents](#-contents)
+- [ What it does](#-what-it-does)
+  - [What belongs here](#what-belongs-here)
+- [ Install](#-install)
+  - [Dependency requirements](#dependency-requirements)
+  - [Shared version floor](#shared-version-floor)
+  - [What ships](#what-ships)
+- [ Verify it is live](#-verify-it-is-live)
+- [ What it does not provide](#-what-it-does-not-provide)
+- [ Modules](#-modules)
+- [ The config exports](#-the-config-exports)
+- [ Known boundaries](#-known-boundaries)
+- [ Data and privacy](#-data-and-privacy)
+- [ Versioning and compatibility](#-versioning-and-compatibility)
+- [ FAQ](#-faq)
+- [ Development](#-development)
+- [ License](#-license)
 
 ## <img src="https://api.iconify.design/lucide/shield.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> What it does
 
@@ -79,7 +84,7 @@ End users do not install or enable it separately: any consumer package pulls it 
 | Requirement | Value |
 | --- | --- |
 | Node.js | `>=24.9.0` — the publish-side floor the plugin family shares, so a package declaring the same `engines.node` never rejects this library |
-| dsh | `^0.2.1-rc.5 || ^0.2.2-alpha.3`, declared as an **optional** peer (importing this package does not need a host) |
+| dsh | `^0.2.2-rc.1`, declared as an **optional** peer (importing this package does not need a host) |
 | Module format | ESM only. `require()` works only where Node supports `require(esm)` |
 | Tree shaking | `"sideEffects": false` |
 
@@ -92,8 +97,8 @@ End users do not install or enable it separately: any consumer package pulls it 
 - **`@deepseek-ai/dsh-fs-patch` is the one allowed runtime dependency.** It is a stateless pure parser: it holds no service instance or module-level identity, so a duplicate copy cannot split a `Symbol`. Shipping it makes `apply_patch` syntax resolvable on every host in the supported window. Every other host package stays in peer/dev.
 - **A host package under `dependencies` disables the consumer's host.** Profiles install with `nodeLinker: hoisted` and `autoInstallPeers: false`, so a listed host package is materialized as a real directory next to the copy the host process already loaded. `@deepseek-ai/dsh-tools` keys its tool-runtime scheduler with a plain `Symbol` (not `Symbol.for`), so symbol identity is per module instance: the host reads the scheduler from the duplicate and gets `undefined`, and every native tool call throws. Build, typecheck and tests pass up to that point; the invariant has to be stated in the manifest.
 - **`@deepseek-ai/dsh-output-retention` is the one required peer.** It is a value import (`truncateEnd`), provided by the host at runtime, and marked `"optional": false` in `peerDependenciesMeta` rather than left implicit — a peer left out of that table is a hard requirement for npm 7+.
-- **The remaining peers are optional.** Except for the bare `@deepseek-ai/dsh` peer, which only declares the host line, they carry type declarations only. `devDependencies` holds the exact development line, including `@deepseek-ai/dsh-llm` and `@deepseek-ai/dsh-util-values`, whose types the local PTC declarations name, and `@deepseek-ai/dsh-tool-executor-ptc`, whose types only the parity check reads. Profiles never install peers, so no duplicate appears.
-- **Version requirements separate the install gate from the build baseline.** Every `@deepseek-ai/dsh-*` peer carries the same window as `engines.dsh`, and that window names two host lines: a caret's prerelease comparison only covers its own patch tuple, so a single `^0.2.1-rc.5` does not admit `0.2.2-alpha.*` — measured with this workspace's semver, `satisfies('0.2.2-alpha.3','^0.2.1-rc.5')` is false and `{includePrerelease:true}` turns it true, and that flag is exactly what the host's own comparison passes. The cost is measured and belongs here: npm resolves each peer on its own, while the host family pins its own line inside every member (any member of the `0.2.1-rc` line asks cordis `~4.0.5`, the `0.2.2-alpha.2` host asks `~4.0.6-alpha.1`, `0.2.2-alpha.3` asks `~4.0.6-alpha.2`, and `0.2.2-rc.1` asks `~4.1.0`), so a consumer that pins the older host line can still stop at `ERESOLVE`, while the same tree resolves on the newest line. The union also admits later prereleases in the same `0.2.2` tuple, such as `0.2.2-rc.1`; that is range semantics, not a compatibility certification. The verified baseline for this release is `0.2.2-rc.1`; the dev pins and host parity check have moved to that line. pnpm — the installer this workspace supports, and the one behind the host's `dsh plugin add` — resolves both shapes and only prints a peer warning. The loading gate is unaffected either way, because the host compares `engines.dsh` with `includePrerelease: true`. `devDependencies` pin the exact line this repository compiles and tests against (`0.2.2-rc.1`) and must stay uniform: one `dsh-session` version per tree keeps the nominal types recognizable. `@deepseek-ai/cordis` stays exact in `devDependencies` (`4.1.0`) and its peer range `^4.0.5||^4.0.6-alpha.1` covers both host lines, because one package cannot mix lines the way the host family does: alpha.2 requires `~4.0.6-alpha.1`, alpha.3 requires `~4.0.6-alpha.2`, and the range also admits `4.1.0`. The cordis union carries no spaces around `||`; the install-matrix probe reads one specifier per line now, while the dsh-family window keeps spaces. `test/publish-manifest.test.ts` checks each of these separately.
+- **The remaining peers are optional.** Except for the bare `@deepseek-ai/dsh` peer, which only declares the host line, most carry type declarations only. Two subpath-scoped value peers are the exceptions: `react` is value-imported by `./lib/card-ui`, and `@deepseek-ai/dsh-typert-protocol` by `./lib/remote-marker`; both stay optional, so only a consumer of that subpath needs the package present. `devDependencies` holds the exact development line, including `@deepseek-ai/dsh-llm` and `@deepseek-ai/dsh-util-values`, whose types the local PTC declarations name, and `@deepseek-ai/dsh-tool-executor-ptc`, whose types only the parity check reads. Profiles never install peers, so no duplicate appears.
+- **Version requirements separate the install gate from the build baseline.** Every `@deepseek-ai/dsh-*` peer carries the same window as `engines.dsh` — `^0.2.2-rc.1`, a single host line. A caret's prerelease comparison only covers its own patch tuple, so `^0.2.2-rc.1` admits `0.2.2-rc.1`, later `0.2.2` prereleases and `0.2.2`/`0.2.x`, but not the older `0.2.1` line or `0.2.2-alpha.*`; the host's own comparison passes `{includePrerelease:true}`, which is what lets same-tuple prereleases participate. The cost is measured and belongs here: npm resolves each peer on its own, while the host family pins its own line inside every member (`0.2.2-rc.1` asks cordis `~4.1.0` and schemastery `~3.19.0`), so a consumer that pins an older host line can still stop at `ERESOLVE`, while the same tree resolves on the supported line. pnpm — the installer this workspace supports, and the one behind the host's `dsh plugin add` — resolves both shapes and only prints a peer warning. The loading gate is unaffected either way, because the host compares `engines.dsh` with `includePrerelease: true`. `devDependencies` pin the exact line this repository compiles and tests against (`0.2.2-rc.2`) and must stay uniform: one `dsh-session` version per tree keeps the nominal types recognizable. `@deepseek-ai/cordis` stays exact in `devDependencies` (`4.1.0`); its peer range `^4.0.5||^4.0.6-alpha.1` is retained unchanged and admits `4.1.0`. The cordis union carries no spaces around `||`; the install-matrix probe reads one specifier per line now. `test/publish-manifest.test.ts` checks each of these separately.
 - Known upstream limitation: `@deepseek-ai/dsh-llm`'s declarations import `@deepseek-ai/dsh-attachment`, which that package does not declare. It is reached through `dsh-session`, so a consumer running with `skipLibCheck: false` sees `TS2307` from that package, not from this one. The published `./lib/tool-events` declaration also names `@deepseek-ai/dsh-util-values`, which is reached through `dsh-session` / `dsh-tools`; a consumer running with `skipLibCheck: false` must have that package resolvable as well.
 
 ### Shared version floor
@@ -107,12 +112,12 @@ A consumer profile can lock this package with a pnpm `overrides` entry. Lock it 
 - `publishConfig` carries `access` and `registry` and nothing else. Entry fields there are a trap: pnpm merges them onto the top level when publishing and npm does not, so one publisher would ship a package whose entry points name files that are not in the tarball.
 - `build` deletes `dist/` first, then emits the runtime artifacts, the config artifacts, the type declarations and the generated barrel declaration. Both builders minify; `test/dist-size.test.ts` keeps the runtime and config artifacts inside their budgets.
 - `prepare` runs `build`. It does not run when a consumer installs from the registry; it exists so packing, publishing and workspace links always ship a fresh `dist/`.
-- Adding a module means touching five places: the barrel in `lib/index.ts`, `exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, and a `test/<module>.test.ts`. The consistency checks in Development fail if one is missed.
+- Adding a runtime module means touching the barrel in `lib/index.ts`, `exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, and a `test/<module>.test.ts`. A subpath-only runtime module (like `remote-marker` or `card-ui`) is registered in `entries` and marked barrel-exempt instead; a build-time module (like `decorator-lowering`) goes into `buildFacets`. The consistency checks in Development fail if one is missed.
 
 ## <img src="https://api.iconify.design/lucide/circle-check.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> Verify it is live
 
 1. **A subpath resolves.** From the consuming package, `node -e 'import("@jayyuen66/dsh-plugin-shared/lib/record").then((m) => console.log(typeof m.isRecord))'` prints `function`. `ERR_MODULE_NOT_FOUND` means the dependency is not installed; `does not provide an export named ...` means the installed copy is older than the subpath you import.
-2. **The barrel resolves.** The same check against the bare package name returns the runtime modules. `canonicalize-region-paths` is the one module deliberately absent from the barrel; import it by subpath when a build script needs it.
+2. **The barrel resolves.** The same check against the bare package name returns the runtime modules. `canonicalize-region-paths` (build-time), `remote-marker` (value-imports typert), and `card-ui` (client-only) are deliberately absent from the barrel; import them by subpath.
 3. **A consumer host boots.** Start the profile that declares the plugin. A boot log containing `N entries did not activate` and `does not provide an export named ...` means the profile's `overrides` version is below the version that contains the subpath the consumer imports — raise the version, do not patch the plugin.
 4. **Local source edits reach the consumer.** Consumers load `dist/`, not `lib/`. Run `pnpm run build` after editing; `test/build-host.test.ts` compares the runtime artifacts on disk against an in-memory build and fails when they are stale. "The code changed but nothing happened" is almost always a stale artifact, not a caching bug.
 
@@ -130,11 +135,11 @@ The subpath column is the in-package specifier; value imports prefix it with the
 
 | Subpath | Provides |
 | --- | --- |
-| `.` | Barrel over the runtime modules below, served from `dist/plugin.js`: the same names plus `name` and a no-op `apply`, so the host loader can also take this package as a row. `canonicalize-region-paths` deliberately stays out, so a runtime consumer does not add an import for it; the client-only `card-ui` stays out for the same reason plus one more: the root barrel must not bring `react` into every consumer. |
+| `.` | Barrel over the runtime modules below, served from `dist/plugin.js`: the same names plus `name` and a no-op `apply`, so the host loader can also take this package as a row. `canonicalize-region-paths` (build-time), `remote-marker` (value-imports typert), and `card-ui` (client-only) deliberately stay out; the root barrel must not pull an unused package into every consumer. |
 | `./lib/tool-events` | `scanToolEvents` returns the `calls` / `results` tables, PTC sub-calls included; `toolEventRowsOf` handles a single event and already carries normalized `arguments` and `badArguments`. `editPathOf` returns a `kind`-discriminated `EditTarget` with only `write` / `read-view`; the path is `undefined` when it cannot be read. `applyPatchTargetsOf` parses the ordered operations of an `apply_patch` input with the official `dsh-fs-patch`; `editPathsOf` expands every write target, including both sides of a move. Record fields are `readonly`. Re-exports the official `SessionEvent`; `PtcDispatchStartEventData` / `PtcDispatchEventData` are declared in this package and augment `SessionEventMap` locally, because the host moved that augmentation between packages inside the supported window. |
 | `./lib/card-apply` | `claimApply` + `CardApplyCtx`: an apply idempotency guard built on an **own** flag on `globalThis` (a symbol, or `true` written by an outside holder) with `ctx.effect` cleanup. The flag is process-wide, so a second context on the same page is rejected by design. |
 | `./lib/card-diff` | `diffTouched`: which touched fields really differ from the snapshot, compared by form value. `undefined`, `null` and an absent key are one value; arrays and objects compare element by element; cycles terminate. |
-| `./lib/card-ui` | Client-only settings-card kit: `CardForm`, `Section`, `FieldGrid`, `StatusBar`, `Field`, `FieldLabel`, `InfoTip`, `ToggleField`, `NumberField`, `TextField`, `ListField`, `SelectField`, `SaveBar`, `splitHint` and the `CARD_UI_CSS` string. Built with `createElement` only; `react` is an optional peer and the subpath never enters the root barrel. React 18 runtime APIs only (`useId`, `useState`, `useEffect`, refs). |
+| `./lib/card-ui` | Client-only settings-card kit: `CardForm`, `Section`, `FieldGrid`, `StatusBar`, `Field`, `FieldLabel`, `InfoTip`, `ToggleField`, `NumberField`, `TextField`, `ListField`, `SelectField`, `SaveBar`, `splitHint` and the `CARD_UI_CSS` string. Built with `createElement` only; `react` is an optional peer and the subpath never enters the root barrel. The declared peer floor is `^19.3.0`; the kit uses only APIs that already existed in React 18 (`useId`, `useState`, `useEffect`, refs). |
 | `./client` | Browser client row: the `__ModuleLoader__` bundle the host module graph serves once. Consumers externalize this specifier and enable the row from their own patch with an id-less entry. |
 | `./client-node` | Node/ESM face of the same client surface, used by tests and type-aware Node consumers. |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`: cwd → `last-segment-<first 8 hex of sha256(norm)>`, with `default` for a non-string, an empty string or a normalized root. `realpathSync` resolves symlinks; a failure falls back to the resolved path. Windows `\` and `/` produce the same key. |
@@ -145,9 +150,11 @@ The subpath column is the in-package specifier; value imports prefix it with the
 | `./lib/errors` | `errorText` follows the official `@deepseek-ai/dsh-llm` `errorChain` semantics (cause chain, `AggregateError` members, empty message → `name`, cross-realm `message`, malicious getters render as a placeholder) in a zero-dependency local implementation. `isSettingsConflict` recognizes the host's settings-conflict pattern from `code` / `name`, so a cross-realm error is still recognized. |
 | `./lib/jsonl` | `shrinkJsonlTail`: pure decision logic for JSONL tail shrinking. The trigger policy and error handling stay with the caller; the byte budget is the caller's responsibility to keep finite. |
 | `./lib/job-outcome` | `jobOutcomeOf` + `SettledProcess` + `JobOutcome` map a finished subprocess onto the official job registry's outcome; `killProc` + `KillableProcess` release a child handle and ignore a `kill()` that throws or rejects (for example, on an already-reaped process). |
+| `./lib/remote-marker` | `markRemote(prototype, methodName)`: the programmatic equivalent of the official `@Remote` method decorator. It applies the same decorator function to a hand-built TC39 context, so a source file can avoid decorator syntax and needs no lowering pipeline. It value-imports `@deepseek-ai/dsh-typert-protocol` (an optional peer) and stays out of the root barrel. |
+| `./lib/decorator-lowering` | Build/test helper for standard decorators: `needsDecoratorLowering`, `lowerStandardDecorators`, `rolldownDecorators`, `viteDecorators`. It runs the caller-injected `tsc` entry on one file with `--noResolve`, preserves module specifiers, returns code plus a source map, and (on the Vite side) prunes injected plumbing from coverage mappings. Build-time only, never in the runtime barrel. |
 | `./lib/canonicalize-region-paths` | Build-time string helper that rewrites rolldown's `//#region <path>` markers into a `process.cwd()`-independent form. Exported as a subpath so build scripts can import it without putting it in the runtime barrel. |
 
-`card-ui` is the one runtime module that is deliberately subpath-only: adding it to the barrel would make every host-side importer resolve `react`.
+`card-ui` (value-imports `react`) and `remote-marker` (value-imports `@deepseek-ai/dsh-typert-protocol`) are the runtime modules that are deliberately subpath-only: putting them in the barrel would make every host-side importer resolve a package it does not use.
 
 The client row is enabled by the consuming plugin, not by installing this package alone. The consumer writes `- name: "@jayyuen66/dsh-plugin-shared"` without an `id`; the host still loads it, while the plugin page does not expose it as a separately disableable component. An `id` would add that switch, and switching it off would break every settings card that requires the row's components.
 
@@ -211,7 +218,7 @@ The package is imported into a host process; the table describes run time.
 | Should I `dsh plugin add` it? | No. It declares `dsh.client` for the row consumers enable, but carries no `dsh.bundle.patch`, so adding it as a plugin installs no profile layer and enables nothing by itself. Declare it as a dependency of the plugin package, and insert the id-less row in your own `cordis.patch.yml`. |
 | A consumer boots with `does not provide an export named ...` and `N entries did not activate`. | The profile is serving an older copy of this package than the consumer imports. Raise the profile's `overrides` entry to a version that contains the subpath the consumer imports; check this package's `exports` and CHANGELOG. No per-repository CI run can see this state. |
 | I changed `lib/*.ts` and the consumer still runs the old behavior. | Consumers load `dist/`. Run `pnpm run build`; `test/build-host.test.ts` fails if the runtime artifact is stale. A workspace link does not bypass the artifact. |
-| Why is `@deepseek-ai/dsh-output-retention` a required peer while the rest are optional? | It is the only host package imported for value (`truncateEnd`). The rest are type-only, except the bare `@deepseek-ai/dsh` peer, which only declares the host line. |
+| Why is `@deepseek-ai/dsh-output-retention` a required peer while the rest are optional? | It is the only **required** host package imported for value (`truncateEnd`). `@deepseek-ai/dsh-typert-protocol` is also value-imported, but only by `./lib/remote-marker`, so it stays optional; the remaining dsh peers are type-only. The bare `@deepseek-ai/dsh` peer only declares the host line, and `react` is a value peer for `./lib/card-ui`. |
 | Why isn't `oxlint` a `peerDependency`? | npm 7+ would try to satisfy it, and `oxlint`'s optional `vite-plus` peer locks `vitest` outside the range this baseline needs, producing `ERESOLVE` for a plain install. The requirement is documented instead. |
 | Want a helper added here? | First confirm the body repeats verbatim in two or more packages. Domain judgement stays in the plugins. |
 
@@ -232,7 +239,7 @@ pnpm run build   # runtime artifacts, config artifacts, declarations, client row
   - **Log records**: `test/setup-logs.ts` takes over `console.*`; every `[shared/*]` line must match `test/log-templates.ts` or the run fails. `test/log-templates.test.ts` checks both directions, so adding or deleting a log without updating the record list fails.
   - **Published shape**: `test/publish-manifest.test.ts` requires every export target to be inside `files`, entry points to be artifacts rather than source, `publishConfig` to carry no entry fields, every peer to be stated in `peerDependenciesMeta`, every `dsh-*` development pin to be exact and uniform, every dsh peer range to equal `engines.dsh`, and the source, docs and artifacts to carry no dates, absolute paths, home-directory references or collaboration-only wording.
 - Coverage thresholds are **100%** across lines, statements, functions and branches, so a new branch needs a case that reaches it. `test/vitest-base.test.ts` refuses an empty `coverageInclude` because that would make the four thresholds pass over nothing.
-- CI runs the checks on Linux, Windows and macOS across a Node 22/24 matrix, with a weekly scheduled run to catch upstream changes. The install matrix packs with both npm and pnpm, installs into a clean directory without peer-resolution flags, imports every subpath and type-checks a small consumer import under both `skipLibCheck` settings.
+- CI runs the checks on Linux, Windows and macOS on Node 24.9, with a weekly scheduled run to catch upstream changes. The install matrix packs with both npm and pnpm, installs into a clean directory without peer-resolution flags, imports every subpath and type-checks a small consumer import under both `skipLibCheck` settings.
 
 ## <img src="https://api.iconify.design/lucide/scale.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> License
 

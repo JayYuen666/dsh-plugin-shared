@@ -13,6 +13,7 @@
 // tsc 的版本行为，不能依赖它。
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { maskNonCode } from "./lib/build-artifacts.ts";
 import { canonicalizeDeclarationSpecifiers } from "./lib/build-types.ts";
 
 const typesDir = path.join(import.meta.dirname, "dist", "types");
@@ -49,12 +50,17 @@ await Promise.all(
 const inspected = await Promise.all(
   files.map(async (file) => {
     const content = await readFile(file, "utf8");
+    // 注释与字面量类型里的 `from "./x.ts"` 是示例而不是模块说明符；改写与残余校验都只看
+    // 正文位置（与 canonicalizeDeclarationSpecifiers 同一份遮蔽口径）。
+    const masked = maskNonCode(content);
+    const residuals = Array.from(content.matchAll(RESIDUAL_SPECIFIER), (match) => {
+      const { quote, specifier } = match.groups;
+      const quoteAt = match.index + match[0].lastIndexOf(specifier) - 1;
+      return masked.charAt(quoteAt) === quote ? specifier : null;
+    }).filter((specifier) => specifier !== null);
     return {
       file: path.relative(import.meta.dirname, file),
-      residuals: Array.from(
-        content.matchAll(RESIDUAL_SPECIFIER),
-        (match) => match.groups.specifier,
-      ),
+      residuals,
     };
   }),
 );

@@ -41,7 +41,9 @@ export const facets = [
 
 /** barrel 之外还要单独出的入口：lib/index.ts 聚合同运行时行为。
  *  `canonicalize-region-paths` 不进 barrel——它是 builder 期的文本后处理代码，塞进根 barrel 的导入名单
- *  会让每个运行时消费方都为它多一次导入；各包 build-*.mjs 按子路径取用。 */
+ *  会让每个运行时消费方都为它多一次导入；各包 build-*.mjs 按子路径取用。
+ *  `remote-marker` 同样不进 barrel——它值导入 `@deepseek-ai/dsh-typert-protocol`，而根 barrel 的
+ *  消费方里有不装 typert 的插件（dsh-quality-gate），塞进去等于逼它们解析一枚用不到的包。 */
 const entries = [
   "lib/index.ts",
   "lib/plugin.ts",
@@ -49,12 +51,20 @@ const entries = [
   ...facets.map((facet) => `lib/${facet}.ts`),
   "lib/canonicalize-region-paths.ts",
   "lib/card-ui.ts",
+  "lib/remote-marker.ts",
 ];
 
 /** 构建编排模块：各包 build-*.mjs 的统一实现（host / client / types 编排与通用机械代码）。
  *  消费方是构建脚本而不是插件运行时，故产物单独落 dist/build/——test/dist-size.test.ts 的
  *  运行期预算只量 dist/ 一层，混进去会让「运行期装载成本」的度量把构建期的字节也算进来。 */
-export const buildFacets = ["build-artifacts", "build-host", "build-client", "build-types"];
+export const buildFacets = [
+  "build-artifacts",
+  "build-host",
+  "build-client",
+  "build-types",
+  // 装饰器预转换：各包 build-host.mjs 与 vitest.config.ts 按子路径取用（消费方注入 tsc 入口）。
+  "decorator-lowering",
+];
 
 /** barrel 的类型文件文本（指向 tsc 产出的各模块 d.ts）。 */
 function barrelTypes() {

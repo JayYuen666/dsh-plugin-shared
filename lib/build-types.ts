@@ -10,14 +10,17 @@
 //
 // 两阶段：先编译进 scratch 临时目录、改写完成后再整体换上 types/。tsc 没开 noEmitOnError，有类型
 // 错误时它照样写出一部分声明；直接编译进 types/ 的失败现场就是「既非完整也非空」的目录，
-// 而调用方（测试）可能立刻读它。两阶段之后，失败留下的只是那个 scratch 目录，线上那份 types/
-// 仍是上一轮完整的。
+// 而调用方（测试）可能立刻读它。两阶段之后，编译期失败留下的只是 scratch；换入期失败会先把
+// 旧 types/ 挪到备份再尝试恢复，恢复也失败时备份目录会保留并在错误信息里点名。
 //
 // tsc 入口由调用方解析注入（typescript 是各包自己的 devDependency；按调用方的依赖图
 // resolve 才不依赖提升布局）。
 import { execFileSync } from "node:child_process";
-import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { maskNonCode, renameWithRetry } from "./build-artifacts.ts";
 
 /** 声明构建的配置。 */
 export interface TypesBuildOptions {
@@ -32,6 +35,9 @@ export interface TypesBuildOptions {
   readonly scratch?: string;
   /** 产物目录绝对路径。缺省 `<root>/types`。 */
   readonly outDir?: string;
+  /** 目录换入用的 rename（缺省走 Windows 退避重试）。注入点供测试制造换入失败，
+   *  以及让不支持 rename 的宿主替换实现。 */
+  readonly rename?: (from: string, to: string) => Promise<void>;
 }
 
 /**
@@ -72,14 +78,22 @@ function withOutputSuffix(specifier: string): string {
  * 把一段声明正文里带源码后缀的相对说明符改写成对侧产物后缀。
  *
  * 三处 replace 各自收一种句法位置，互不依赖；同一个文件里三种都出现时不漏也不重。
+ * 三处正则都会在**注释与字符串内部**命中，所以替换前先用 {@link maskNonCode} 取一份
+ * 等长的正文遮蔽文本，只有“说明符起始引号在正文位置上”的命中才改写：JSDoc 示例里的
+ * `from "./x.ts"` 与字面量类型 `type P = 'from "./x.ts"'` 因此原样保留。
  * @param text - 声明文件正文
  * @returns 改写后的正文
  */
 export function canonicalizeDeclarationSpecifiers(text: string): string {
+  const masked = maskNonCode(text);
+  const replaceSpecifier = (match: string, offset: number): string =>
+    masked.charAt(offset) === '"' || masked.charAt(offset) === "'"
+      ? withOutputSuffix(match)
+      : match;
   return text
-    .replaceAll(FROM_SPECIFIER, withOutputSuffix)
-    .replaceAll(IMPORT_TYPE_SPECIFIER, withOutputSuffix)
-    .replaceAll(AUGMENTED_MODULE_SPECIFIER, withOutputSuffix);
+    .replaceAll(FROM_SPECIFIER, replaceSpecifier)
+    .replaceAll(IMPORT_TYPE_SPECIFIER, replaceSpecifier)
+    .replaceAll(AUGMENTED_MODULE_SPECIFIER, replaceSpecifier);
 }
 
 /**
@@ -179,10 +193,34 @@ export async function buildDeclarations(options: TypesBuildOptions): Promise<str
       }),
     );
     // tsc 不清 outDir，删掉源文件后旧 .d.ts 会留在原地，而 `files` 里的 `types` 是整目录，
-    // 陈旧声明照样发出去——所以替换而不是合并。先删旧的再改名：两步之间的空窗比「编译期
-    // 一直空着」窄得多，而 rename 在同目录树内是原子的。
-    await rm(outDir, { recursive: true, force: true });
-    await rename(scratch, outDir);
+    // 陈旧声明照样发出去——所以替换而不是合并。换入走「旧目录 → 备份，新目录 → outDir」：
+    // 第二步失败时把备份挪回去，失败保住上一轮 types/ 对 rename 失败也成立（旧实现先 rm
+    // 再 rename，第二步失败会让两代产物一起消失）。
+    const renameDir = options.rename ?? renameWithRetry;
+    let backup: string | null = null;
+    if (existsSync(outDir)) {
+      backup = `${outDir}.backup-${process.pid}-${randomUUID()}`;
+      await renameDir(outDir, backup);
+    }
+    try {
+      await renameDir(scratch, outDir);
+    } catch (error) {
+      if (backup === null) {
+        throw error;
+      }
+      try {
+        await renameDir(backup, outDir);
+      } catch (restoreError) {
+        throw new Error(
+          `声明产物换入失败，且备份目录未能恢复（备份留在 ${backup}）：${String(error)}；恢复失败：${String(restoreError)}`,
+          { cause: restoreError },
+        );
+      }
+      throw error;
+    }
+    if (backup !== null) {
+      await rm(backup, { recursive: true, force: true });
+    }
     return files;
   } catch (error) {
     // 失败：清掉半成品，让上一次的 types/ 原样留着。

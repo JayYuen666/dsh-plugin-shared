@@ -44,7 +44,7 @@ export const CARD_UI_CSS = `
 .dsu-selectValue{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsu-chevron{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s}
 .dsu-select[aria-expanded="true"] .dsu-chevron{transform:rotate(180deg)}
-.dsu-menu{position:fixed;z-index:70;padding:4px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);border-radius:12px;box-shadow:0 12px 32px rgb(0 0 0 / 50%);max-height:280px;overflow:auto}
+.dsu-menu{position:fixed;position-area:block-end span-inline-start;justify-self:start;margin-top:6px;z-index:70;padding:4px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l3);border-radius:12px;box-shadow:0 12px 32px rgb(0 0 0 / 50%);max-height:280px;overflow:auto}
 .dsu-option{appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.4;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;cursor:pointer;text-align:left}
 .dsu-option:hover,.dsu-option[data-active="true"]{background:var(--dsw-alias-bg-layer-3)}
 .dsu-option:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}

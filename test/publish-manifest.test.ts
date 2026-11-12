@@ -38,6 +38,7 @@ const ALLOWED_PUBLISH_CONFIG = new Set(["access", "registry"]);
 
 /** package.json 里与入口有关的那部分形状；其余字段本测试不关心。 */
 interface Manifest {
+  readonly version?: string;
   readonly main?: string;
   readonly types?: string;
   readonly exports?: Record<string, unknown>;
@@ -300,7 +301,8 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     const { manifest } = await readSurface();
     // `dsh-fs-patch` 是唯一允许的例外：纯解析器，没有服务实例、没有模块级状态，
     // 多一份也不会像 dsh-tools 那样按 Symbol 身份分裂。它必须随本包一起装出去，
-    // 因为 rc.5 宿主没有这个包，而 apply_patch 的语法必须与执行它的 rc.1 宿主同源。
+    // 因为支持窗口内并非每个宿主都自带这个包，而 apply_patch 的语法必须与执行它的
+    // 宿主同源。
     const PURE_HOST_DEPENDENCIES = new Set(["@deepseek-ai/dsh-fs-patch"]);
     const leaked = Object.keys(manifest.dependencies ?? {}).filter(
       (name) => name.startsWith("@deepseek-ai/") && !PURE_HOST_DEPENDENCIES.has(name),
@@ -373,18 +375,15 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     expect(manifest.engines?.["dsh"], "engines.dsh 与 peer 范围必须说同一个窗口").toBe(bare);
   });
 
-  it("cordis 的 peer 范围同时覆盖两条宿主线，且不带空格", async () => {
-    // cordis 是唯一跨宿主线版本不同的 peer：`npm view @deepseek-ai/dsh@0.2.1-rc.5` 声明
-    // `~4.0.5`，`@0.2.2-rc.1` 声明 `~4.1.0`（两处都是 registry 当场实测）。peer 写并集是为了两条线
-    // 各自的宿主副本都落在满足范围里；钉成其中一条线的精确版本，另一条线上的干净目录 npm 安装会
-    // ERESOLVE（install-matrix 实测）。
+  it("cordis 的 peer 范围保留并集，且不带空格", async () => {
+    // cordis 的 peer 保留并集：开发基线 `0.2.2-rc.2` 的宿主声明 `~4.1.0`，而并集同时收得下
+    // 4.0.5 线与 4.1.0；钉成开发基线的单点版本会让对外窗口与安装器各说一套。
     // 这里唯一一条不带空格的并集就是 cordis：manifest 里 dsh 家族窗口保留空格，install-matrix
     // 已改成一行一枚说明符、按行读取，不再依赖按空白切分。
     const { manifest } = await readSurface();
-    expect(
-      manifest.peerDependencies?.["@deepseek-ai/cordis"],
-      "cordis 的 peer 范围只覆盖一条宿主线",
-    ).toBe("^4.0.5||^4.0.6-alpha.1");
+    expect(manifest.peerDependencies?.["@deepseek-ai/cordis"], "cordis 的 peer 范围丢了并集").toBe(
+      "^4.0.5||^4.0.6-alpha.1",
+    );
     // dev 线要的是**精确**：范围操作符会让构建与测试对着一个会漂移的副本跑，而 peer 那一条
     // 承载的是对外声明的窗口，两者不是一个东西。宿主线发正式版后这一位不再带预发布尾巴。
     expect(
@@ -447,5 +446,23 @@ describe("模块与 exports 的一致性（新增/改名模块时的静默失败
     expect(manifest.exports).toHaveProperty(subpath);
     // 不在 barrel：进了根 barrel 的导入名单，每个运行期消费方都要为它多一次导入。
     expect(barrel).not.toContain("canonicalize");
+  });
+});
+
+describe("版本与变更记录", () => {
+  it("变更记录顶部版本与 package.json 的 version 一致", async () => {
+    // 只抬 version 不写条目时，发出去的新版本没有变更记录，而其余门禁全绿。
+    const { manifest } = await readSurface();
+    if (manifest.version === undefined) {
+      throw new Error("package.json 没有 version");
+    }
+    const changelog = await readFile(path.join(pkgDir, "CHANGELOG.md"), "utf8");
+    const top = /^## (?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/mu.exec(changelog)?.groups?.[
+      "version"
+    ];
+    if (top === undefined) {
+      throw new Error("CHANGELOG.md 里没有任何版本标题");
+    }
+    expect(top, "CHANGELOG 顶部版本必须与 package.json 的 version 一致").toBe(manifest.version);
   });
 });

@@ -28,6 +28,9 @@ describe("card-ui 样式表", () => {
       "grid-template-columns:minmax(0,1fr) minmax(240px,360px)",
       ".dsu-switch",
       ".dsu-menu",
+      "position-area:block-end span-inline-start",
+      "justify-self:start",
+      "margin-top:6px",
       ".dsu-savebar",
       "@media (max-width:640px)",
     ]) {
@@ -420,6 +423,91 @@ describe("selectField", () => {
     assert.deepEqual(seen, ["b"]);
     assert.equal(trigger.getAttribute("aria-expanded"), "false");
     await view.unmount();
+  });
+
+  it("触发器与浮层带 CSS anchor 定位样式（抗缩放/平移）", async () => {
+    const view = await mount(
+      createElement(SelectField, {
+        label: "形态",
+        field: "kind",
+        value: "a",
+        options,
+        onChange: (): void => {
+          /* 本用例只断言 anchor 样式 */
+        },
+      }),
+    );
+    const trigger = view.container.querySelector<HTMLButtonElement>(".dsu-select")!;
+    const menu = view.container.querySelector<HTMLElement>(".dsu-menu")!;
+    const triggerStyle = trigger.getAttribute("style") ?? "";
+    const menuStyle = menu.getAttribute("style") ?? "";
+    assert.match(triggerStyle, /anchor-name:\s*--dsu-/u);
+    assert.match(menuStyle, /position-anchor:\s*--dsu-/u);
+    assert.match(menuStyle, /position-try-fallbacks:/u);
+    await view.unmount();
+  });
+
+  // 下面四条钉 cssAnchorSupported 的平台分支：happy-dom 标记存在时该函数恒走
+  // false（现有用例已覆盖），真实浏览器的「标记缺席 + CSS anchor 可用」只能在
+  // 临时摘掉标记、替换全局 CSS 之后才到得了。
+  /** 在「无 happyDOM 标记」的平台上挂一次 SelectField 并打开浮层。 */
+  async function mountWithoutHappyDom(css: unknown): Promise<{
+    menu: HTMLElement;
+    unmount: () => Promise<void>;
+  }> {
+    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
+    delete (globalThis as { happyDOM?: unknown }).happyDOM;
+    vi.stubGlobal("CSS", css);
+    try {
+      const view = await mount(
+        createElement(SelectField, {
+          label: "形态",
+          field: "kind",
+          value: "a",
+          options,
+          onChange: (): void => {
+            /* 本用例只断言定位分支 */
+          },
+        }),
+      );
+      const trigger = view.container.querySelector<HTMLButtonElement>(".dsu-select")!;
+      const menu = view.container.querySelector<HTMLElement>(".dsu-menu")!;
+      await click(trigger);
+      return { menu, unmount: view.unmount };
+    } finally {
+      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it("真实浏览器支持 CSS anchor 时不再写 JS 矩形坐标", async () => {
+    const { menu, unmount } = await mountWithoutHappyDom({ supports: () => true });
+    assert.equal(menu.style.left, "");
+    assert.equal(menu.style.top, "");
+    assert.equal(menu.style.marginTop, "");
+    await unmount();
+  });
+
+  it("环境没有 CSS 对象时回退 JS 矩形定位", async () => {
+    const { menu, unmount } = await mountWithoutHappyDom(undefined);
+    assert.match(menu.style.left, /px$/u);
+    assert.match(menu.style.top, /px$/u);
+    assert.equal(menu.style.marginTop, "0px");
+    await unmount();
+  });
+
+  it("css.supports 缺席时回退 JS 矩形定位", async () => {
+    const { menu, unmount } = await mountWithoutHappyDom({});
+    assert.match(menu.style.left, /px$/u);
+    assert.equal(menu.style.marginTop, "0px");
+    await unmount();
+  });
+
+  it("css.supports 对 anchor 返回 false 时回退 JS 矩形定位", async () => {
+    const { menu, unmount } = await mountWithoutHappyDom({ supports: () => false });
+    assert.match(menu.style.top, /px$/u);
+    assert.equal(menu.style.marginTop, "0px");
+    await unmount();
   });
 
   it("选中项显示勾，禁用项不可选", async () => {

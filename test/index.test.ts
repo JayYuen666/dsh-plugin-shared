@@ -42,6 +42,9 @@ const BARREL_EXEMPT = new Set([
   "build-host.ts",
   "build-client.ts",
   "build-types.ts",
+  "decorator-lowering.ts",
+  // 只走 ./lib/remote-marker 子路径：值导入 typert，根 barrel 里还有不装 typert 的消费方。
+  "remote-marker.ts",
   // 客户端专用子模块：只在插件客户端 bundle 里按子路径取用，根 barrel 不得把 react 带进来。
   "card-ui.ts",
   // 宿主入口在 barrel 之外再补 apply；客户端行是独立 bundle，不进根 barrel。

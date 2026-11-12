@@ -97,6 +97,9 @@ describe("shared buildHost()", () => {
       "build-host",
       "build-client",
       "build-types",
+      "decorator-lowering",
+      // 只走子路径，不进根 barrel：值导入 typert（见 build-host.mjs 的 entries 注释）。
+      "remote-marker",
       // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
       "card-ui",
       "index",

@@ -208,6 +208,11 @@ jobs:
           # ERR_MODULE_NOT_FOUND 误报，看起来像发布产物缺入口。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           npm install -D "react@${react_range}" --no-audit --no-fund
+          # `./lib/remote-marker` 同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
+          # npm 不装 optional peer，漏装时这一条子路径会在装载期 ERR_MODULE_NOT_FOUND。
+          # 范围读自发布 manifest，不在 workflow 里抄版本。
+          typert_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies['@deepseek-ai/dsh-typert-protocol']")
+          npm install -D "@deepseek-ai/dsh-typert-protocol@${typert_range}" --no-audit --no-fund
           node --input-type=module -e '
           const NAME = "@jayyuen66/dsh-plugin-shared";
           // 名单取自装进来的那份产物自己的 exports，不在这里再抄一份：抄来的清单与发布产物是
@@ -362,6 +367,11 @@ jobs:
           # 客户端子路径静态 import `react`；optional peer 在 pnpm 下同样不会自动装。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           pnpm add -D "react@${react_range}"
+          # `./lib/remote-marker` 同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
+          # pnpm 不装 optional peer，漏装时这一条子路径会在装载期 ERR_MODULE_NOT_FOUND。
+          # 范围读自发布 manifest，不在 workflow 里抄版本。
+          typert_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies['@deepseek-ai/dsh-typert-protocol']")
+          pnpm add -D "@deepseek-ai/dsh-typert-protocol@${typert_range}"
           # 不能只停在「装上了」：publish.yml 真正用的发布器是 pnpm，npm 侧那套逐子路径
           # import 与消费方类型探测在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
           node --input-type=module -e '
