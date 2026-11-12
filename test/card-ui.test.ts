@@ -19,6 +19,7 @@ import {
   ToggleField,
   splitHint,
 } from "../lib/card-ui.ts";
+import { ANCHOR_PLACEMENT_TOLERANCE, anchorPlacementOff } from "../lib/card-ui/anchor.ts";
 import { click, fire, mount, noop, textOf, typeInto } from "./card-ui-helpers.ts";
 
 describe("card-ui 样式表", () => {
@@ -543,6 +544,110 @@ describe("selectField", () => {
     await unmount();
   });
 
+  // 引擎「支持」与「真的照做」是两件事：0.2.5–0.2.6 的 span-inline-start 被浏览器毫无
+  // 意见地执行，然后把浮层钉在视口左边缘，而 cssAnchorSupported() 一路返回 true，没有
+  // 任何一层报错。下面四条把浮层矩形的形态各钉一次，判据都在 anchorPlacementOff 里。
+  describe("锚定兑现自检", () => {
+    const trigger = new DOMRect(810, 120, 360, 34);
+
+    it("左右边缘对齐、块向不重叠时算贴住", () => {
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(810, 160, 360, 100)), false);
+    });
+
+    it("flip-inline 改成右边缘对齐时仍算贴住", () => {
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(880, 160, 290, 100)), false);
+    });
+
+    it("flip-block 翻到触发器上方时仍算贴住", () => {
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(810, 20, 360, 100)), false);
+    });
+
+    it("两条轴都对不上时判为没贴住", () => {
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(0, 300, 360, 100)), true);
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(0, 160, 360, 100)), true);
+    });
+
+    it("容差内的亚像素偏差不算没贴住", () => {
+      const jitter = ANCHOR_PLACEMENT_TOLERANCE;
+      assert.equal(
+        anchorPlacementOff(trigger, new DOMRect(810 + jitter, 160 - jitter, 360, 100)),
+        false,
+      );
+      assert.equal(anchorPlacementOff(trigger, new DOMRect(810 + jitter + 1, 160, 360, 100)), true);
+    });
+  });
+
+  /** 在「无 happyDOM 标记」的平台上挂 SelectField，并给触发器与浮层各桩一个矩形。 */
+  async function mountWithRects(
+    triggerRect: DOMRect,
+    floatingRect: DOMRect,
+  ): Promise<{ menu: HTMLElement; unmount: () => Promise<void> }> {
+    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
+    delete (globalThis as { happyDOM?: unknown }).happyDOM;
+    vi.stubGlobal("CSS", { supports: () => true });
+    try {
+      const view = await mount(
+        createElement(SelectField, {
+          label: "形态",
+          field: "kind",
+          value: "a",
+          options,
+          onChange: (): void => {
+            /* 本用例只断言定位分支 */
+          },
+        }),
+      );
+      const trigger = view.container.querySelector<HTMLButtonElement>(".dsu-select")!;
+      const menu = view.container.querySelector<HTMLElement>(".dsu-menu")!;
+      trigger.getBoundingClientRect = () => triggerRect;
+      menu.getBoundingClientRect = () => floatingRect;
+      await click(trigger);
+      return { menu, unmount: view.unmount };
+    } finally {
+      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
+      vi.unstubAllGlobals();
+    }
+  }
+
+  it("锚定真的把浮层贴在触发器上时不写 JS 矩形坐标", async () => {
+    const { menu, unmount } = await mountWithRects(
+      new DOMRect(810, 120, 360, 34),
+      new DOMRect(810, 160, 360, 100),
+    );
+    assert.equal(menu.style.left, "");
+    assert.equal(menu.style.top, "");
+    assert.equal(menu.style.marginTop, "");
+    assert.notEqual(menu.style.positionArea, "none");
+    await unmount();
+  });
+
+  it("锚定把浮层钉到视口左侧时改用 JS 矩形定位并关掉 position-area", async () => {
+    const { menu, unmount } = await mountWithRects(
+      new DOMRect(810, 120, 360, 34),
+      new DOMRect(0, 160, 360, 100),
+    );
+    assert.match(menu.style.left, /px$/u);
+    assert.match(menu.style.top, /px$/u);
+    assert.equal(menu.style.marginTop, "0px");
+    // 这一步是承重的：position-area 在场时 left/top 只覆盖行内那一半，块向仍由锚定决定。
+    assert.equal(menu.style.positionArea, "none");
+    await unmount();
+  });
+
+  it("曾经回退过的浮层不会再尝试锚定", async () => {
+    const { menu, unmount } = await mountWithRects(
+      new DOMRect(810, 120, 360, 34),
+      new DOMRect(0, 160, 360, 100),
+    );
+    // 把浮层矩形改回贴住触发器：若 place() 会重新试锚定，position-area 就会被恢复成空，
+    // 而这条回退是单向的——来回试会让浮层在缩放时闪回左侧。
+    menu.getBoundingClientRect = () => new DOMRect(810, 160, 360, 100);
+    await fire(globalThis, new Event("resize"));
+    assert.equal(menu.style.positionArea, "none");
+    assert.match(menu.style.left, /px$/u);
+    await unmount();
+  });
+
   it("选中项显示勾，禁用项不可选", async () => {
     const view = await mount(
       createElement(SelectField, {
@@ -1013,6 +1118,30 @@ describe("卡片边界交互", () => {
       assert.match(btn.getAttribute("style") ?? "", /anchor-name:\s*--dsu-tip-/u);
       assert.match(tip.getAttribute("style") ?? "", /position-anchor:\s*--dsu-tip-/u);
       assert.match(tip.getAttribute("style") ?? "", /position-try-fallbacks:/u);
+      await view.unmount();
+    } finally {
+      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("说明浮层锚定失效时改回 JS 矩形定位并关掉 position-area", async () => {
+    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
+    delete (globalThis as { happyDOM?: unknown }).happyDOM;
+    vi.stubGlobal("CSS", { supports: () => true });
+    try {
+      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+      const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
+      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+      btn.getBoundingClientRect = () => new DOMRect(400, 200, 16, 8);
+      // 锚定被更高优先级的规则覆盖时的形态：浮层留在视口左侧、块向也离开了按钮。
+      tip.getBoundingClientRect = () => new DOMRect(0, 500, 200, 60);
+      await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
+      assert.equal(tip.style.positionArea, "none");
+      assert.equal(tip.style.marginTop, "0px");
+      assert.match(tip.style.left, /px$/u);
+      assert.match(tip.style.top, /px$/u);
       await view.unmount();
     } finally {
       (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;

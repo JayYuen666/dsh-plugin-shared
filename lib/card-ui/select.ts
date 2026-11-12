@@ -18,7 +18,7 @@ import type {
 } from "react";
 import { Field } from "./field.ts";
 import type { FieldBase } from "./field.ts";
-import { cssAnchorSupported } from "./anchor.ts";
+import { anchorPlacementOff, cssAnchorSupported } from "./anchor.ts";
 
 /** 一个候选项。`value` 必须在整份 options 里唯一：它同时是 React key 与选中判断依据。 */
 export interface SelectOption {
@@ -67,10 +67,19 @@ export function SelectField(
     const rect = trigger.getBoundingClientRect();
     const width = Math.min(rect.width, window.innerWidth - 16);
     menu.style.width = `${width}px`;
-    // CSS anchor 支持时位置由 position-area 跟随触发器（抗缩放/平移），不再写 JS 矩形坐标；
-    // 间距由样式表的 margin-top 提供，回退分支必须把它清零，否则与 rect.bottom + 6 叠加。
-    if (cssAnchorSupported()) {
+    // CSS anchor 支持时位置由 position-area 跟随触发器（抗缩放/平移），不写 JS 矩形坐标；
+    // 间距由样式表的 margin-top 提供。已经回退过的浮层（position-area 被显式关成 none）
+    // 不再重新尝试锚定，否则每次 resize 都会在「锚定 → 回退」之间来回跳。
+    const anchored = cssAnchorSupported() && menu.style.positionArea !== "none";
+    // 支持不等于生效：0.2.5–0.2.6 的 span-inline-start 让浮层钉在视口左边缘，而引擎对这套
+    // CSS 毫无意见。只有实测矩形能分辨这两种情况，贴不住就落回 JS 矩形。
+    if (anchored && !anchorPlacementOff(rect, menu.getBoundingClientRect())) {
       return;
+    }
+    if (anchored) {
+      // 锚定没兑现：先把它关掉。position-area 在场时 left/top 只覆盖行内那一半，块向仍由
+      // 锚定决定（实测浮层被摆到 y=314 而不是 rect.bottom + 6）。
+      menu.style.positionArea = "none";
     }
     menu.style.marginTop = "0px";
     let { left } = rect;

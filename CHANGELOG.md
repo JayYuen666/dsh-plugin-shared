@@ -2,6 +2,29 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.8
+
+浮层定位增加运行时几何自检：CSS anchor 「被引擎接受」不再等于「真的把浮层放在了触发器下面」。0.2.7 修的是规则写错方向，这一版修的是**规则没生效时没人发现**——两者叠在一起才是那次事故的完整形态。
+
+### Fixed
+
+- **锚定没兑现时回退到 JS 矩形**：`SelectField` 与 `InfoTip` 在 `place()` 里先量一次浮层矩形。行内起始边或结束边与触发器对齐（`flip-inline` 会改成右对齐，两条都认），且块向不与触发器重叠（`flip-block` 翻到上方时浮层下边缘贴着触发器上边缘），才认为锚定生效、不写坐标；否则把 `position-area` 显式关成 `none`，再按矩形写 `left`/`top`。容差 2px（`ANCHOR_PLACEMENT_TOLERANCE`），亚像素舍入、1px 边框与缩放都不会误触回退。
+- **必须先关 `position-area` 再写坐标**：`position-area` 在场时 `left`/`top` 只覆盖行内那一半，块向仍由锚定决定——实测同时给 `left:810px`/`top:160px` 时浮层落在 `x=810, y=314` 而不是 `y=160`。少了这一步，回退只会修好一半。
+- **回退是单向的**：`position-area` 一旦被关成 `none`，后续 `resize`/`scroll` 不再尝试锚定；否则浮层会在「锚定 → 回退」之间随窗口缩放来回跳。
+
+### Added
+
+- **`lib/card-ui/anchor.ts` 新增 `anchorPlacementOff(trigger, floating)`** 与容差常量，两条浮层共用同一份判据。它只回答「浮层贴没贴住触发器」，不判断浮层是否完全在视口内——视口钳制仍归 JS 分支的 `clamp`。
+
+### Tests
+
+- `test/card-ui.test.ts` 把浮层矩形的四种形态各钉一次（左对齐、`flip-inline` 右对齐、`flip-block` 翻上方、两条轴都对不上），加容差边界两侧；新增「锚定兑现时不写坐标」「锚定把浮层钉到视口左侧时改回矩形并关掉 `position-area`」「回退过的不再重试」三条，`InfoTip` 侧同样补一条。`lib/card-ui/` 与 `anchor.ts` 覆盖率仍为 100%。
+
+### Not changed, deliberately
+
+- 不支持 CSS anchor 的宿主（含 happy-dom 测试）继续直接走 `place()` 的 JS 矩形分支，不经过自检：那里没有锚定可兑现，量一次矩形只会多一次布局读。
+- 自检只在 `place()` 里跑一次（打开时与 `resize` 时），不挂 `ResizeObserver`：浮层尺寸变化由它自己的 `max-height` 与滚动兜住，为此加一个观察器会把每张设置卡的常驻开销抬上去。
+
 ## 0.2.7
 
 设置卡浮层的定位与无障碍修正：下拉浮层回到触发器下方；说明浮层（InfoTip）改用同一套 CSS anchor 定位，补齐点击外部关闭与 toggletip 语义；数字字段改为失焦后报错；保存状态可被读屏播报。组件 API 与 JS 回退路径不变。

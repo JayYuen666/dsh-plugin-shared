@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import type { FocusEvent as ReactFocusEvent, ReactElement, ReactNode } from "react";
-import { cssAnchorSupported } from "./anchor.ts";
+import { anchorPlacementOff, cssAnchorSupported } from "./anchor.ts";
 
 /** 所有字段共享的文案与状态位。 */
 export interface FieldBase {
@@ -58,13 +58,20 @@ export function InfoTip(props: {
     if (anchor === null || tip === null) {
       return;
     }
-    // CSS anchor 支持时位置由 position-area 跟随按钮（抗缩放/平移），不再写 JS 矩形坐标；
-    // 间距由样式表的 margin-top 提供，回退分支必须把它清零，否则与 +8 叠加。
-    if (cssAnchorSupported()) {
+    // CSS anchor 支持时位置由 position-area 跟随按钮（抗缩放/平移），不写 JS 矩形坐标；
+    // 间距由样式表的 margin-top 提供。已经回退过的浮层（position-area 被显式关成 none）
+    // 不再重新尝试锚定，否则每次 resize 都会在「锚定 → 回退」之间来回跳。
+    const anchored = cssAnchorSupported() && tip.style.positionArea !== "none";
+    const rect = anchor.getBoundingClientRect();
+    if (anchored && !anchorPlacementOff(rect, tip.getBoundingClientRect())) {
       return;
     }
+    if (anchored) {
+      // 锚定没兑现：position-area 在场时 left/top 只覆盖行内那一半，块向仍由锚定决定，
+      // 所以先把它关掉再写矩形坐标。
+      tip.style.positionArea = "none";
+    }
     tip.style.marginTop = "0px";
-    const rect = anchor.getBoundingClientRect();
     const width = tip.offsetWidth;
     const height = tip.offsetHeight;
     let { left } = rect;
