@@ -2,6 +2,25 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.6
+
+`./lib/tool-events` 的结算记录新增结构化失败身份 `error`，供消费方区分“审批被拒 / 派发前取消 / 已派发中止 / 普通失败”。这是附加字段；既有读取方、投影状态与发布面不变。
+
+### Added
+
+- **`ToolResultRecord.error`：结算事件的结构化失败身份。**
+  官方 rc.2 起 `tool/result` 与 `tool/ptc-dispatch` 的 `data.error` 携带 `{ name, code, reason? }`（只允许出现在 `isError: true` 的结算旁）。记录视图现在把它交给消费方：`name` 与 `code` 必须都是非空字符串才认，半截形状按“没有身份”处理；`reason` 只收字符串，缺失或非字符串时字段不出现。字段本身始终存在（没有身份时为 `undefined`），与 `callId` 的表示方式一致。
+- **消费场景**：`dsh-quality-gate` 用它决定“已派发后中止（`ABORTED`）的编辑是否仍需门禁核验”（写可能已落盘），而审批被拒与派发前取消不核验；`dsh-danger-guard` 明确只消费 `callId` / `isError` / `seq`，该字段不进它的投影状态，`stateVersion` 不变。
+
+### Tests
+
+- `test/tool-events.test.ts` 覆盖 `tool/result` 与 PTC 结算两条来源、`reason` 的存在/缺失/非字符串，以及缺 `name`、空 `name`、缺 `code`、空 `code`、非对象等半截形状（一律 `undefined`）。
+
+### Not changed, deliberately
+
+- `scanToolEvents` / `toolEventRowsOf` 的签名、`calls` 表与 `ToolCallRecord` 不变；新增字段只在 `results` 行上，而且只是读取位的扩展。
+- 本包不持有投影或持久化状态：是否折叠 `error` 由消费方决定，因此没有 `stateVersion` 变更。
+
 ## 0.2.5
 
 设置卡下拉浮层改用 CSS anchor 定位（抗缩放/平移）；宿主开发基线抬到 `0.2.2-rc.2`，支持窗口收到 `^0.2.2-rc.1`；新增两个 `./lib/*` 子路径，供消费方共用装饰器预转换与 Remote 标记。组件 API 不变；宿主窗口收窄为单条 `^0.2.2-rc.1`，钉在旧宿主线的消费方需同步宿主。

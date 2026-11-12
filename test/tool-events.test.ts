@@ -181,6 +181,108 @@ describe("scanToolEvents", () => {
   });
 });
 
+describe("失败身份读取（data.error）", () => {
+  it("tool/result 的失败身份进入结算记录；reason 是字符串时一并保留", () => {
+    resetSeq();
+    const rows = toolEventRowsOf(
+      result("r1", true, {
+        name: "ApprovalError",
+        code: "APPROVAL_REJECTED",
+        reason: "user said no",
+      }),
+      0,
+    ).result;
+    expect(rows?.error).toStrictEqual({
+      name: "ApprovalError",
+      code: "APPROVAL_REJECTED",
+      reason: "user said no",
+    });
+    // reason 非字符串 → 字段不出现（保持可选字段的原始形状）
+    resetSeq();
+    const withoutReason = toolEventRowsOf(
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "r2" }, isError: true },
+          error: { name: "AbortError", code: "ABORTED", reason: 42 },
+        },
+      }),
+      0,
+    ).result;
+    expect(withoutReason?.error).toStrictEqual({ name: "AbortError", code: "ABORTED" });
+  });
+
+  it("PTC dispatch 的失败身份在 data 顶层，同样进入结算记录", () => {
+    resetSeq();
+    const rows = toolEventRowsOf(
+      ptcSettle("rc1:ptc:1", "edit", true, { name: "AbortError", code: "ABORTED" }),
+      0,
+    ).result;
+    expect(rows?.error).toStrictEqual({ name: "AbortError", code: "ABORTED" });
+  });
+
+  it("缺失或半截身份一律 undefined（分类不能建立在不完整证据上）", () => {
+    resetSeq();
+    const malformed = [
+      // 完全缺失
+      badEvent({
+        type: RESULT_TYPE,
+        data: { message: { source: { callId: "m0" }, isError: true } },
+      }),
+      // 不是对象
+      badEvent({
+        type: RESULT_TYPE,
+        data: { message: { source: { callId: "m1" }, isError: true }, error: "boom" },
+      }),
+      // name 缺失 / 非字符串 / 空串
+      badEvent({
+        type: RESULT_TYPE,
+        data: { message: { source: { callId: "m2" }, isError: true }, error: { code: "X" } },
+      }),
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "m3" }, isError: true },
+          error: { name: 1, code: "X" },
+        },
+      }),
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "m4" }, isError: true },
+          error: { name: "", code: "X" },
+        },
+      }),
+      // code 缺失 / 非字符串 / 空串
+      badEvent({
+        type: RESULT_TYPE,
+        data: { message: { source: { callId: "m5" }, isError: true }, error: { name: "N" } },
+      }),
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "m6" }, isError: true },
+          error: { name: "N", code: 2 },
+        },
+      }),
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "m7" }, isError: true },
+          error: { name: "N", code: "" },
+        },
+      }),
+      // PTC 侧同样处理
+      badEvent({
+        type: PTC_DISPATCH_TYPE,
+        data: { subCallId: "rc1:ptc:9", isError: true, error: { name: "N" } },
+      }),
+    ];
+    const errors = scanToolEvents(malformed).results.map((row) => row.error);
+    expect(errors.filter((error) => error !== undefined)).toStrictEqual([]);
+  });
+});
+
 describe("成败位读取（经 toolEventRowsOf 这条公开接口）", () => {
   it("message.isError===true 判失败；false/缺失按成功（v4 message 级）", () => {
     resetSeq();

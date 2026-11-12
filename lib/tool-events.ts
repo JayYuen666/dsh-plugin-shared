@@ -107,16 +107,59 @@ export interface ToolCallRecord {
   readonly seq: number;
 }
 
+/**
+ * 失败的结构化身份：官方 `tool/result` 与 `tool/ptc-dispatch` 的 `data.error`
+ * （`{ name, code, reason? }`，只允许出现在 `isError: true` 的结算旁）。
+ *
+ * 复制而不是引用官方 `ToolErrorInfo`：本包的商品面同时服务多个宿主版本，而错误码是
+ * **持久化契约**（官方把 `[name, code]` 记在日志里供消费方比较字符串）。形状上逐字段同形，
+ * 两边改名会在这里的字段读取处暴露，不需要再引入一层运行时依赖。
+ */
+export interface ToolErrorIdentity {
+  /** 错误类名（如 `AbortError`、`ApprovalError`）。 */
+  readonly name: string;
+  /** 稳定错误码（如 `ABORTED`、`APPROVAL_REJECTED`）。 */
+  readonly code: string;
+  /** 可选的原始用户可见细节；模型侧内容不含它。 */
+  readonly reason?: string;
+}
+
 /** 一条 tool/result 的成败。同样只读。 */
 export interface ToolResultRecord {
   readonly callId: string | undefined;
   readonly isError: boolean;
+  /**
+   * 失败身份：`isError` 为真时由结算事件携带；缺失是正常情况（旧宿主、守卫拒绝、
+   * 工具体抛出的普通错误都不带身份），消费方必须把它当成"没有分类"而不是成功。
+   */
+  readonly error: ToolErrorIdentity | undefined;
   readonly seq: number;
 }
 
 /** 从 message 结构读 v4 的成败位；非对象/缺位一律按成功。 */
 function readIsError(raw: unknown): boolean {
   return isRecord(raw) && raw["isError"] === true;
+}
+
+/**
+ * 读一次失败身份：`name` 与 `code` 都必须是**非空字符串**才认。
+ *
+ * 为什么要这么严：`data.error` 进入的是持久化日志，跨进程与重放数据都可能送来半截形状；
+ * 缺 `code` 的身份无法按官方契约比较，缺 `name` 的只剩一个孤立码。把半截形状当成身份，
+ * 下游的分类（例如"被拒绝的编辑没有写过文件"）就会建立在一份不完整的证据上。
+ * `reason` 只收字符串；缺失或非字符串时整个字段不出现（保持可选字段的原始形状）。
+ * @param raw - 事件里的 `data.error`
+ * @returns 可用的失败身份，或 undefined（缺失/畸形）
+ */
+function usableErrorIdentity(raw: unknown): ToolErrorIdentity | undefined {
+  let identity: ToolErrorIdentity | undefined;
+  if (isRecord(raw)) {
+    const { name, code, reason } = raw;
+    if (typeof name === "string" && name !== "" && typeof code === "string" && code !== "") {
+      identity = typeof reason === "string" ? { name, code, reason } : { name, code };
+    }
+  }
+  return identity;
 }
 
 /** 显式 true 才算真（缺失/非布尔一律 false）：官方把 PTC 结算的 isError 标成必选
@@ -248,14 +291,20 @@ function resultRecordOf(event: SessionEvent, index: number): ToolResultRecord | 
     record = {
       callId: isRecord(source) ? usableCallId(source["callId"]) : undefined,
       isError: readIsError(message),
+      error: usableErrorIdentity(event.data.error),
       seq: index,
     };
   } else if (event.type === "tool/ptc-dispatch") {
     // PTC 子调用结算：isError 在 data 顶层（官方必选），与 tool/result 的 message 内嵌
-    // 不同；同样要求配对键可用，否则整条事件按坏事件丢弃。
+    // 不同；同样要求配对键可用，否则整条事件按坏事件丢弃。失败身份同样在 data 顶层。
     const subCallId = usableCallId(event.data.subCallId);
     if (subCallId !== undefined) {
-      record = { callId: subCallId, isError: isTrueFlag(event.data.isError), seq: index };
+      record = {
+        callId: subCallId,
+        isError: isTrueFlag(event.data.isError),
+        error: usableErrorIdentity(event.data.error),
+        seq: index,
+      };
     }
   }
   return record;

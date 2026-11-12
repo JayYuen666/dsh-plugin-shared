@@ -49,8 +49,12 @@ export function call(id: string, name: string, argsJson: string): SessionEvent {
   return event;
 }
 
-/** `tool/result`：成败位在 message 级（官方 `isError?: boolean`）。 */
-export function result(id: string, isError = false): SessionEvent {
+/** `tool/result`：成败位在 message 级（官方 `isError?: boolean`）；失败身份在 data 顶层。 */
+export function result(
+  id: string,
+  isError = false,
+  error?: { readonly name: string; readonly code: string; readonly reason?: string },
+): SessionEvent {
   const event: SessionEvent = {
     type: "tool/result",
     seq: seq(),
@@ -67,6 +71,7 @@ export function result(id: string, isError = false): SessionEvent {
         content: [],
         isError,
       },
+      ...(error === undefined ? {} : { error }),
     },
   };
   bump();
@@ -98,13 +103,25 @@ export function ptcCall(subId: string, name: string, args: unknown): SessionEven
   return event;
 }
 
-/** PTC 子调用结算：`isError` 在 data 顶层且官方必选。 */
-export function ptcSettle(subId: string, name: string, isError: boolean): SessionEvent {
+/** PTC 子调用结算：`isError` 与失败身份都在 data 顶层且官方必选/可选。 */
+export function ptcSettle(
+  subId: string,
+  name: string,
+  isError: boolean,
+  error?: { readonly name: string; readonly code: string; readonly reason?: string },
+): SessionEvent {
   const event: SessionEvent = {
     type: "tool/ptc-dispatch",
     seq: seq(),
     time: 0,
-    data: { ...ptcIds(subId), name, arguments: {}, isError, content: [] },
+    data: {
+      ...ptcIds(subId),
+      name,
+      arguments: {},
+      isError,
+      content: [],
+      ...(error === undefined ? {} : { error }),
+    },
   };
   bump();
   return event;
