@@ -50,6 +50,12 @@ const BARREL_EXEMPT = new Set([
   // 宿主入口在 barrel 之外再补 apply；客户端行是独立 bundle，不进根 barrel。
   "plugin.ts",
   "client-entry.ts",
+  // 单实例锁只给宿主侧 apply 用：进 barrel 会让每个消费方为它多一次导入。
+  "instance-lock.ts",
+  // 虚拟 skill 注册同理：技能名与正文都是各包自己的数据，根 barrel 没有通用消费方。
+  "skill.ts",
+  // 占位符插值：消费方是各包自己的 messages 表，根 barrel 没有通用消费方。
+  "placeholder.ts",
 ]);
 
 describe("lib/index 聚合导出", () => {

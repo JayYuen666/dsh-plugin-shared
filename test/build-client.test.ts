@@ -3,6 +3,7 @@ import { buildClient } from "../build-client.mjs";
 
 const CLIENT_SURFACE = [
   "CARD_UI_CSS",
+  "CARD_UI_STYLE_ID",
   "CardForm",
   "Field",
   "FieldGrid",
@@ -16,7 +17,10 @@ const CLIENT_SURFACE = [
   "StatusBar",
   "TextField",
   "ToggleField",
+  "ensureCardUiCss",
   "splitHint",
+  "useInvalidFields",
+  "withInvalidField",
   "diffTouched",
   "claimApply",
   "fieldOf",
@@ -49,9 +53,17 @@ describe("shared 客户端行", () => {
     expect(out).toContain("__ModuleLoader__.load");
     expect(out).toContain('"@jayyuen66/dsh-plugin-shared"');
     expect(out).toMatch(/exports\.apply\s*=/u);
-    const absent = ["CARD_UI_CSS", "diffTouched", "claimApply", "isRecord", "errorText"].filter(
-      (name) => !out.includes(name),
-    );
+    const absent = [
+      "CARD_UI_CSS",
+      "CARD_UI_STYLE_ID",
+      "ensureCardUiCss",
+      "useInvalidFields",
+      "withInvalidField",
+      "diffTouched",
+      "claimApply",
+      "isRecord",
+      "errorText",
+    ].filter((name) => !out.includes(name));
     expect(absent).toStrictEqual([]);
   });
 });

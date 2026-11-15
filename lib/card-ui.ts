@@ -1,6 +1,9 @@
 /** 设置卡统一组件与样式。客户端专用的子模块，不进入根 barrel。 */
 export { CARD_UI_CSS } from "./card-ui/styles.ts";
+export { CARD_UI_STYLE_ID, ensureCardUiCss } from "./card-ui/style-tag.ts";
 export { splitHint } from "./card-ui/hint.ts";
+export { withInvalidField, useInvalidFields } from "./card-ui/invalid.ts";
+export type { InvalidFields } from "./card-ui/invalid.ts";
 export { CardForm, FieldGrid, Section, StatusBar } from "./card-ui/layout.ts";
 export { Field, FieldLabel, InfoTip } from "./card-ui/field.ts";
 export type { FieldBase } from "./card-ui/field.ts";

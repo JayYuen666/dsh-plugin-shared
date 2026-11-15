@@ -2,6 +2,102 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.9
+
+新增三个只走子路径的运行期模块 `./lib/instance-lock`、`./lib/skill` 与 `./lib/placeholder`：把「同一作用域里只让一份 `apply` 走注册面」这把锁、虚拟 skill 注册与 `{name}` 占位符插值从各插件仓的副本收上来。同一版里设置卡补上越界保存门禁与幂等样式注入，宿主 peer 窗口抬到 `^0.2.2-rc.2`（与兄弟包同一班车）。
+
+### Added
+
+- **`NumberField` 的可选保存门禁接口**：`onInvalidChange(invalid)` 让父卡片知道越界草稿的存在，
+  `resetToken` 在父卡片保存/撤销后把越界草稿与错误清回已提交值。两个参数都可选，旧调用方与
+  旧行为不变；用途是让设置卡在存在非法数字时阻止保存，而不是在保存其它字段后把非法值留在框里。
+- **`withInvalidField(prev, field, invalid)`**（`./lib/card-ui`）：越界字段集的一次不可变变更。
+  `NumberField` 对越界草稿**不调 `onChange`**，所以它根本不进 `touched` —— 只看「草稿 vs 已提交值」
+  的保存门禁会以为什么都没改，用户点保存时其余字段写出去、越界那一格被静默丢掉。七个消费仓的卡片
+  都各写了一遍这段去重逻辑（连同「状态没变就原样返回同一枚 set」那一条，React 靠引用相等跳过重渲），
+  收上来只留一份。四个用例逐条钉住：加、删、状态没变时**引用相等**、不改传入的那一枚。
+- **`useInvalidFields()`**（`./lib/card-ui`）：越界字段集 + 重置信号 + 清空动作的完整状态机，一次给出
+  `{ blocked, fields, count, resetToken, reportInvalid, clear }`。七个消费仓原先各自写一遍「两个 `useState` +
+  去重上报 + 保存/撤销后清空并推进 token」，现在只剩这一份；`count` 是随它一起交出来的新一位——越界
+  草稿不进 `touched`，保存条的「已修改 N 项」要靠它才数得到越界那一格。`reportInvalid` 与 `clear`
+  都用 `useCallback` 定住引用：它们会被透传到每个 `NumberField` 的 `onInvalidChange`，引用每轮都换
+  会让那个转发 `useEffect` 在打字时白跑一遍。
+- **`lib/instance-lock.ts`**：`claimInstance(ctx, key)` 用 `ctx.reflect.provide` 抢一个「只有本包会用」的私有服务名，抢到才去注册；`InstanceLockContext` 是它要的最小上下文面（`get` 必选、`reflect` 可选）。零 import，两个导出。
+- 为什么需要它：dshmarket 运行期热装会在 `<profile>/.dsh-market/` 下造一棵 `mkt-*` 子树，把**同一份 `host.js`** 再挂一次，而 profile 的 `dsh.profile.bundles` 那条行仍会被重新组装 ⇒ 同一进程里 `apply` 跑两遍，第二遍的工具 / prompt section / Typert Remote 服务 / skill / MCP 注册全部撞「同名已注册」而抛错，抛错穿出 `apply` ⇒ fiber 落 `failed`，插件页显示「启动失败」。这不是环境残留。
+- 为什么不「先看有没有同名工具就让路」：同名不等于同一个插件写的（别的插件也可能注册同名 section、也可能遮蔽 `bash`）；而这把锁的键只有本包会用，且 disposer 归调用方 fiber，卸载即释放。
+- 为什么只走子路径、不进 barrel：进根 barrel 会让每个运行期消费方为它多一次导入，而它只有宿主侧 `apply` 用得到。
+- **`lib/skill.ts` 的 `registerSkill(ctx, spec)`**：把「取可选 `skills` 服务 → 判形状 → 空正文不注册 →
+  `register({ name, description, content, source })` → 回布尔」这一步收上来。**`source` 是宿主
+  `validateDefinition()` 的必填项**：漏了它注册照样成功、目录里也能看到那一条，只有模型真的
+  `skill({ name })` 加载全文时才抛 `loaded skill "X" source must be a string` —— 三道门禁
+  （tsc / oxlint / 单测）与首屏都看不出来，真宿主里第一次点开就炸。默认给 `"runtime"`
+  （宿主 `SkillSource` 是开放联合，任意非空字符串合法），`SkillSpec.source` 可覆盖；
+  `test/skill.test.ts` 因此补一条**针对宿主契约的守卫**——断言转发给 `register()` 的对象
+  四个键齐全、`source` 是非空字符串，这样宿主将来再加一个必填字段时本仓会当场红。三个包各有一份去掉注释后逐行同构的副本
+  （连 `isSkillsFace` 的 `Reflect.get(value, "register")` 判法都一样），差别只有技能名与其中一个空正文分支；
+  空正文不注册现在是统一行为（注册一枚空 skill 只会往模型目录里塞一条点开什么都没有的条目）。技能名与正文
+  仍是各包自己的数据，`SkillSpec` 只是把它交进来的形状。服务缺席回 `false` 不抛——它不在 `inject` 里。
+- **`lib/placeholder.ts` 的 `fillPlaceholders(template, values)`**：`{name}` 单趟插值。六个包各写过一遍，
+  语义还分两派（两处缺值保留原文、四处缺值替空串）——现在统一成**保留原文**：写错或漏传占位符时原样留着的
+  `{xxx}` 一眼可见，比一句悄悄塌成残句的文案好排查。字形按「花括号里任何不含花括号的内容」匹配（`{gate.command}`
+  这种带点的名字照样查表），只取自有属性（`{constructor}` / `{toString}` 不取原型链）；`null` 照实渲染成 `"null"`
+  而不是当成缺值——`exitCode` 这类字段的正常取值就是 `null`，渲染成空白反而丢信息。值不做转义或换行归一：
+  注入模型的调用点自己定界。
+- **`lib/text.ts` 新增 `truncateCodePoints(text, maxChars)`**：按**码点**预算截断，与既有的 `truncateEnd`
+  （按 UTF-16 码元切、只保证不劈开代理对）分工不同。`String#slice` 数的是码元，会把一个 emoji 或组合字符劈成
+  半个，落到磁盘/模板里就是孤立代理项或空白方块；三处消费点此前各写一遍同一段计数循环。`maxChars < 1` 与
+  `NaN` 给空串（`NaN` 与任何数比较都是 false，只判 `< 1` 会让它走到恒 false 的上界而交回整串），`Infinity`
+  交回整串。
+
+- **`ensureCardUiCss` / `CARD_UI_STYLE_ID`**（`./lib/card-ui`）：共享设置卡样式改为固定 id `dsh-card-ui-css` 的幂等注入，引用计数记在 style 元素上；各插件不再把 `CARD_UI_CSS` 拼进自己的 style 标签。
+- **`.dsu-savebar` 的底色只在 `[data-dirty="true"]` 吸底时绘制**；静态保存条跟随页面底色。
+- **`SaveBar` 新增 `blocked`**（可选，缺省 false）：只封保存、保留撤销，并让保存条照常吸底。把越界并进 `dirty` 会让保存按钮亮着却点不动；把撤销也灰掉，则断掉界面上写着的「先修正或撤销后再保存」那条唯一出路。
+
+### Changed
+
+- **宿主 peer 窗口 `^0.2.2-rc.1` → `^0.2.2-rc.2`**（`engines.dsh` 同值），两份 README 的徽章与版本表跟着抬。旧线宿主的出路是 `dsh plugin allow-version`，不是放宽这条窗口。
+
+### Fixed
+
+- **设置卡的输入控件不再撑出容器**：`.dsu-input` 是 `width:100%` + 左右各 12px padding + 1px 边框，浏览器默认的 `content-box` 让它比容器宽 26px——1280px 视口实测右边缘 1258 而容器 1232，于是 MCP servers 的 textarea、ChatGPT（OCR auth）的输入框一路顶到卡片外的空白里。现在 `.dsu-form` 的整棵子树统一 `border-box`（含 `::before`/`::after`），九仓设置卡一并受益；各仓自己的 `.xxx-input` 也走这条规则。
+- **小节内的直系子节点之间补上纵向间距**：原先 `.dsu-field` 之外的元素（说明文字、宽行输入框、按钮行、状态消息）相邻间距是 0px，textarea 的下边框直接贴着「保存 MCP」按钮。现在 `.dsu-form .dsu-section>*+*` 给 10px，`.dsu-sectionHint` 保持 4px 的紧凑贴合，`.dsu-field` 之间仍是 0（它们自带 `padding:12px 0` 与上边框，本就有分隔感），`.dsu-savebar` 保持 24px。
+
+### Tests
+
+- `test/card-ui.test.ts` 新增两条 NumberField 判据：`onInvalidChange` 在挂载、越界、修正时依次报
+  `false → true → false`；`resetToken` 变化后越界草稿与错误一起清回已提交值。`lib/card-ui/inputs.ts`
+  覆盖率仍为 100%。同一文件补了三条 SaveBar 判据：越界只封保存不封撤销、只有越界时撤销仍可点、
+  只读或忙碌优先于越界那条出路。运行期产物最终实测 36775 B，`test/dist-size.test.ts` 按实际增量把
+  预算累计到 36800 B（未重新套用 +25%）。
+- `test/instance-lock.test.ts` 六条判据逐格独立写明期望：空作用域抢到并写进服务表 / 已有一份在册时**连 provide 都不尝试** / provide 抛错时返回 false 且**不外抛** / 没有注册口时放行（能力缺席不拦功能）/ `reflect` 在但没有 `provide` 时放行 / 两个不同键互不影响。`lib/instance-lock.ts` 覆盖率 100%。
+- 三条仅供子路径的清单各自登记了它：`test/index.test.ts` 的 `BARREL_EXEMPT`、`test/build-host.test.ts` 的 `expected`、`build-host.mjs` 的 `entries`；`test/publish-manifest.test.ts` 覆盖 `exports` ↔ `lib/` 双向。
+- `test/use-invalid-fields.test.ts` 五条判据逐格独立写明期望：起始态（未越界 / 信号 0 / 计数 0）、上报后
+  `blocked` 转真且恢复合法转回假、**重复上报同一状态不推进重置信号**（否则打字过程反复清框）、
+  **两格越界 `count` 是 2、退一格是 1**、`clear()` 一次清空并推进一次信号。探针必须写成真组件挂载：
+  在 React 渲染之外直接调 `useInvalidFields()` 拿到的 dispatcher 是 null。变异验证：删掉 `clear()` 里
+  那行 `setResetToken(...)`，恰好只有对应那一条红。
+- `test/card-ui-style-tag.test.ts` 覆盖首次注入、重复调用、引用释放、外部同 id style 不认领、无 document 与保存条底色位置。
+- 消费者测试同步改为断言“共享样式 + 自有差异样式”两枚 style。
+
+- `test/skill.test.ts` 七条判据：服务在场时四个字段原样转发（含 `source`）并回 `true` / 调用方给的
+  `source` 不被默认值覆盖 / 转发对象满足宿主 `validateDefinition` 的四键必需面 / 服务缺席回 `false` 不抛 /
+  **四种冒充形态**（`null`、字符串、空对象、`register` 不是函数）各自回 `false` / 正文为空时**一次 `register`
+  都不发生** / 每次调用只注册一枚、回执是布尔而不是 disposer。
+- `test/placeholder.test.ts` 九条判据：按名字替换（字符串与数字）、同一占位符多次、**缺值保留原文**、
+  `undefined` 保留原文而 `null` 渲染成字面 `null`、值里的花括号不二次解释、原型链成员（`{toString}`）
+  与访问器名（`{__proto__}`）不取、**宽字形带点键可替换**、宽字形下未提供的同样保留原文、无占位符原样。
+- `test/text.test.ts` 新增 `truncateCodePoints` 五条：emoji 各算一个码点（切 2 得两个完整 emoji）/ 预算够长
+  一个不少 / 零-负-`NaN` 得空串而 `Infinity` 交回整串 / 切点永远落在码点边界 / **与 `truncateEnd` 的差别体现
+  在预算单位上**（同一串两个 emoji 切 2：本函数交回 4 个码元、`truncateEnd` 只交回 2 个）。
+- 三条只走子路径的清单各自登记了 `skill` 与 `placeholder`：`test/index.test.ts` 的 `BARREL_EXEMPT`、
+  `test/build-host.test.ts` 的 `expected`、`build-host.mjs` 的 `entries`；`test/publish-manifest.test.ts`
+  覆盖 `exports` ↔ `lib/` 双向。
+
+### Not changed, deliberately
+
+- 锁的键由各消费包自己起名（形如 `@jayyuen66/<包>/instance`），本模块不生成、不校验：键值只在本包自己的作用域里比较，收上来只会多一层命名耦合。
+- 没有注册口的上下文一律放行。拦下来等于把插件整个关掉，而「缺能力」与「已有一份」是两件事。
+
 ## 0.2.8
 
 浮层定位增加运行时几何自检：CSS anchor 「被引擎接受」不再等于「真的把浮层放在了触发器下面」。0.2.7 修的是规则写错方向，这一版修的是**规则没生效时没人发现**——两者叠在一起才是那次事故的完整形态。

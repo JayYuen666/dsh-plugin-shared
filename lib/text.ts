@@ -11,7 +11,10 @@
 //   - zvec-grep/host.ts —— `failureDetail` 的头尾两处截断、`successNotes` 的 stderr 尾部截断
 //     （成功结果也入日志）；
 //   - zvec-grep/lib/rebuild-remote.ts —— 作业状态投影的尾部截取（这一处不放在 host.ts：
-//     官方环按 UTF-8 字节裁，用裸 slice 会在截断位置留下孤立低代理，所以照样统一到这里）。
+//     官方环按 UTF-8 字节裁，用裸 slice 会在截断位置留下孤立低代理，所以照样统一到这里）；
+//   - dir-prep-organize/src/templates.ts —— 目录名 emoji 字段的两处码点上限；
+//   - lesson-loop/lib/digest-prompt.ts —— 教训签名缺失时的兜底截断；
+//   - lesson-loop/lib/rules-layout.ts —— 证据 detail 的两处码点截断。
 // 只剩一类截断不在其列：**永不显示给用户也永不入日志**的中间量。
 //
 // 为什么只剩一半：官方等价物 truncateWithoutSplittingSurrogatePair 实测在宿主实装的
@@ -47,6 +50,36 @@ const LOW_SURROGATE_END = 57_343;
 export function truncateEnd(text: string, maxChars: number): string {
   // 把负数按 0 处理不是单纯防御：官方把负预算交给 slice(0, 负数) 会解释成"从尾部倒数"，详见文件头。
   return truncateWithoutSplittingSurrogatePair(text, Math.max(0, maxChars));
+}
+
+/**
+ * 保留前 `maxChars` 个**码点**（不是码元）；`maxChars <= 0` 与 NaN ⇒ 空串。
+ *
+ * 与 `truncateEnd` 的分工：那个按 UTF-16 码元切、只保证不劈开代理对（预算单位是存储口径的
+ * 字符数）；这个按码点数预算——emoji 与组合字符各算一个，适合「给模板留 N 个字」这类语义。
+ * 三处消费方此前各写一遍同一段计数循环，收在这里之后只有一份。
+ * @param text - 待截断的文本。
+ * @param maxChars - 保留的码点数上限（非正数与 NaN 一律得空串）。
+ * @returns 截断后的文本。
+ */
+export function truncateCodePoints(text: string, maxChars: number): string {
+  // NaN 单独判：它与任何数比较都是 false，只剩 `maxChars < 1` 会让它一路走到
+  // `counted >= NaN`（恒 false）而交回整串 —— 与「预算算错时不外泄」的约定相反。
+  if (maxChars < 1 || Number.isNaN(maxChars)) {
+    return "";
+  }
+  let end = 0;
+  let counted = 0;
+  // for..of 按码点迭代（每格 1–2 码元），与 `[...text].slice(…).join("")` 等价，
+  // 但不触发 no-misused-spread / prefer-spread 两条互相打架的规则。
+  for (const char of text) {
+    if (counted >= maxChars) {
+      break;
+    }
+    end += char.length;
+    counted += 1;
+  }
+  return text.slice(0, end);
 }
 
 /**

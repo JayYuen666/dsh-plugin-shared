@@ -7,6 +7,7 @@ export function apply(): void {
 
 export {
   CARD_UI_CSS,
+  CARD_UI_STYLE_ID,
   CardForm,
   Field,
   FieldGrid,
@@ -20,9 +21,12 @@ export {
   StatusBar,
   TextField,
   ToggleField,
+  ensureCardUiCss,
   splitHint,
+  useInvalidFields,
+  withInvalidField,
 } from "./card-ui.ts";
-export type { FieldBase, SelectOption } from "./card-ui.ts";
+export type { FieldBase, InvalidFields, SelectOption } from "./card-ui.ts";
 export { diffTouched } from "./card-diff.ts";
 export { claimApply } from "./card-apply.ts";
 export { fieldOf, isRecord } from "./record.ts";

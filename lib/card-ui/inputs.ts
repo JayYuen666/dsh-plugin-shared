@@ -43,6 +43,16 @@ export function NumberField(
     unit?: string;
     placeholder?: string;
     invalidHint: string;
+    /**
+     * 越界状态变化的通知。父卡片用它把「有字段非法」纳入保存门禁：
+     * 越界草稿不会进入 `onChange`，只看草稿变化的话，保存会在有非法字段时照样提交别的字段。
+     */
+    onInvalidChange?: (invalid: boolean) => void;
+    /**
+     * 外部重置信号。保存/撤销后父卡片自增一次，把越界草稿与错误清回已提交值；
+     * 没有它，父值没变时 `useEffect` 的「保留输入中的草稿」分支会把非法值一直留在框里。
+     */
+    resetToken?: number;
     onChange: (next: number | undefined) => void;
   },
 ): ReactElement {
@@ -52,6 +62,8 @@ export function NumberField(
   const [invalid, setInvalid] = useState(false);
   const [showInvalid, setShowInvalid] = useState(false);
   const lastEmitted = useRef<number | undefined>(undefined);
+  const resetSeen = useRef(props.resetToken);
+  const onInvalidChange = useRef(props.onInvalidChange);
   const controlId = useId();
   const errorId = useId();
   const hintId = props.hint === undefined ? undefined : `${controlId}-hint`;
@@ -60,6 +72,25 @@ export function NumberField(
     (entry): entry is string => entry !== undefined,
   );
   const describedBy = describedByIds.length === 0 ? undefined : describedByIds.join(" ");
+
+  useEffect(() => {
+    onInvalidChange.current = props.onInvalidChange;
+  }, [props.onInvalidChange]);
+
+  useEffect(() => {
+    onInvalidChange.current?.(invalid);
+  }, [invalid]);
+
+  useEffect(() => {
+    if (resetSeen.current === props.resetToken) {
+      return;
+    }
+    resetSeen.current = props.resetToken;
+    lastEmitted.current = props.value;
+    setDraft(text);
+    setInvalid(false);
+    setShowInvalid(false);
+  }, [props.resetToken, props.value, text]);
 
   useEffect(() => {
     // 本次输入已经把这个值写给父组件；父组件回写同值时保留草稿，

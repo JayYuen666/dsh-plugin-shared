@@ -100,6 +100,12 @@ describe("shared buildHost()", () => {
       "decorator-lowering",
       // 只走子路径，不进根 barrel：值导入 typert（见 build-host.mjs 的 entries 注释）。
       "remote-marker",
+      // 单实例锁只给宿主侧 apply 用，同样只走子路径。
+      "instance-lock",
+      // 虚拟 skill 注册同样是宿主侧 apply 才用，根 barrel 没有通用消费方。
+      "skill",
+      // 占位符插值同样只走子路径：消费方是各包自己的 messages 表。
+      "placeholder",
       // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
       "card-ui",
       "index",

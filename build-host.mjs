@@ -52,6 +52,15 @@ const entries = [
   "lib/canonicalize-region-paths.ts",
   "lib/card-ui.ts",
   "lib/remote-marker.ts",
+  // 单实例锁只给宿主侧 `apply` 用：进根 barrel 会让每个运行期消费方为它多一次导入，
+  // 而它天然是「谁需要谁按子路径取」的形状（各包 apply 起手抢一把本包私有的服务名）。
+  "lib/instance-lock.ts",
+  // 虚拟 skill 注册同理：技能名与正文都是各包自己的数据，根 barrel 里没有通用消费方，
+  // 进 barrel 只是给每个运行期消费方多一次导入。
+  "lib/skill.ts",
+  // 占位符插值：六个插件各写过一遍（两派语义），现在只有这一份。同样只走子路径——
+  // 消费方是各包的 messages.ts，根 barrel 里没有通用消费方。
+  "lib/placeholder.ts",
 ];
 
 /** 构建编排模块：各包 build-*.mjs 的统一实现（host / client / types 编排与通用机械代码）。

@@ -1085,6 +1085,107 @@ describe("saveBar", () => {
     assert.equal(buttons[0].disabled, true);
     await view.unmount();
   });
+
+  it("越界封住保存、但撤销仍可点（撤销就是那条出路）", async () => {
+    let saved = 0;
+    let reverted = 0;
+    const view = await mount(
+      createElement(SaveBar, {
+        ...labels,
+        // dirty 与 blocked 各来一份：只算 dirty 的卡片（保存亮着却点不动）与
+        // 只算 blocked 的卡片（撤销一起灰掉）都在这一格里被钉住。
+        dirty: true,
+        blocked: true,
+        busy: false,
+        writable: true,
+        error: "有字段超出范围",
+        onSave: () => {
+          saved += 1;
+        },
+        onDiscard: () => {
+          reverted += 1;
+        },
+      }),
+    );
+    const bar = view.container.querySelector<HTMLElement>(".dsu-savebar")!;
+    assert.equal(bar.dataset["dirty"], "true", "越界时也要吸底，否则那句提示滚出视野就没人看得到");
+    const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
+    assert.equal(buttons[0]!.disabled, true, "写不进去就别让点");
+    assert.equal(
+      buttons[1]!.disabled,
+      false,
+      "撤销必须留着：界面上明明写着「先修正或撤销后再保存」",
+    );
+    await click(buttons[0]!);
+    assert.equal(saved, 0, "灰着就点不动");
+    await click(buttons[1]!);
+    assert.equal(reverted, 1);
+    await view.unmount();
+  });
+
+  it("只有越界、没有改动时撤销也可点", async () => {
+    let reverted = 0;
+    const view = await mount(
+      createElement(SaveBar, {
+        ...labels,
+        dirty: false,
+        blocked: true,
+        busy: false,
+        writable: true,
+        error: "有字段超出范围",
+        onSave: noop,
+        onDiscard: () => {
+          reverted += 1;
+        },
+      }),
+    );
+    const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
+    assert.equal(buttons[0]!.disabled, true);
+    assert.equal(buttons[1]!.disabled, false);
+    await click(buttons[1]!);
+    assert.equal(reverted, 1);
+    await view.unmount();
+  });
+
+  it("只读或忙碌时撤销一并灰掉，越界也不例外", async () => {
+    // 两种状态的期望值**独立写死**（不从实现里的 locked 表达式推导）：只读与忙碌都该把
+    // 两个按钮一起灰掉，且这条优先于「越界时撤销要留着」那条出路。
+    const readOnly = await mount(
+      createElement(SaveBar, {
+        ...labels,
+        dirty: true,
+        blocked: true,
+        busy: false,
+        writable: false,
+        error: null,
+        onSave: noop,
+        onDiscard: noop,
+      }),
+    );
+    const readOnlyButtons = [
+      ...readOnly.container.querySelectorAll("button"),
+    ] as HTMLButtonElement[];
+    assert.equal(readOnlyButtons[0]!.disabled, true, "只读时不写");
+    assert.equal(readOnlyButtons[1]!.disabled, true, "只读与忙碌优先于越界那条出路");
+    await readOnly.unmount();
+
+    const busy = await mount(
+      createElement(SaveBar, {
+        ...labels,
+        dirty: true,
+        blocked: true,
+        busy: true,
+        writable: true,
+        error: null,
+        onSave: noop,
+        onDiscard: noop,
+      }),
+    );
+    const busyButtons = [...busy.container.querySelectorAll("button")] as HTMLButtonElement[];
+    assert.equal(busyButtons[0]!.disabled, true, "保存中不给再点");
+    assert.equal(busyButtons[1]!.disabled, true, "只读与忙碌优先于越界那条出路");
+    await busy.unmount();
+  });
 });
 
 describe("卡片边界交互", () => {
@@ -1721,6 +1822,73 @@ describe("评审修复", () => {
     assert.ok(describedBy.includes(`${input.id}-hint`));
     const error = view.container.querySelector<HTMLElement>(".dsu-error")!;
     assert.equal(describedBy[1], error.id);
+    await view.unmount();
+  });
+
+  it("NumberField 通过 onInvalidChange 报告越界与恢复", async () => {
+    const seen: boolean[] = [];
+    const view = await mount(
+      createElement(NumberField, {
+        label: "预算",
+        value: 1,
+        min: 1,
+        max: 10,
+        invalidHint: "越界",
+        onInvalidChange: (invalid: boolean): void => {
+          seen.push(invalid);
+        },
+        onChange: noop,
+      }),
+    );
+    const input = view.container.querySelector<HTMLInputElement>("input")!;
+    // 挂载时先报一次 false，父组件不必把「初始有效」写成第二个默认值。
+    assert.deepEqual(seen, [false]);
+    await typeInto(input, "99");
+    assert.deepEqual(seen, [false, true]);
+    await typeInto(input, "5");
+    assert.deepEqual(seen, [false, true, false]);
+    await view.unmount();
+  });
+
+  it("NumberField resetToken 清掉越界草稿与错误", async () => {
+    const seen: boolean[] = [];
+    const view = await mount(
+      createElement(NumberField, {
+        label: "预算",
+        value: 1,
+        min: 1,
+        max: 10,
+        invalidHint: "越界",
+        resetToken: 0,
+        onInvalidChange: (invalid: boolean): void => {
+          seen.push(invalid);
+        },
+        onChange: noop,
+      }),
+    );
+    const input = view.container.querySelector<HTMLInputElement>("input")!;
+    await typeInto(input, "99");
+    await fire(input, new FocusEvent("focusout", { bubbles: true }));
+    assert.equal(input.value, "99");
+    assert.ok(view.container.querySelector(".dsu-error"));
+    await view.render(
+      createElement(NumberField, {
+        label: "预算",
+        value: 1,
+        min: 1,
+        max: 10,
+        invalidHint: "越界",
+        resetToken: 1,
+        onInvalidChange: (invalid: boolean): void => {
+          seen.push(invalid);
+        },
+        onChange: noop,
+      }),
+    );
+    assert.equal(input.value, "1");
+    assert.equal(view.container.querySelector(".dsu-error"), null);
+    assert.equal(input.getAttribute("aria-invalid"), null);
+    assert.equal(seen.at(-1), false);
     await view.unmount();
   });
 

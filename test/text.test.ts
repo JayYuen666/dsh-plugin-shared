@@ -3,7 +3,7 @@
 // 每次 Messages 请求都失败（上游同缺陷见 dsh PR #4827）。这里用字面量固定两端的截断行为。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { truncateEnd, truncateStart } from "../lib/text.ts";
+import { truncateCodePoints, truncateEnd, truncateStart } from "../lib/text.ts";
 
 // 四个边界即代理区：高代理 0xD800–0xDBFF、低代理 0xDC00–0xDFFF（按升序）。写十进制是因为
 // oxfmt 小写 hex 数字、oxlint 又要求大写，两条检查在 hex 字面量上互斥（实测）。
@@ -55,6 +55,37 @@ describe("truncateEnd（前切，防尾部孤立高代理）", () => {
     // 它是**第三条**通路；两端必须逐条对上。
     assert.equal(truncateEnd("abc", Number.NaN), "");
     assert.equal(truncateEnd("abc\u{1F600}", Number.NaN), "");
+  });
+});
+
+describe("truncateCodePoints（按码点预算，不是码元）", () => {
+  it("emoji 各算一个码点：切 2 个码点保留 2 个完整 emoji", () => {
+    // 每个 emoji 是 2 个 UTF-16 码元；按码元预算的 truncateEnd(s, 2) 只能留一个。
+    assert.equal(truncateCodePoints("\u{1F600}\u{1F601}\u{1F602}", 2), "\u{1F600}\u{1F601}");
+  });
+
+  it("预算够长 ⇒ 一个码点都不少", () => {
+    assert.equal(truncateCodePoints("短文本", 500), "短文本");
+  });
+
+  it("零 / 负 / NaN 预算返回空串；Infinity 交回整串", () => {
+    // 消费方是「给模板留 N 个字」，预算算错时宁可不留也不能整段泄出去。
+    assert.equal(truncateCodePoints("abc", 0), "");
+    assert.equal(truncateCodePoints("abc", -5), "");
+    assert.equal(truncateCodePoints("abc", Number.NaN), "");
+    assert.equal(truncateCodePoints("abc", Number.POSITIVE_INFINITY), "abc");
+  });
+
+  it("切点永远落在码点边界上：结果里不会出现孤立代理", () => {
+    const out = truncateCodePoints("a\u{1F600}b", 2);
+    assert.equal(out, "a\u{1F600}");
+    assert.equal(out.length, 3, "一个 ASCII + 一个占两码元的 emoji");
+  });
+
+  it("与 truncateEnd 的差别就体现在预算单位上（同一输入两种结果）", () => {
+    const text = "\u{1F600}\u{1F601}";
+    assert.equal(truncateCodePoints(text, 2).length, 4, "按码点：两个 emoji 全留");
+    assert.equal(truncateEnd(text, 2).length, 2, "按码元：只留一个 emoji");
   });
 });
 

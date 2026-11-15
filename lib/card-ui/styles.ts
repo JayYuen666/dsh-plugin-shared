@@ -1,7 +1,26 @@
 /** 设置卡统一样式。颜色/圆角全部走宿主主题令牌。 */
+// 卡片内一律 border-box（见下方 `.dsu-form` 那条规则）。解释写在这里而不是 CSS 注释里：
+// 这段模板字符串会原样进产物，CSS 注释也照样占字节，而 `test/dist-size.test.ts` 对
+// 运行期切面有总预算。
+// 根因：`.dsu-input` 是 `width:100%` + 左右各 12px padding + 1px 边框，浏览器默认
+// `content-box` 会把它撑出容器 26px——实测 1280px 视口下右边缘 1258 > 容器 1232，
+// 于是 MCP servers 的 textarea、ChatGPT 的输入框一路顶到卡片外的空白里。
+// 写在 `.dsu-form` 的子孙上而不是只写 `.dsu-input`：各仓自己的 `.xxx-input` 一并受益；
+// `::before`/`::after` 带上，免得伪元素造出的边框还按老尺寸算。
+//
+// 小节内的纵向节奏（`.dsu-section>*+*{margin-top:10px}` 那一组）：`.dsu-field` 自带
+// `padding:12px 0` 与上边框，相邻两条之间本就有分隔感，所以它们之间不加额外间距；缺间距的是
+// `.dsu-field` 之外的那些直系子节点——说明文字、宽行输入框、`.ocr-actions` 那样的按钮行、
+// 状态消息。实测（OCR 卡的 MCP servers 小节）这些相邻子节点的间距是 0px，textarea 的下边框
+// 直接贴着「保存 MCP」按钮。
 export const CARD_UI_CSS = `
 .dsu-form{display:flex;flex-direction:column}
+.dsu-form,.dsu-form *,.dsu-form *::before,.dsu-form *::after{box-sizing:border-box}
 .dsu-section{margin-top:24px;padding-top:24px;border-top:.5px solid var(--dsw-alias-border-l1)}
+.dsu-form .dsu-section>*+*{margin-top:10px}
+.dsu-form .dsu-section>.dsu-sectionHint{margin-top:4px}
+.dsu-form .dsu-section>*+.dsu-field{margin-top:0}
+.dsu-form .dsu-section>.dsu-savebar{margin-top:24px}
 .dsu-form>.dsu-section:first-child{margin-top:0;padding-top:0;border-top:0}
 .dsu-sectionTitle{margin:0;font-size:15px;font-weight:600;line-height:1.4;color:var(--dsw-alias-label-primary)}
 .dsu-sectionHint{margin:4px 0 0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
@@ -52,8 +71,8 @@ export const CARD_UI_CSS = `
 .dsu-optionGroup{padding:6px 10px 2px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
 .dsu-check{opacity:0;flex:none}
 .dsu-option[aria-selected="true"] .dsu-check{opacity:1}
-.dsu-savebar{display:flex;align-items:center;gap:8px;padding:12px 0;margin-top:24px;border-top:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base)}
-.dsu-savebar[data-dirty="true"]{position:sticky;bottom:0;z-index:2;box-shadow:0 -12px 24px rgb(0 0 0 / 35%)}
+.dsu-savebar{display:flex;align-items:center;gap:8px;padding:12px 0;margin-top:24px;border-top:.5px solid var(--dsw-alias-border-l2)}
+.dsu-savebar[data-dirty="true"]{position:sticky;bottom:0;z-index:2;background:var(--dsw-alias-bg-base);box-shadow:0 -12px 24px rgb(0 0 0 / 35%)}
 .dsu-btn{appearance:none;border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5;border-radius:var(--dsw-radius-md);padding:5px 14px;cursor:pointer;transition:background-color .12s,border-color .12s,color .12s,filter .12s}
 .dsu-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l3)}
 .dsu-btn:active:not(:disabled){background:var(--dsw-alias-bg-layer-1)}

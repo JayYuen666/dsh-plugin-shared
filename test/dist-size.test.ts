@@ -19,12 +19,22 @@ import path from "node:path";
 const pkgDir = path.resolve(import.meta.dirname, "..");
 
 /** 运行期产物预算（在实测值上加一档取整）。消费方按子路径 external 取用，这些字节是真实装载成本。
- *  card-ui 是客户端组件子路径（含统一样式表），按消费方 external 取用；本轮实测 33266 B（0.2.7
- *  把下拉与说明浮层共用的 anchor 探测抽成独立模块，并给说明浮层补上锚定与 light dismiss），
- *  只按本次实际增量上调到 34000 B，不重新套用 +25%——避免正常演进吃掉护栏后门槛一路放宽。 */
-const RUNTIME_BUDGET_BYTES = 34_000;
-/** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算，单独按同一 +25% 规则登记。 */
-const CLIENT_BUDGET_BYTES = 54_000;
+ *  card-ui 是客户端组件子路径（含统一样式表），按消费方 external 取用。0.2.9 实测 36775 B：
+ *  ① 两条样式规则（`.dsu-form` 的 border-box 让 `width:100%` 的输入框不再撑出容器；小节直系子节点
+ *  之间补 10px 纵向节奏）；② `useInvalidFields()` / `withInvalidField` 收上来，七仓各删一份越界
+ *  状态机；③ `registerSkill`、`fillPlaceholders` 与 `truncateCodePoints` 三个共用实现落地，
+ *  分别替掉三份 skill 注册、六个插值副本与三处码点截断循环。
+ *  只按本次实际增量上调，不重新套用 +25%——避免正常演进吃掉护栏后门槛一路放宽；
+ *  当前余量 25 B，下一次实际增量要同步改这个常量并写明理由。
+ *  受影响的公共面：本常量只改这份用例自己的判据，不改 `CARD_UI_CSS` 的导出形状；
+ *  同步面：`CHANGELOG.md` 的 0.2.9 段记这两条样式修复，`lib/card-ui/styles.ts` 里的注释解释根因。 */
+const RUNTIME_BUDGET_BYTES = 36_800;
+/** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算，单独按同一 +25% 规则登记。
+ *  0.2.9 实测 54765 B：border-box 与小节间距两组样式规则、`ensureCardUiCss` 的注入逻辑，
+ *  以及 `useInvalidFields()` / `withInvalidField` 收进共享卡片组件（含两个 `useCallback` 与
+ *  `count` 一位）——七仓各自的那份状态机因此消失。这条 bundle 由 `buildClient` 缺省不压缩、
+ *  保留注释，所以注释改动也计入字节。宿主侧子路径（`skill` / `placeholder`）不进这条 bundle。 */
+const CLIENT_BUDGET_BYTES = 54_800;
 /** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型声明的入口。 */
 const HOST_RUNTIME_EXCLUDE = new Set(["client.js", "client-entry.js"]);
 /** 配置产物预算（在实测值上加一档取整）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。
