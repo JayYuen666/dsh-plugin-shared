@@ -47,11 +47,12 @@
 - [ 版本与兼容](#-版本与兼容)
 - [ 常见问题](#-常见问题)
 - [ 开发](#-开发)
+- [ 反馈](#反馈)
 - [ 许可](#-许可)
 
 ## <img src="https://api.iconify.design/lucide/shield.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> 它做什么
 
-- **它是库加一条客户端行，不是独立组合包。** 宿主半由各插件 import；`package.json` 声明 `dsh.client` 并导出 `./client`，由各消费者在自己的 `cordis.patch.yml` 里以**无 id** 条目启用。它没有 `dsh.bundle.patch`，所以单独安装本包不会新增 profile 层、设置卡或路由。无 id 条目让插件页不把这条行列为可单独停用的组件：关掉它会让所有设置卡失去组件供应。
+- **它是库加一条客户端行，不是独立组合包。** 宿主半由各插件 import；`package.json` 声明 `dsh.client` 并导出 `./client`，由各消费者在自己的 `cordis.patch.yml` 里以 `- id: dsh-plugin-shared` 启用。它没有 `dsh.bundle.patch`，所以单独安装本包不会新增 profile 层、设置卡或路由。固定 id 会让这条行在插件页显示成一个组件，**必须保持开启**：停用后所有设置卡失去组件供应，下一次页面加载会报 `missed the module table`。多个消费者插入同一个 id 时，宿主会把开关标成“无法唯一定位”并禁用。
 - **它收录的是各插件逐字重复的部分：**
   - 工具事件记录表（`./lib/tool-events`）：一次扫描把 `SessionEvent[]` 变成调用表与结果表，PTC 子调用一并合并；`editPathOf` 提取其中可见的编辑目标，`applyPatchTargetsOf` / `editPathsOf` 用官方 `dsh-fs-patch` 解析多文件补丁并展开全部写目标。
   - 客户端卡片基础组件（`./lib/card-apply`、`./lib/card-diff`）：跨 HMR 保证 apply 幂等的保护逻辑，以及把 `null`、`undefined` 与键缺失当成同一种值的表单差异比较。
@@ -110,7 +111,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 - `main` 与 `exports` 只指 `dist/`，不存在第二套源码形态的 manifest。Node 对 `node_modules` 里的 `.ts` 直接抛 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`，而发布出去的包正是在那里被载入的，所以产物是必需的。
 - `files` 是 `icon.svg`、`dist`、`config/*.json` 与 `README.zh-CN.md`。npm 永远附带 `package.json`、`LICENSE` 与 `README.md`；中文版显式列出才会一起发。
 - `publishConfig` 只带 `access` 与 `registry`。把入口字段放在那里容易出错：pnpm 发布时会把它合并到顶层，npm 不会——换一个发布器就会发出一个入口指向 tarball 里不存在文件的包。
-- `build` 先删除 `dist/`，再产出运行期产物、配置产物、类型声明与生成的 barrel 声明。`build-host` 与 `build-config` 压缩；`build-client` 保留注释，客户端行按原样计字节。`test/dist-size.test.ts` 把运行期、客户端与配置产物各自限制在预算内。
+- `build` 先删除 `dist/`，再产出运行期产物、配置产物、类型声明与生成的 barrel 声明。`build-host`、`build-config` 与 `build-client` 都压缩；`test/dist-size.test.ts` 把运行期、客户端与配置产物各自限制在预算内。
 - `prepare` 指向 `build`。消费方从 registry 安装时它不执行；它存在是为了让打包、发布与 workspace link 拿到的都是新鲜 `dist/`。
 - 新增运行期模块要同时改：`lib/index.ts` 的 barrel、`exports`、`build-host.mjs` 的 `facets` 数组、`tsconfig.build.json` 的 `include`，外加一份 `test/<模块>.test.ts`。只走子路径的运行期模块（如 `instance-lock`、`skill`、`placeholder`、`remote-marker`、`card-ui`）改登记进 `entries` 并在 barrel 检查里豁免；构建期模块（如 `decorator-lowering`）进 `buildFacets`。漏一处会被「开发」一节的一致性检查判定失败。
 
@@ -140,7 +141,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 | `./lib/card-apply` | `claimApply` + `CardApplyCtx`：保证 apply 幂等的保护逻辑，建立在 `globalThis` 上的**自有**标记（symbol，或外部写入的 `true`）加 `ctx.effect` 清理。标记是进程级的，所以同一页面的第二个 ctx 会被拒绝——这是有意的设计 |
 | `./lib/card-diff` | `diffTouched`：touched 层里哪些字段真的与快照不同，按表单值比较。`undefined`、`null` 与键缺失是同一种值；数组与对象逐元素比较；循环引用也能正常结束 |
 | `./lib/card-ui` | 客户端专用设置卡组件：`CardForm`、`Section`、`FieldGrid`、`StatusBar`、`Field`、`FieldLabel`、`InfoTip`、`ToggleField`、`NumberField`、`TextField`、`ListField`、`SelectField`、`SaveBar`、`splitHint`、`withInvalidField`、`useInvalidFields`、`InvalidFields` 类型与样式字符串 `CARD_UI_CSS`。`SaveBar` 的可选 `blocked` 只封保存、保留撤销。`CARD_UI_STYLE_ID` 与 `ensureCardUiCss` 把该样式表以固定 `<style id="dsh-card-ui-css">` 幂等注入；引用计数记在 style 元素上，因此各自打包的消费者共用一份，未带该计数的外部 style 不认领、不移除。只用 `createElement`；`react` 是 optional peer，该子路径永不进根 barrel。声明的 peer 下限是 `^19.3.0`；组件只用 React 18 就已存在的 API（`useId`、`useState`、`useEffect`、refs） |
-| `./client` | 浏览器客户端行：宿主模块图只提供一份的 `__ModuleLoader__` bundle。消费者外置这个说明符，并在自己的 patch 里以无 id 条目启用这一行 |
+| `./client` | 浏览器客户端行：宿主模块图只提供一份的 `__ModuleLoader__` bundle。消费者外置这个说明符，并在自己的 patch 里以 `id: dsh-plugin-shared` 启用这一行；该行必须保持开启——停用后各插件设置卡会失去 shared 组件供应，下一次页面加载会报 `missed the module table` |
 | `./client-node` | 同一份客户端接口的 Node/ESM 形态，供测试与类型感知的 Node 消费方使用 |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`：cwd → `尾目录名-<sha256(norm) 前 8 位 hex>`；非字符串、空串或归一后的根目录归入 `default`。`realpathSync` 会解析软链接，失败则退回解析后的路径。Windows 的 `\` 与 `/` 产生同一个键 |
 | `./lib/locale` | `Locale`（官方 `BuiltInLocaleId` 的别名）、`DEFAULT_LOCALE`、`resolveLocale`、`resolveLocalePreference`、`messagesFor`、`MessagesCatalog`，加 `LOCALE_SETTINGS_NAMESPACE` 与 `LOCALE_PREFERENCE_FIELD`。只负责宿主侧字典；客户端用官方 locale 包 |
@@ -159,7 +160,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 
 `instance-lock`、`skill` 与 `placeholder` 是根 barrel 没有通用消费方的运行期模块；`card-ui`（值导入 `react`）与 `remote-marker`（值导入 `@deepseek-ai/dsh-typert-protocol`）同样不进 barrel，免得每个 host 侧 importer 都去解析一枚它用不到的包。五个模块都刻意只走子路径。
 
-客户端行由消费插件启用，不由单独安装本包启用。消费者写 `- name: "@jayyuen66/dsh-plugin-shared"` 且**不写 id**；宿主照常装载它，插件页不会把它暴露成可单独停用的组件。写 id 会多出那个开关，关闭后所有需要该行组件的设置卡都会失效。
+客户端行由消费插件启用，不由单独安装本包启用。消费者写 `- id: dsh-plugin-shared`、`name: "@jayyuen66/dsh-plugin-shared"`，并**保持开启**；停用后所有需要该行组件的设置卡都会失效，下一次页面加载会报 `missed the module table`。多个消费者插入同一个 id 时，宿主会把该组件的开关标成“无法唯一定位”并禁用。
 
 ## <img src="https://api.iconify.design/lucide/sliders-horizontal.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> config 导出
 
@@ -243,6 +244,12 @@ pnpm run build   # 运行期产物、配置产物、声明文件、客户端行
   - **发布形态**：`test/publish-manifest.test.ts` 要求入口目标都在 `files` 覆盖内、入口指向产物而不是源码、`publishConfig` 不带入口字段、每条 peer 都在 `peerDependenciesMeta` 里明确标注、`dsh-*` 开发钉版精确且统一、dsh peer 范围与 `engines.dsh` 相同，并要求源码、文档与产物里没有日期、绝对路径、家目录指涉或只在协作当时成立的措辞。
 - 覆盖率四项阈值都是 **100%**（lines / statements / functions / branches），所以新增分支必须有能走到它的用例。`test/vitest-base.test.ts` 拒绝空 `coverageInclude`，因为那会让四项阈值在空统计范围上全部通过。
 - CI 在 Linux、Windows 与 macOS 上以 Node 24.9 运行同一组检查，并有一周一次的定时运行来发现上游变化。安装矩阵会分别用 npm 与 pnpm 打包，在干净目录里不带 peer 解析选项安装，逐子路径 import，并在两种 `skipLibCheck` 设置下对一小段消费方导入代码做类型检查。
+
+## 反馈
+
+欢迎提 issue 和 PR：[https://github.com/JayYuen666/dsh-plugin-shared/issues](https://github.com/JayYuen666/dsh-plugin-shared/issues)。
+
+插件启动失败时，请附上 dsh 宿主版本、profile 安装形态和浏览器控制台原文。`missed the module table` 这一行尤其有用：它能直接说明 shared 客户端供应行有没有被物化。
 
 ## <img src="https://api.iconify.design/lucide/scale.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> 许可
 

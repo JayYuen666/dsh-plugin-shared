@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { buildClient } from "../build-client.mjs";
 
 const CLIENT_SURFACE = [
@@ -46,6 +47,14 @@ describe("shared 客户端行", () => {
     expect(() => {
       (client["apply"] as () => void)();
     }).not.toThrow();
+  });
+
+  it("包描述提醒 shared 客户端供应行必须保持开启", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      description?: string;
+    };
+    expect(pkg.description).toContain("必须保持开启");
+    expect(pkg.description).toContain("停用后");
   });
 
   it("产物是宿主模块图的 UMD 行，id 与包名一致", async () => {

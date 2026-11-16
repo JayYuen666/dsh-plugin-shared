@@ -22,13 +22,20 @@ interface Recorded {
   readonly source: string;
 }
 
-/** 造一枚 skills 服务替身：`register` 记下每次调用并交回一个 no-op disposer。 */
-function skillsService(recorded: Recorded[]): { register: (skill: Recorded) => () => void } {
+/** 造一枚 skills 服务替身：`register` 记下每次调用并交回 disposer。
+ *  `disposed` 记「撤销真的被调了」，`throwOnRegister` 造宿主同名二次注册那种抛错。 */
+function skillsService(
+  recorded: Recorded[],
+  options: { readonly disposed?: string[]; readonly throwOnRegister?: string } = {},
+): { register: (skill: Recorded) => () => void } {
   return {
     register(skill: Recorded): () => void {
+      if (options.throwOnRegister !== undefined) {
+        throw new Error(options.throwOnRegister);
+      }
       recorded.push(skill);
       return () => {
-        // `registerSkill` 刻意丢弃注册返回的 disposer（skill 随插件 fiber 走），这里给个空实现。
+        options.disposed?.push(skill.name);
       };
     },
   };
@@ -99,6 +106,106 @@ describe("registerSkill", () => {
     const ctx = contextOf(skillsService(recorded));
     assert.equal(registerSkill(ctx, { ...SPEC, content: "" }), false);
     assert.deepEqual(recorded, []);
+  });
+
+  it("注册抛错时回 false，不把异常穿给 apply", () => {
+    // 宿主 `register` 会抛两种：同名二次注册（卸载后重新装配 / 双挂）与 validateDefinition
+    // 拒绝。调用点在 apply 里，异常穿出去会让整条 fiber 落 failed —— 一枚提示词组织用的
+    // skill 不值得让插件装不上。
+    const recorded: Recorded[] = [];
+    const ctx = contextOf(skillsService(recorded, { throwOnRegister: "already registered" }));
+    assert.equal(registerSkill(ctx, SPEC), false);
+    assert.deepEqual(recorded, []);
+  });
+
+  it("有 effect 时把注册的撤销权交给调用方 fiber", () => {
+    // 不接管就是「卸载后 skill 还在目录里」：下一次装配再注册同名条目只会被 first-wins
+    // 忽略，而目录里那一条其实是上一轮的。
+    const recorded: Recorded[] = [];
+    const disposed: string[] = [];
+    const effects: string[] = [];
+    const disposedAt: (() => void)[] = [];
+    const ctx = {
+      get: (name: string): unknown =>
+        name === "skills" ? skillsService(recorded, { disposed }) : undefined,
+      effect: (execute: () => () => void, label?: string): void => {
+        effects.push(label ?? "");
+        disposedAt.push(execute());
+      },
+    };
+    assert.equal(registerSkill(ctx, SPEC), true);
+    assert.deepEqual(effects, ['registerSkill("zvec-grep")']);
+    assert.equal(disposedAt.length, 1);
+    disposedAt[0]?.();
+    assert.deepEqual(disposed, ["zvec-grep"]);
+  });
+
+  it("effect 缺席时照旧注册成功（精简宿主 / 测试替身）", () => {
+    const recorded: Recorded[] = [];
+    const service = skillsService(recorded);
+    assert.equal(registerSkill(contextOf(service), SPEC), true);
+    assert.equal(recorded.length, 1);
+  });
+
+  it("注册没交回 disposer 时照旧回 true，也不去调 effect", () => {
+    // 宿主的契约是「register 交回 disposer」，但精简实现或替身可能什么都不交。
+    // 那一格不该被当成注册失败（skill 确实进目录了），也不该拿 undefined 去 effect。
+    const recorded: Recorded[] = [];
+    let effectCalls = 0;
+    // 交回 undefined 的服务：`register` 的声明说给 disposer，替身可以什么都不给。
+    const service = {
+      register(skill: Recorded): (() => void) | undefined {
+        recorded.push(skill);
+        return undefined;
+      },
+    };
+    const ctx = {
+      get: (name: string): unknown => (name === "skills" ? service : undefined),
+      effect: (): void => {
+        effectCalls += 1;
+      },
+    };
+    assert.equal(registerSkill(ctx, SPEC), true);
+    assert.equal(recorded.length, 1);
+    assert.equal(effectCalls, 0);
+  });
+
+  it("effect 抛错时立刻撤销注册并回 false", () => {
+    // effect 挂不上通常意味着 ctx 已经 disposed：注册已经发生，但撤销永远不会执行。
+    // 不在这里退掉，skill 就会留在目录里，下一次装配再注册同名条目只会被 first-wins 忽略。
+    const recorded: Recorded[] = [];
+    const disposed: string[] = [];
+    const ctx = {
+      get: (name: string): unknown =>
+        name === "skills" ? skillsService(recorded, { disposed }) : undefined,
+      effect: (): void => {
+        throw new Error("fiber already disposed");
+      },
+    };
+    assert.equal(registerSkill(ctx, SPEC), false);
+    assert.equal(recorded.length, 1);
+    assert.deepEqual(disposed, ["zvec-grep"]);
+  });
+
+  it("effect 抛错且 dispose 也抛错时仍回 false，不外抛", () => {
+    // 宿主已经不可用时 dispose 也可能失败；不能让异常穿出 apply。
+    const recorded: Recorded[] = [];
+    const service = {
+      register(skill: Recorded): () => void {
+        recorded.push(skill);
+        return () => {
+          throw new Error("host gone");
+        };
+      },
+    };
+    const ctx = {
+      get: (name: string): unknown => (name === "skills" ? service : undefined),
+      effect: (): void => {
+        throw new Error("fiber already disposed");
+      },
+    };
+    assert.equal(registerSkill(ctx, SPEC), false);
+    assert.equal(recorded.length, 1);
   });
 
   it("每次调用只注册一枚，回执是布尔而不是 disposer", () => {

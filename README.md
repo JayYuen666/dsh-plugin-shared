@@ -47,11 +47,12 @@
 - [ Versioning and compatibility](#-versioning-and-compatibility)
 - [ FAQ](#-faq)
 - [ Development](#-development)
+- [ Feedback](#feedback)
 - [ License](#-license)
 
 ## <img src="https://api.iconify.design/lucide/shield.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> What it does
 
-- **It is a library plus one client row, not a standalone bundle.** The host half is imported by the plugins; `package.json` declares `dsh.client` and exports `./client`, which each consumer enables from its own `cordis.patch.yml` with an id-less entry. It carries no `dsh.bundle.patch`, so installing the package alone adds no profile layer and no settings card or route. The id-less entry keeps the row out of the plugin page's per-component switches: switching it off would leave every settings card without its component supplier.
+- **It is a library plus one client row, not a standalone bundle.** The host half is imported by the plugins; `package.json` declares `dsh.client` and exports `./client`, which each consumer enables from its own `cordis.patch.yml` with `- id: dsh-plugin-shared`. It carries no `dsh.bundle.patch`, so installing the package alone adds no profile layer and no settings card or route. The fixed id makes the row visible as one component; keep it enabled. Disabling it removes every settings card's shared component supplier, and the next page load fails with `missed the module table`. When several consumers insert the same id, the host marks the switch as not uniquely locatable and disables it.
 - **It holds the parts the plugins repeated verbatim:**
   - The tool-event record table (`./lib/tool-events`): one scan from `SessionEvent[]` to call and result tables, PTC sub-calls included, plus `editPathOf` for the edit targets the record can see and `applyPatchTargetsOf` / `editPathsOf` for every write target in a multi-file `apply_patch` input, parsed by the official `dsh-fs-patch`.
   - Client card base components (`./lib/card-apply`, `./lib/card-diff`): an apply idempotency guard across HMR, and a form-value diff that treats `null`, `undefined` and an absent key as the same value.
@@ -110,7 +111,7 @@ A consumer profile can lock this package with a pnpm `overrides` entry. Lock it 
 - `main` and `exports` point at `dist/` only; there is no second, source-shaped manifest. Node throws `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` for `.ts` inside `node_modules`, which is exactly where a published package is loaded from, so an artifact is mandatory.
 - `files` is `icon.svg`, `dist`, `config/*.json` and `README.zh-CN.md`. npm always adds `package.json`, `LICENSE` and `README.md`; the Chinese copy is listed explicitly so it ships too.
 - `publishConfig` carries `access` and `registry` and nothing else. Entry fields there are a trap: pnpm merges them onto the top level when publishing and npm does not, so one publisher would ship a package whose entry points name files that are not in the tarball.
-- `build` deletes `dist/` first, then emits the runtime artifacts, the config artifacts, the type declarations and the generated barrel declaration. `build-host` and `build-config` minify; `build-client` keeps comments, so the client row is measured as-is; `test/dist-size.test.ts` keeps the runtime, client and config artifacts inside their budgets.
+- `build` deletes `dist/` first, then emits the runtime artifacts, the config artifacts, the type declarations and the generated barrel declaration. `build-host`, `build-config` and `build-client` minify; `test/dist-size.test.ts` keeps the runtime, client and config artifacts inside their budgets.
 - `prepare` runs `build`. It does not run when a consumer installs from the registry; it exists so packing, publishing and workspace links always ship a fresh `dist/`.
 - Adding a runtime module means touching the barrel in `lib/index.ts`, `exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, and a `test/<module>.test.ts`. A subpath-only runtime module (like `instance-lock`, `skill`, `placeholder`, `remote-marker` or `card-ui`) is registered in `entries` and marked barrel-exempt instead; a build-time module (like `decorator-lowering`) goes into `buildFacets`. The consistency checks in Development fail if one is missed.
 
@@ -140,7 +141,7 @@ The subpath column is the in-package specifier; value imports prefix it with the
 | `./lib/card-apply` | `claimApply` + `CardApplyCtx`: an apply idempotency guard built on an **own** flag on `globalThis` (a symbol, or `true` written by an outside holder) with `ctx.effect` cleanup. The flag is process-wide, so a second context on the same page is rejected by design. |
 | `./lib/card-diff` | `diffTouched`: which touched fields really differ from the snapshot, compared by form value. `undefined`, `null` and an absent key are one value; arrays and objects compare element by element; cycles terminate. |
 | `./lib/card-ui` | Client-only settings-card kit: `CardForm`, `Section`, `FieldGrid`, `StatusBar`, `Field`, `FieldLabel`, `InfoTip`, `ToggleField`, `NumberField`, `TextField`, `ListField`, `SelectField`, `SaveBar`, `splitHint`, `withInvalidField`, `useInvalidFields`, the `InvalidFields` type and the `CARD_UI_CSS` string. `SaveBar`'s optional `blocked` prop disables saving while keeping discard available. `CARD_UI_STYLE_ID` and `ensureCardUiCss` inject that stylesheet idempotently under one fixed `<style id="dsh-card-ui-css">`; the reference count lives on the style element, so separately bundled consumers share one copy, and an existing tag without that count is treated as foreign and never removed. Built with `createElement` only; `react` is an optional peer and the subpath never enters the root barrel. The declared peer floor is `^19.3.0`; the kit uses only APIs that already existed in React 18 (`useId`, `useState`, `useEffect`, refs). |
-| `./client` | Browser client row: the `__ModuleLoader__` bundle the host module graph serves once. Consumers externalize this specifier and enable the row from their own patch with an id-less entry. |
+| `./client` | Browser client row: the `__ModuleLoader__` bundle the host module graph serves once. Consumers externalize this specifier and enable the row from their own patch with `id: dsh-plugin-shared`; the row must stay enabled — disabling it removes the cards' shared component supply, and the next page load fails with `missed the module table`. |
 | `./client-node` | Node/ESM face of the same client surface, used by tests and type-aware Node consumers. |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`: cwd → `last-segment-<first 8 hex of sha256(norm)>`, with `default` for a non-string, an empty string or a normalized root. `realpathSync` resolves symlinks; a failure falls back to the resolved path. Windows `\` and `/` produce the same key. |
 | `./lib/locale` | `Locale` (an alias of the official `BuiltInLocaleId`), `DEFAULT_LOCALE`, `resolveLocale`, `resolveLocalePreference`, `messagesFor`, `MessagesCatalog`, plus `LOCALE_SETTINGS_NAMESPACE` / `LOCALE_PREFERENCE_FIELD`. Host-side dictionaries only; the client uses the official locale package. |
@@ -218,7 +219,7 @@ The package is imported into a host process; the table describes run time.
 
 | Question | Answer |
 | --- | --- |
-| Should I `dsh plugin add` it? | No. It declares `dsh.client` for the row consumers enable, but carries no `dsh.bundle.patch`, so adding it as a plugin installs no profile layer and enables nothing by itself. Declare it as a dependency of the plugin package, and insert the id-less row in your own `cordis.patch.yml`. |
+| Should I `dsh plugin add` it? | No. It declares `dsh.client` for the row consumers enable, but carries no `dsh.bundle.patch`, so adding it as a plugin installs no profile layer and enables nothing by itself. Declare it as a dependency of the plugin package, insert `- id: dsh-plugin-shared` in your own `cordis.patch.yml`, and keep that component enabled. |
 | A consumer boots with `does not provide an export named ...` and `N entries did not activate`. | The profile is serving an older copy of this package than the consumer imports. Raise the profile's `overrides` entry to a version that contains the subpath the consumer imports; check this package's `exports` and CHANGELOG. No per-repository CI run can see this state. |
 | I changed `lib/*.ts` and the consumer still runs the old behavior. | Consumers load `dist/`. Run `pnpm run build`; `test/build-host.test.ts` fails if the runtime artifact is stale. A workspace link does not bypass the artifact. |
 | Why is `@deepseek-ai/dsh-output-retention` a required peer while the rest are optional? | It is the only **required** host package imported for value (`truncateEnd`). `@deepseek-ai/dsh-typert-protocol` is also value-imported, but only by `./lib/remote-marker`, so it stays optional; the remaining dsh peers are type-only. The bare `@deepseek-ai/dsh` peer only declares the host line, and `react` is a value peer for `./lib/card-ui`. |
@@ -243,6 +244,12 @@ pnpm run build   # runtime artifacts, config artifacts, declarations, client row
   - **Published shape**: `test/publish-manifest.test.ts` requires every export target to be inside `files`, entry points to be artifacts rather than source, `publishConfig` to carry no entry fields, every peer to be stated in `peerDependenciesMeta`, every `dsh-*` development pin to be exact and uniform, every dsh peer range to equal `engines.dsh`, and the source, docs and artifacts to carry no dates, absolute paths, home-directory references or collaboration-only wording.
 - Coverage thresholds are **100%** across lines, statements, functions and branches, so a new branch needs a case that reaches it. `test/vitest-base.test.ts` refuses an empty `coverageInclude` because that would make the four thresholds pass over nothing.
 - CI runs the checks on Linux, Windows and macOS on Node 24.9, with a weekly scheduled run to catch upstream changes. The install matrix packs with both npm and pnpm, installs into a clean directory without peer-resolution flags, imports every subpath and type-checks a small consumer import under both `skipLibCheck` settings.
+
+## Feedback
+
+Issues and pull requests are welcome: [https://github.com/JayYuen666/dsh-plugin-shared/issues](https://github.com/JayYuen666/dsh-plugin-shared/issues).
+
+If a plugin fails to boot, include the dsh host version, the profile install shape, and the browser console line. The `missed the module table` line is especially useful: it tells us whether the shared client row was materialized.
 
 ## <img src="https://api.iconify.design/lucide/scale.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> License
 

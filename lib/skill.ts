@@ -57,17 +57,33 @@ export interface SkillSpec {
 const DEFAULT_SKILL_SOURCE = "runtime";
 
 /**
+ * 注册上下文：只需要 `get`（读可选服务）与**可选**的 `effect`。
+ *
+ * `effect` 用来接管注册的生命周期：宿主的 `skills.register()` 交回一枚 disposer，不交回去
+ * 就没人替我们撤销 —— 插件被卸载/热重载后 skill 仍留在模型目录里，下一次装配再注册同名条目
+ * 只会被 first-wins 忽略（不只是白做，还让「卸载后目录里还在」变成既成事实）。所以拿到
+ * disposer 就交给调用方的 fiber；`effect` 缺席（精简宿主、测试替身）时退化成「注册了但不管
+ * 撤销」，与旧行为一致。`effect` 自己抛错（通常是 fiber 已 disposed）时，注册会立刻退回。
+ */
+export interface SkillRegistryContext {
+  readonly get: (name: string) => unknown;
+  readonly effect?: ((execute: () => () => void, label?: string) => unknown) | undefined;
+}
+
+/**
  * 把 `spec` 注册成一枚虚拟 skill。
  *
- * @param ctx - 只需 `get`（读可选服务），不要求 skills 进 inject
+ * **本函数不抛**：注册失败只回 false。调用点把它包在 `apply` 里，异常穿出去会让整条 fiber 落
+ * failed —— 一枚提示词组织用的 skill 不值得让插件装不上。宿主 `register` 的失败形态有两种：
+ * 同名二次注册（卸载后重新装配、或双挂时单实例锁没拦住的那一瞬）与 `validateDefinition()`
+ * 的校验拒绝，两者都按 false 处理。
+ *
+ * @param ctx - 必需 `get`；有 `effect` 时注册的撤销交给调用方 fiber
  * @param spec - 名字、目录说明、正文；正文为空时不注册
- * @returns true = 已交给宿主 `register`；服务缺席、形状不对、正文为空都为 false（不抛）。
- *   同名 runtime skill 由宿主 first-wins 忽略时 `register` 仍会被调用，所以这里同样回 true。
+ * @returns true = 已交给宿主 `register`；服务缺席、形状不对、正文为空、注册抛错、effect 挂不上
+ *   都为 false。同名 runtime skill 由宿主 first-wins 忽略时 `register` 仍会被调用，所以这里同样回 true。
  */
-export function registerSkill(
-  ctx: { readonly get: (name: string) => unknown },
-  spec: SkillSpec,
-): boolean {
+export function registerSkill(ctx: SkillRegistryContext, spec: SkillSpec): boolean {
   if (spec.content.length === 0) {
     return false;
   }
@@ -75,11 +91,32 @@ export function registerSkill(
   if (!isSkillsFace(found)) {
     return false;
   }
-  found.register({
-    name: spec.name,
-    description: spec.description,
-    content: spec.content,
-    source: spec.source ?? DEFAULT_SKILL_SOURCE,
-  });
+  let dispose: (() => void) | undefined;
+  try {
+    dispose = found.register({
+      name: spec.name,
+      description: spec.description,
+      content: spec.content,
+      source: spec.source ?? DEFAULT_SKILL_SOURCE,
+    });
+  } catch {
+    // 同名二次注册 / validateDefinition 拒绝：注册失败不是装配失败（见上文「本函数不抛」）。
+    return false;
+  }
+  // 撤销权交给调用方 fiber。`effect` 的工厂是同步执行的，这里只把 disposer 交进去，不自己调。
+  if (typeof dispose === "function") {
+    try {
+      ctx.effect?.(() => dispose, `registerSkill(${JSON.stringify(spec.name)})`);
+    } catch {
+      // effect 挂不上（通常是 ctx 已 disposed）：注册已经发生，但撤销没人执行。
+      // 立刻退掉，否则 skill 会留在目录里；退不掉只能维持泄漏，仍按未注册回报。
+      try {
+        dispose();
+      } catch {
+        // 宿主已经不可用，dispose 也可能抛；不能把异常穿给 apply。
+      }
+      return false;
+    }
+  }
   return true;
 }

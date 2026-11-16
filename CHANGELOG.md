@@ -2,6 +2,28 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.10
+
+修复宿主「设置」对话框里插件分区吸底保存条与背景不一致的问题，并让旧版插件内联的 `CARD_UI_CSS` 不再挡住新样式；`registerSkill` 的 effect 失败路径补上撤销；客户端行开启压缩，供应行契约改为固定 id。
+
+### Changed
+
+- **客户端行开启 minify**：`build-client.mjs` 现在给 `dist/client.js` 传 `minify: true`；产物由 57,139 B 降到 27,087 B，gzip 由 18,092 B 降到 7,906 B。`test/dist-size.test.ts` 的客户端预算由 57,300 B 收紧到 28,000 B。
+- **shared 客户端行的消费契约改为固定 id `dsh-plugin-shared`**：单插件 profile 里该行会显示为一个可停用组件，停用后重载页面会复现 issue #2 的 `missed the module table`；多个消费者插入同一个 id 时，宿主把开关标成“无法唯一定位”并禁用。包描述与 README 都要求保持开启。消费方 `cordis.patch.yml` 的这一行不随本包发布，改动在各消费仓。
+- **README 增加 Feedback / 反馈入口**：邀请用户提 issue 和 PR；启动失败时请附宿主版本、profile 安装形态与浏览器控制台原文，尤其是 `missed the module table`。
+
+### Fixed
+
+- **保存条改由「注入层版本判断 + 双类名特异性」兜底，旧版插件内联的旧一代样式不再把它压回去**：设置卡的 CSS 是跨来源拼起来的——旧版插件的 client bundle 会把自己内联的那一代 `CARD_UI_CSS` 打进 `<head>`。旧版有两种 style id：scrapling 那一代用包私有 id（`dsh-<包名>-settings-css`），danger-guard/ocr/rtk 等更近的旧版仍用固定 id `dsh-card-ui-css`；后者会被 `ensureCardUiCss` 的「已经有固定 id 就跳过」判据占住，新 bundle 的样式连插入都做不到。修法分两层：① `ensureCardUiCss` 发现固定 id 的版本低于当前 `CARD_UI_CSS_VERSION` 时，不再复用旧元素，而是另注入一份 `#dsh-card-ui-css-override` 并单独计数；覆盖样式带版本号，更高版本只升级正文、不会被后来加载的旧 bundle 降级，旧元素仍不认领也不移除；② 保存条两条规则写成 `.dsu-savebar.dsu-savebar` / `.dsu-savebar.dsu-savebar[data-dirty="true"]`，把特异性抬到 (0,2,0)/(0,3,0)，并让基础规则显式写 `background:transparent`——级联按属性逐条比较，高特异性规则「没声明」某一位时低特异性旧声明照样生效。双类名只压得住旧一代的单类选择器；旧样式若写成 `.dsu-form .dsu-savebar`（同特异性）或带 `!important`，仍可能按插入顺序胜出，所以注入层是主修复，特异性是第二道防线。
+- **吸底保存条不再是一条比四周更暗的横带**：`.dsu-savebar[data-dirty="true"]` 原先铺 `background:var(--dsw-alias-bg-base)`（深色主题 `#151517`）。卡片的 `.dsu-form` 自己不带底色，它叠在谁身上取决于挂载点——插件页的卡片背后是页面底 `#202124`，这一档大致看不出来；而宿主「设置」对话框里的插件分区叠在 `--dsw-alias-bg-layer-2`（`#2c2c2e`）上，写死的不透明底色就在面板里凹出一条暗带（用户实测：三个分区里只有吸底那一条有色差，且只在滚动到出现 SaveBar 时可见）。现在改成 `background:color-mix(in srgb,currentColor 8%,transparent)` + `backdrop-filter:blur(16px) saturate(130%)`（带 `-webkit-` 前缀一份）+ 收敛的投影：色由 `currentColor` 调出、天然跟标签色走，亮暗主题都成立；blur 负责把从条带下面滚过去的控件虚化掉。`color-mix` 前先写一条 `background:var(--dsw-alias-bg-layer-2)` 兜底：不支持 `color-mix` 的 webview 上不会退回全透明、让滚动内容穿过按钮文字。判据是 `test/card-ui-style-tag.test.ts` 新增的那条「吸底底色是半透明 + 背景模糊，不是不透明主题色」——它同时断言 `var(--dsw-alias-bg-base)` 不再出现（这条断言在改回不透明底色时会红）。
+- **`registerSkill` 的 effect 失败路径补上撤销**：宿主 `register()` 交回的 disposer 现在经可选的 `ctx.effect` 交给调用方 fiber；`effect` 挂不上（通常是 ctx 已 disposed）时立刻调用 disposer 撤销并回 `false`，避免卸载后 skill 留在目录里；`dispose()` 自己也抛时只维持泄漏，不把异常穿给 `apply`。
+
+### Tests
+
+- `test/card-ui-style-tag.test.ts` 增加旧固定 id 与覆盖样式的判据：旧元素不摘除、覆盖样式只建一份、版本不降级、未认领的覆盖样式可认领、覆盖 id 不是 style 时安静跳过；保存条测试改为直接断言双类名规则与 `color-mix` 兜底。
+- `test/skill.test.ts` 增加 effect 抛错时撤销并回 `false`、effect 与 dispose 都抛错时仍不外抛两条判据；`test/build-client.test.ts` 增加包描述保留“必须保持开启”提醒的判据。shared 全量 574 个测试通过，覆盖率保持 100%。
+- 运行期产物实测 37,624 B；客户端行压缩后 27,087 B（gzip 7,906 B）；`test/dist-size.test.ts` 的预算为 37,800 / 28,000。消费方 client 预算由各仓按 external + minify 自行重定，不在本文件记账。
+
 ## 0.2.9
 
 新增三个只走子路径的运行期模块 `./lib/instance-lock`、`./lib/skill` 与 `./lib/placeholder`：把「同一作用域里只让一份 `apply` 走注册面」这把锁、虚拟 skill 注册与 `{name}` 占位符插值从各插件仓的副本收上来。同一版里设置卡补上越界保存门禁与幂等样式注入，宿主 peer 窗口抬到 `^0.2.2-rc.2`（与兄弟包同一班车）。

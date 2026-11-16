@@ -7,12 +7,14 @@
 // 于是 MCP servers 的 textarea、ChatGPT 的输入框一路顶到卡片外的空白里。
 // 写在 `.dsu-form` 的子孙上而不是只写 `.dsu-input`：各仓自己的 `.xxx-input` 一并受益；
 // `::before`/`::after` 带上，免得伪元素造出的边框还按老尺寸算。
-//
-// 小节内的纵向节奏（`.dsu-section>*+*{margin-top:10px}` 那一组）：`.dsu-field` 自带
-// `padding:12px 0` 与上边框，相邻两条之间本就有分隔感，所以它们之间不加额外间距；缺间距的是
-// `.dsu-field` 之外的那些直系子节点——说明文字、宽行输入框、`.ocr-actions` 那样的按钮行、
-// 状态消息。实测（OCR 卡的 MCP servers 小节）这些相邻子节点的间距是 0px，textarea 的下边框
-// 直接贴着「保存 MCP」按钮。
+// 保存条规则写成 `.dsu-savebar.dsu-savebar` 是为了压过旧版插件内联的旧一代
+// `.dsu-savebar{…background:var(--dsw-alias-bg-base)}`：旧样式由包内另一份
+// `CARD_UI_CSS` 注入，覆盖不到「固定 id 已有就跳过」的判据，两份定义会在页面上同时存在。
+// 类名重复不是冗余，删掉会把宿主设置对话框里的暗带带回来。它只压得住旧一代的单类选择器；
+// 旧样式若写成 `.dsu-form .dsu-savebar`（同特异性）或带 `!important`，仍可能按插入顺序胜出。
+// 吸底底色先写一条主题色兜底，再写 `color-mix`：不支持 `color-mix` 的 webview 上至少不会
+// 退化成全透明，让滚动内容穿过按钮文字。
+
 export const CARD_UI_CSS = `
 .dsu-form{display:flex;flex-direction:column}
 .dsu-form,.dsu-form *,.dsu-form *::before,.dsu-form *::after{box-sizing:border-box}
@@ -71,8 +73,8 @@ export const CARD_UI_CSS = `
 .dsu-optionGroup{padding:6px 10px 2px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary)}
 .dsu-check{opacity:0;flex:none}
 .dsu-option[aria-selected="true"] .dsu-check{opacity:1}
-.dsu-savebar{display:flex;align-items:center;gap:8px;padding:12px 0;margin-top:24px;border-top:.5px solid var(--dsw-alias-border-l2)}
-.dsu-savebar[data-dirty="true"]{position:sticky;bottom:0;z-index:2;background:var(--dsw-alias-bg-base);box-shadow:0 -12px 24px rgb(0 0 0 / 35%)}
+.dsu-savebar.dsu-savebar{display:flex;align-items:center;gap:8px;padding:12px 0;margin-top:24px;border-top:.5px solid var(--dsw-alias-border-l2);background:transparent}
+.dsu-savebar.dsu-savebar[data-dirty="true"]{position:sticky;bottom:0;z-index:2;background:var(--dsw-alias-bg-layer-2);background:color-mix(in srgb,currentColor 8%,transparent);-webkit-backdrop-filter:blur(16px) saturate(130%);backdrop-filter:blur(16px) saturate(130%);box-shadow:0 -6px 16px rgb(0 0 0 / 22%)}
 .dsu-btn{appearance:none;border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5;border-radius:var(--dsw-radius-md);padding:5px 14px;cursor:pointer;transition:background-color .12s,border-color .12s,color .12s,filter .12s}
 .dsu-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l3)}
 .dsu-btn:active:not(:disabled){background:var(--dsw-alias-bg-layer-1)}
