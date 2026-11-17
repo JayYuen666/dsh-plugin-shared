@@ -115,6 +115,43 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 - `prepare` 指向 `build`。消费方从 registry 安装时它不执行；它存在是为了让打包、发布与 workspace link 拿到的都是新鲜 `dist/`。
 - 新增运行期模块要同时改：`lib/index.ts` 的 barrel、`exports`、`build-host.mjs` 的 `facets` 数组、`tsconfig.build.json` 的 `include`，外加一份 `test/<模块>.test.ts`。只走子路径的运行期模块（如 `instance-lock`、`skill`、`placeholder`、`remote-marker`、`card-ui`）改登记进 `entries` 并在 barrel 检查里豁免；构建期模块（如 `decorator-lowering`）进 `buildFacets`。漏一处会被「开发」一节的一致性检查判定失败。
 
+### 包内按需 chunk
+
+`./lib/build-client` 除了单入口的 `buildClientBundle`，还提供 `buildClientArtifacts`：入口之外再声明几份**包内 chunk**，让体积大的可选依赖（图表库、文档解析器一类）等用户真打开那一页时才下载，而不是把每个消费者的 `client.js` 都撑大。
+
+```ts
+const artifacts = await buildClientArtifacts({
+  root: import.meta.dirname,
+  rolldown,
+  header,
+  chunks: [{ source: "src/insights-charts.ts", fileName: "client.insights-charts.js" }],
+});
+await Promise.all(artifacts.map((a) => writeArtifact(path.join(root, a.fileName), a.text)));
+```
+
+- **调用方按字面串引用 chunk**：源码里写 `require.async("./client.insights-charts.js")`，宿主按这串字算 chunkId。产物名因此由调用方给定、不由内容 hash 生成——带 hash 就得回头改写入口，产物与源码不再逐字对应。
+- **每份产物各起一趟构建**，不走一趟多入口：rolldown 在多入口下会把公共依赖拆成额外 chunk 并用**同步** `require("./client.common.js")` 引用它，而宿主模块表里没有这种包内相对同步边，运行期必然 miss。代价是公共依赖在每个 chunk 各留一份。
+- **五道构建期门**拦的都是运行时静默的失效形态：产物名不合宿主的 `client.<name>.js` 规则（`/plugins/<id>/<fileName>` 会按 404 提供）、撞上 `client.node.*` 保留名、同一个名字声明两次、声明了却没被任何 `require.async` 引用（包变大而那一页永远出不来）、以及跨 chunk 的同步 `require`。最后一道排在最前判：产物之间真有静态边时，即使入口也写了 `require.async`，运行期仍先在那条边 miss。
+- **chunk 必须自己写进 `files`**，本包只交回正文（`ClientArtifact[]`）、不落盘也不改 manifest。漏登记的表现是本地 link 一切正常、从 registry 装的那份 404。
+
+### 外置规则
+
+`clientExternalPatterns(externals)` 与 `clientReactGuard(externals)` 是构建与消费方自查共用的那一份外置判断，`build-client.mjs` 里两行就能取到：
+
+```ts
+const artifacts = await buildClientArtifacts({
+  root: import.meta.dirname,
+  rolldown,
+  header,
+  externals: [...REACT_RUNTIME_MODULES, "zod", "@jayyuen66/dsh-plugin-shared/client"],
+});
+```
+
+- **裸包名泛化，带子路径的登记项精确匹配**。`"zod"` 生成 `^zod(?:/|$)`，`"<shared>/client"` 生成 `^<shared>/client$`。后者不能泛化成整个包名：宿主模块表按说明符全等查键，泛化会把没登记的 `<shared>/lib/record` 也外置出去，产物里多一条加载期必然 miss 的 `require`。
+- **react 家族不进 `external` 数组**，由 `clientReactGuard` 的 `resolveId` 守卫接管：登记的返回 `{ id, external: true }`，未登记的**抛错**。正则在 `isResolved:false` 那次判定里先命中就不再问插件，两者放一起会互相遮蔽——未登记的 `react-dom/server` 会被静默外置成宿主模块表里没有的键。
+- **第六道构建期门 `assertRegisteredExternals`** 兜住外置漂移：产物里出现非相对、非绝对、又不在本包清单里的静态 `require("<specifier>")` 时当场抛错。它拦的是「包名登记了、子路径没登记」——构建、类型检查、打包三步全绿，只在宿主加载期报 `missed the module table`。
+- **minify 时保留法律注释**：`comments` 缺省下发 `{ legal: true, annotation: false, jsdoc: false }`，`/*!` 许可头跟着第三方库进产物；显式传 `comments: false` 才整片抹掉。同时固定 `codeSplitting: false` 与 `dynamicImportInCjs: false`，避免默认行为把动态 import 拆成用**同步** `require` 引用的额外 chunk。
+
 ## <img src="https://api.iconify.design/lucide/circle-check.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> 确认它在正常工作
 
 1. **子路径能解析。** 在消费包里运行 `node -e 'import("@jayyuen66/dsh-plugin-shared/lib/record").then((m) => console.log(typeof m.isRecord))'`，输出 `function`。`ERR_MODULE_NOT_FOUND` 表示依赖没装上；`does not provide an export named ...` 表示装到的那份比你 import 的子路径旧。

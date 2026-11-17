@@ -115,6 +115,43 @@ A consumer profile can lock this package with a pnpm `overrides` entry. Lock it 
 - `prepare` runs `build`. It does not run when a consumer installs from the registry; it exists so packing, publishing and workspace links always ship a fresh `dist/`.
 - Adding a runtime module means touching the barrel in `lib/index.ts`, `exports`, the `facets` array in `build-host.mjs`, `include` in `tsconfig.build.json`, and a `test/<module>.test.ts`. A subpath-only runtime module (like `instance-lock`, `skill`, `placeholder`, `remote-marker` or `card-ui`) is registered in `entries` and marked barrel-exempt instead; a build-time module (like `decorator-lowering`) goes into `buildFacets`. The consistency checks in Development fail if one is missed.
 
+### Package-local on-demand chunks
+
+Besides the single-entry `buildClientBundle`, `./lib/build-client` exports `buildClientArtifacts`: declare a few **package-local chunks** next to the entry, so a heavy optional dependency (a chart library, a document parser) is fetched when the user actually opens that page instead of inflating every consumer's `client.js`.
+
+```ts
+const artifacts = await buildClientArtifacts({
+  root: import.meta.dirname,
+  rolldown,
+  header,
+  chunks: [{ source: "src/insights-charts.ts", fileName: "client.insights-charts.js" }],
+});
+await Promise.all(artifacts.map((a) => writeArtifact(path.join(root, a.fileName), a.text)));
+```
+
+- **The caller references a chunk by a literal specifier**: write `require.async("./client.insights-charts.js")` in the source and the host derives the chunkId from that string. File names are therefore given by the caller, not derived from a content hash — a hash would force the entry to be rewritten, and artifacts would stop matching the source character for character.
+- **Every artifact gets its own build pass.** A single multi-entry pass makes rolldown split shared code into an extra chunk and reference it with a **synchronous** `require("./client.common.js")`; the host module table has no such package-relative synchronous edge, so that edge always misses at runtime. The cost is one copy of the shared code per chunk.
+- **Five build-time gates**, each closing a silently failing runtime shape: a file name outside the host's `client.<name>.js` rule (`/plugins/<id>/<fileName>` answers 404), a name that collides with the `client.node.*` reserved names, the same name declared twice, a declaration that no `require.async` references (the bundle grows while that page never loads), and a cross-chunk synchronous `require`. The last gate runs first: when artifacts really do have a static edge, the runtime misses on it even if the entry also wrote `require.async`.
+- **Chunks must be listed in `files` yourself.** This package returns the text (`ClientArtifact[]`) and neither writes files nor edits the manifest; the omission shows up as a working local link and a 404 on the registry install.
+
+### Externalisation rules
+
+`clientExternalPatterns(externals)` and `clientReactGuard(externals)` hold the one externalisation decision shared by the build and by each consumer's self-check:
+
+```ts
+const artifacts = await buildClientArtifacts({
+  root: import.meta.dirname,
+  rolldown,
+  header,
+  externals: [...REACT_RUNTIME_MODULES, "zod", "@jayyuen66/dsh-plugin-shared/client"],
+});
+```
+
+- **Bare package names generalise; registered subpaths match exactly.** `"zod"` produces `^zod(?:/|$)`, `"<shared>/client"` produces `^<shared>/client$`. The latter must not generalise to the whole package: the host module table looks keys up by exact specifier, so generalising would externalise an unregistered `<shared>/lib/record` too and leave a `require` in the artifact that always misses at load time.
+- **The react family never enters the `external` array**; `clientReactGuard` handles it through a `resolveId` hook: registered specifiers get `{ id, external: true }`, unregistered ones **throw**. A regex that matches during the `isResolved:false` pass stops the plugin from being asked at all, so combining the two shapes hides each other — an unregistered `react-dom/server` would be silently externalised to a key the host module table does not have.
+- **A sixth build-time gate, `assertRegisteredExternals`,** catches externalisation drift: a static `require("<specifier>")` in an artifact that is neither relative nor absolute nor in the package's list fails the build. It catches the "package registered, subpath not registered" case — build, typecheck and pack all pass, and only the host reports `missed the module table` at load time.
+- **Legal comments survive minification**: `comments` defaults to `{ legal: true, annotation: false, jsdoc: false }`, so `/*!` licence headers travel with third-party code; pass `comments: false` explicitly to strip everything. `codeSplitting: false` and `dynamicImportInCjs: false` are pinned at the same time, so the defaults cannot turn a dynamic import into an extra chunk referenced by a **synchronous** `require`.
+
 ## <img src="https://api.iconify.design/lucide/circle-check.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> Verify it is live
 
 1. **A subpath resolves.** From the consuming package, `node -e 'import("@jayyuen66/dsh-plugin-shared/lib/record").then((m) => console.log(typeof m.isRecord))'` prints `function`. `ERR_MODULE_NOT_FOUND` means the dependency is not installed; `does not provide an export named ...` means the installed copy is older than the subpath you import.

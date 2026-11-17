@@ -2,6 +2,40 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.11
+
+客户端构建层新增**包内按需 chunk**：`build-client` 从「只有一个入口产物」扩到「入口 + 若干包内 chunk」，让体积大的可选依赖（图表库、文档解析器一类）拖到用户真正打开那一页时才下载，而不是把每个消费者的 `client.js` 都撑大。
+
+### Added
+
+- **`buildClientArtifacts(options)`**（`./lib/build-client`）：在 `ClientBuildOptions` 之上加一个可选 `chunks`，返回 `ClientArtifact[]` —— 入口 `client.js` 在首位，其后按 `chunks` 的声明顺序。每份产物的外壳与入口同形，chunk 那几份多一行 `chunk: "<fileName>"`（宿主 `__ModuleLoader__.load` 靠这一位把它们注册成 `chunkId(ownerId, fileName)`，而不是覆盖入口的工厂）。
+- **`ClientChunkSpec` / `ClientArtifact` 类型**：前者是 `{ source, fileName }`，`source` 相对包根、`fileName` 必须匹配宿主的 `client.<name>.js` 规则；后者是 `{ fileName, text }`，`text` 是含外壳的完整产物正文，调用方只负责落盘。
+- **`externalPatternOf(specifier)` / `packagePatternOf(name)` / `escapeRegExp(literal)`**（`./lib/build-artifacts`）：外置正则的三种粒度。前一条按「登记项是不是裸包名」分派，后两条是它用的两块零件。
+- **`clientExternalPatterns(externals)` / `clientReactGuard(externals)`**（`./lib/build-client`）：构建与消费方自查共用的外置规则。前者给出 `external` 数组，后者给出 react 家族的守卫插件。
+- **四道构建期门**，因为这几类错误在运行时全是静默的：产物名不合宿主规则（`/plugins/<id>/<fileName>` 会按 404 提供）、产物名撞上 `client.node.*` 保留名、同一个 `fileName` 声明两次、以及声明了却没有产物的 `require.async("./<fileName>")` 引用它——最后一条落到用户眼里就是「包变大了、图表永远出不来」，而构建、类型、打包三步全绿。
+- **第五道门拦跨 chunk 的同步 `require`**：宿主模块表里只有「包本身」与「经 `require.async` 加载的 chunk」两类键，没有 `require("./client.x.js")` 这种包内相对同步边，它在运行期一定 miss。这道门排在「引用齐全」之前判，因为产物之间真有静态边时，即使入口也写了 `require.async`，运行期仍先在那条边上 miss。
+
+### Changed
+
+- **`buildClientBundle` 变成 `buildClientArtifacts` 的薄包装**：不传 `chunks` 时两者产物逐字节相同，现有消费方的 `build-client.mjs` 不用改。改造当时实测 shared 自己的客户端行仍是 27,087 B，dsh-rtk 的 `client.js` 仍是 45,081 B，改前改后无差异；dsh-rtk 随后新增的 Insights 功能另计体积。
+- **`external` 从函数形态换成正则数组**：rolldown 官方 `external` 文档的 warning 段明写函数形态每个模块都要回调一次 JS、开销显著，建议用非函数值。新导出 `externalPatternOf(specifier)` 决定单条的形状——**裸包名**按包名边界泛化（`^pkg(?:/|$)`），**带子路径的登记项**精确匹配（`^pkg/sub/path$`）。子路径不泛化是承重的：宿主模块表按说明符全等查键，把 `@scope/pkg/client` 泛化成整个包名，会把没登记的 `@scope/pkg/lib/record` 也外置出去，产物里就多一条加载期必然 miss 的 require（三个消费仓实测各多出一条）。`clientExternalPatterns` 按登记项**字面**去重，`zod` 与 `zod/v4` 各留一条。
+- **react 家族改由 resolveId 守卫接管，不再进 external 数组**：正则在 `isResolved:false` 那次判定里先命中就不再问插件，所以「正则数组 + 插件里抛错」会互相遮蔽——未登记的 `react-dom/server`、`react/experimental` 被**静默外置**成宿主模块表里没有的键（实测 hookCalls 为空）。新导出 `clientReactGuard(externals)` 返回一个 `resolveId` 带 `filter.id = /^react(?:-dom)?(?:\/|$)/u` 的插件：登记过的返回 `{ id, external: true }`，没登记的**抛错**。`clientExternalPredicate` 保留同名导出（`dsh-danger-guard` 的构建脚本仍 import 它），实现改成一个自查视图，与构建共用同一份判断。
+- **generate 选项**：`comments: false` 改成 `{ legal: true, annotation: false, jsdoc: false }`——`false` 连法律注释一起抹掉，而按需打进产物的第三方库（ECharts 一类）的许可头正是 `/*!` 法律注释，必须留下；`@__PURE__` 标注与 JSDoc 仍然丢弃，实测产物与旧口径逐字节相同。同时显式下发 `codeSplitting: false` 与 `dynamicImportInCjs: false`：前者的默认值会把 `await import()` 拆成独立 chunk 并用**同步** `require` 引用，后者会把外部动态 import 留成 `import()`。两项显式化后，当时八仓的 `client.js` 与 `host.js` 全部逐字节不变。
+- **新增第六道构建期门 `assertRegisteredExternals`**：扫产物里的静态 `require("<specifier>")`，非相对、非绝对、又不在本包外置清单里的**当场抛错**。这是「包名登记了、子路径没登记」那种外置漂移的最后一道兜底——它在构建、类型检查、打包三步里全绿，只在宿主加载期报 `missed the module table`。
+
+### Tests
+
+- `test/build-facets.test.ts` 新增 `describe("buildClientArtifacts")` 15 条用例：产物顺序与各自一趟构建、chunk 位只在 chunk 侧、header 逐份存在、无 chunk 时与 `buildClientBundle` 逐字节一致、三种非法文件名、两个保留名、重复声明、未被引用、同步 require（同一份产物里同时写 `require.async` 与 `require`，钉住静态边先响）、反引号与括号内空白也算引用、chunk 引用另一个 chunk 也算已引用、`verifyName` 对每份产物各调一次、chunk 构建失败时整批失败且失败那次的 bundle 已释放。
+- 同文件新增 `clientExternalPredicate` 2 条、`clientExternalPatterns / clientReactGuard` 3 条、外置漂移 3 条用例：登记的说明符外置、未登记的 react 家族抛错、裸包名泛化而**子路径登记项不泛化**（`@jayyuen66/dsh-plugin-shared/lib/record` 必须是 `false`）、`zod` 与 `zod/v4` 按字面各留一条正则、守卫的 `filter.id` 必须是正则（`resolveId` 不接受字符串）、未登记说明符进守卫即抛、未登记的外置 require 让构建失败、包名登记而子路径没登记也失败、登记过的外置与相对 require 都放行。
+- 显式 `comments: false` 的 host/client 各 1 条，钉住「显式关掉时连法律注释也不留」这条与 minify 缺省相反的行为。`lib/build-client.ts`、`lib/build-host.ts`、`lib/build-artifacts.ts` 覆盖率保持四项 100%。
+
+### Notes
+
+- **为什么不一趟多入口，而是每份源文件各起一趟构建**：rolldown 在多入口下会把公共依赖拆成一个额外的 chunk，并在入口与 chunk 里都用**同步** `require("./client.common.js")` 引用它——正是上一节那道门要拒的形状，而它在宿主里是必然 miss。独立构建不会产生这种边，代价是公共依赖在每个 chunk 各留一份；对「按需加载的大库」这个用途，多一份几十字节的壳比运行期 miss 划算。
+- **产物名由调用方给定，不按内容 hash 生成**：入口源码里写的是字面 `require.async("./client.<name>.js")`，宿主按这串字算 chunkId；产物名带 hash 就得回头改写入口，产物与源码不再逐字对应。改了 chunk 内容而没改文件名时，宿主的 `?rev=` 取自 `client.js` 的 stat，入口一变就会换 rev，旧 chunk 缓存不会粘住。
+- **chunk 产物必须自己写进 `files`**：`buildClientArtifacts` 只交回正文，不落盘也不改 manifest；漏登记的表现是本地 link 一切正常、从 registry 装的那份 `require.async` 404。
+- **改外置规则为什么不动任何产物字节**：分组是按「登记项字面是不是裸包名」判的，而各包的清单里本来就只有裸包名与 `<shared>/client` 这一条子路径；后者改成精确匹配后，原来靠泛化命中的那些 `shared/lib/*` 说明符在这几个包里恰好一条都没有（承重的保证是第六道门，不是这条观察）。八仓 `client.js` 与 `host.js` 改前改后逐字节相同。
+
 ## 0.2.10
 
 修复宿主「设置」对话框里插件分区吸底保存条与背景不一致的问题，并让旧版插件内联的 `CARD_UI_CSS` 不再挡住新样式；`registerSkill` 的 effect 失败路径补上撤销；客户端行开启压缩，供应行契约改为固定 id。

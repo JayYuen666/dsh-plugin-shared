@@ -11,12 +11,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildHostEntries } from "../lib/build-host.ts";
 import {
+  buildClientArtifacts,
   buildClientBundle,
+  clientExternalPatterns,
+  clientExternalPredicate,
+  clientReactGuard,
   collapseStorePaths,
   REACT_RUNTIME_MODULES,
 } from "../lib/build-client.ts";
 import type { HostEntry } from "../lib/build-host.ts";
 import type { ClientNameContext } from "../lib/build-client.ts";
+import type { CommentsOptions } from "rolldown";
 import type { OutputItem, RolldownBundle, RolldownFactory } from "../lib/build-artifacts.ts";
 
 /** 复用的高频字面量（sonarjs/no-duplicate-string 的去重范围）。 */
@@ -27,6 +32,15 @@ const CLIENT_ENTRY_REL = path.join("src", "client-entry.ts");
 const MODULE_IDS = ["/pkg/lib/a.ts"] as const;
 const FIXTURE_NAME = "@jayyuen66/fixture";
 const CLOSE_BOOM = "close boom";
+const ENTRY_BODY = "module.exports = 1;";
+const CHUNK_BODY = "module.exports = 2;";
+/** 测试里反复出现的常量（sonarjs/no-duplicate-string 的去重范围）。 */
+const SHARED_CLIENT = "@jayyuen66/dsh-plugin-shared/client";
+const REACT_DOM_SUBDIR = "react-dom/client";
+const REACT_DOM_SERVER = "react-dom/server";
+const CLIENT_EXTRA = [SHARED_CLIENT, "zod"] as const;
+/** 压缩产物的注释档位（与实现同源的三档）。 */
+const LEGAL_COMMENTS = { legal: true, annotation: false, jsdoc: false } as const;
 
 /** stub 记录到的 rolldown 选项视图（只列断言要读的键；写死形状避免索引签名上的访问规则冲突）。 */
 interface RolldownOptionsView {
@@ -34,8 +48,8 @@ interface RolldownOptionsView {
   platform?: string;
   cwd?: string;
   resolve?: { extensions: string[] };
-  external?: (id: string) => boolean;
-  plugins?: unknown[];
+  external?: readonly RegExp[];
+  plugins?: readonly unknown[];
 }
 
 /** 一次 rolldown 调用的记录。 */
@@ -43,6 +57,12 @@ interface RolldownCall {
   readonly options: RolldownOptionsView;
   generateOptions: Record<string, unknown>;
   closed: boolean;
+}
+
+/** 守卫插件的 resolveId 视图（只列断言要读的位；类型形状由 rolldown 保证）。 */
+interface GuardResolveId {
+  readonly filter?: { readonly id?: RegExp };
+  readonly handler: (this: never, id: string) => unknown;
 }
 
 /** stub 工厂的行为配置。 */
@@ -67,16 +87,39 @@ function soleCall(calls: readonly RolldownCall[]): RolldownCall {
 }
 
 /**
- * 取记录里的外部化判定函数。
+ * 判一条说明符会不会被 external 正则数组命中（与 rolldown 的 StringOrRegex 语义对齐：
+ * 正则按 `matches` 测，即「在串里找得到」）。
  * @param call - 桩的调用记录
- * @returns external 函数
+ * @param id - 说明符
+ * @returns 是否外置
  */
-function externalOf(call: RolldownCall): (id: string) => boolean {
+function externalMatches(call: RolldownCall, id: string): boolean {
   const { external } = call.options;
   if (external === undefined) {
     assert.fail("external 判据缺席");
   }
-  return external;
+  if (typeof external === "function") {
+    assert.fail("external 应为正则数组（函数形态每次回调 JS，官方文档点名开销显著）");
+  }
+  return external.some((pattern) => pattern.test(id));
+}
+
+/**
+ * 取记录里的 react 家族守卫插件。
+ * @param call - 桩的调用记录
+ * @returns 守卫插件的 resolveId 钩子
+ */
+function reactGuardOf(call: RolldownCall): (id: string) => unknown {
+  const plugin = call.options.plugins?.find(
+    (item): item is { name: string; resolveId: { handler: (id: string) => unknown } } =>
+      typeof item === "object" &&
+      item !== null &&
+      (item as { name?: unknown }).name === "dsh-react-family-guard",
+  );
+  if (plugin === undefined) {
+    assert.fail("react 家族守卫插件缺席");
+  }
+  return plugin.resolveId.handler;
 }
 
 /**
@@ -99,7 +142,9 @@ function stubRolldown(plan: StubPlan): { factory: RolldownFactory; calls: Rolldo
       generate: async (generateOptions: {
         format: "esm" | "cjs";
         minify?: boolean;
-        comments?: boolean;
+        comments?: boolean | CommentsOptions;
+        codeSplitting?: boolean;
+        dynamicImportInCjs?: boolean;
       }) => {
         call.generateOptions = generateOptions;
         if (plan.generateError !== undefined) {
@@ -176,7 +221,11 @@ describe("buildHostEntries", () => {
       assert.equal(call.options.cwd, root);
       assert.deepEqual(call.options.resolve?.extensions, [".ts", ".mjs", ".js"]);
       assert.equal(call.options.plugins, undefined);
-      assert.deepEqual(call.generateOptions, { format: "esm" });
+      assert.deepEqual(call.generateOptions, {
+        format: "esm",
+        codeSplitting: false,
+        dynamicImportInCjs: false,
+      });
       assert.equal(call.closed, true);
     } finally {
       await cleanup(root);
@@ -188,11 +237,14 @@ describe("buildHostEntries", () => {
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
       await buildHostEntries({ root, rolldown: factory, entries: HOST_ENTRIES });
-      const external = externalOf(soleCall(calls));
-      assert.equal(external("@jayyuen66/dsh-plugin-shared/lib/text"), true);
-      assert.equal(external("@jayyuen66/optional-pkg"), true);
-      assert.equal(external("typescript"), false);
-      assert.equal(external("lodash/fp"), false);
+      const call = soleCall(calls);
+      assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-shared/lib/text"), true);
+      assert.equal(externalMatches(call, "@jayyuen66/optional-pkg"), true);
+      assert.equal(externalMatches(call, "typescript"), false);
+      assert.equal(externalMatches(call, "lodash/fp"), false);
+      // 包名边界：前缀相同的另一个包不能被顺手外置成宿主模块表里不存在的键。
+      assert.equal(externalMatches(call, "@jayyuen66/optional-pkg-extra"), false);
+      assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-sharedx"), false);
     } finally {
       await cleanup(root);
     }
@@ -208,9 +260,9 @@ describe("buildHostEntries", () => {
         entries: HOST_ENTRIES,
         externalizeOptional: false,
       });
-      const external = externalOf(soleCall(calls));
-      assert.equal(external("@jayyuen66/optional-pkg"), false);
-      assert.equal(external("@jayyuen66/dsh-plugin-shared"), true);
+      const call = soleCall(calls);
+      assert.equal(externalMatches(call, "@jayyuen66/optional-pkg"), false);
+      assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-shared"), true);
     } finally {
       await cleanup(root);
     }
@@ -270,15 +322,44 @@ describe("buildHostEntries", () => {
       assert.deepEqual(soleCall(minified.calls).generateOptions, {
         format: "esm",
         minify: true,
-        comments: false,
+        comments: LEGAL_COMMENTS,
+        codeSplitting: false,
+        dynamicImportInCjs: false,
       });
+      // 显式 comments: true 是调用方的明确要求：保持旧行为，省略这个键（rolldown 缺省全留）。
       assert.deepEqual(soleCall(bothGiven.calls).generateOptions, {
         format: "esm",
         minify: true,
+        codeSplitting: false,
+        dynamicImportInCjs: false,
       });
       const { resolve, plugins } = soleCall(extensionsAndPlugins.calls).options;
       assert.deepEqual(resolve?.extensions, [".ts", ".json"]);
       assert.deepEqual(plugins, [{ name: "p" }]);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("显式 comments: false 抹掉全部注释（压缩态也不保留法律注释）", async () => {
+    // 三态里唯一会丢许可头的一档，因此必须是**显式**要求：调用方自己承担第三方许可的披露。
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await buildHostEntries({
+        root,
+        rolldown: factory,
+        entries: HOST_ENTRIES,
+        minify: true,
+        comments: false,
+      });
+      assert.deepEqual(soleCall(calls).generateOptions, {
+        format: "esm",
+        minify: true,
+        comments: false,
+        codeSplitting: false,
+        dynamicImportInCjs: false,
+      });
     } finally {
       await cleanup(root);
     }
@@ -417,7 +498,7 @@ describe("buildHostEntries", () => {
 
 describe("buildClientBundle", () => {
   it("外壳 形状：头、id、指令序言与收尾；缺省选项下发", async () => {
-    const { factory, calls } = stubRolldown({ outputs: [[chunkOf("module.exports = 1;")]] });
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf(ENTRY_BODY)]] });
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
       const out = await buildClientBundle({
@@ -442,24 +523,33 @@ describe("buildClientBundle", () => {
         ".mjs",
         ".json",
       ]);
-      assert.deepEqual(call.generateOptions, { format: "cjs" });
+      assert.deepEqual(call.generateOptions, {
+        format: "cjs",
+        codeSplitting: false,
+        dynamicImportInCjs: false,
+      });
       assert.equal(call.closed, true);
     } finally {
       await cleanup(root);
     }
   });
 
-  it("外置：登记的精确说明符外置，react 家族未登记的构建期失败，其余内联", async () => {
+  it("外置：非 react 说明符按包名边界外置，react 家族交给 resolveId 守卫", async () => {
     const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
       await buildClientBundle({ root, rolldown: factory, header: HEADER });
-      const external = externalOf(soleCall(calls));
-      assert.equal(external("react"), true);
-      assert.equal(external("react-dom/client"), true);
-      assert.equal(external("lodash"), false);
-      assert.throws(() => external("react-dom/server"), /react 家族/u);
-      assert.throws(() => external("react/jsx-dev-runtime"), /react 家族/u);
+      const call = soleCall(calls);
+      // react 家族不进 external 数组：正则在 isResolved 之前命中就不再问插件，未登记的子路径
+      // 会被静默外置。它们全部由守卫插件处理。
+      assert.equal(externalMatches(call, "react"), false);
+      assert.equal(externalMatches(call, REACT_DOM_SUBDIR), false);
+      assert.equal(externalMatches(call, "lodash"), false);
+      const guard = reactGuardOf(call);
+      assert.deepEqual(guard("react"), { id: "react", external: true });
+      assert.deepEqual(guard(REACT_DOM_SUBDIR), { id: REACT_DOM_SUBDIR, external: true });
+      assert.throws(() => guard(REACT_DOM_SERVER), /react 家族/u);
+      assert.throws(() => guard("react/jsx-dev-runtime"), /react 家族/u);
     } finally {
       await cleanup(root);
     }
@@ -475,9 +565,10 @@ describe("buildClientBundle", () => {
         header: HEADER,
         externals: [...REACT_RUNTIME_MODULES, "@deepseek-ai/cordis"],
       });
-      const external = externalOf(soleCall(calls));
-      assert.equal(external("@deepseek-ai/cordis"), true);
-      assert.equal(external("lodash"), false);
+      const call = soleCall(calls);
+      assert.equal(externalMatches(call, "@deepseek-ai/cordis"), true);
+      assert.equal(externalMatches(call, "@deepseek-ai/cordis/plugin"), true);
+      assert.equal(externalMatches(call, "lodash"), false);
     } finally {
       await cleanup(root);
     }
@@ -496,7 +587,36 @@ describe("buildClientBundle", () => {
       });
       const call = soleCall(calls);
       assert.equal(call.options.input, path.join(root, "src", "alt-entry.ts"));
-      assert.deepEqual(call.generateOptions, { format: "cjs", minify: true, comments: false });
+      assert.deepEqual(call.generateOptions, {
+        format: "cjs",
+        minify: true,
+        comments: LEGAL_COMMENTS,
+        codeSplitting: false,
+        dynamicImportInCjs: false,
+      });
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("client 显式 comments: false：连法律注释一起抹掉", async () => {
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await buildClientBundle({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        minify: true,
+        comments: false,
+      });
+      assert.deepEqual(soleCall(calls).generateOptions, {
+        format: "cjs",
+        minify: true,
+        comments: false,
+        codeSplitting: false,
+        dynamicImportInCjs: false,
+      });
     } finally {
       await cleanup(root);
     }
@@ -663,6 +783,428 @@ describe("buildClientBundle", () => {
         buildClientBundle({ root, rolldown: factory, header: HEADER }),
         /close boom/u,
       );
+    } finally {
+      await cleanup(root);
+    }
+  });
+});
+
+describe("clientExternalPredicate（各包构建脚本的自查视图）", () => {
+  const REGISTERED = [...REACT_RUNTIME_MODULES, ...CLIENT_EXTRA];
+  const isExternal = clientExternalPredicate(REGISTERED);
+
+  it("与构建同一份规则：裸包名泛化、子路径登记项精确匹配", () => {
+    assert.equal(isExternal("zod"), true);
+    assert.equal(isExternal("zod/v4"), true);
+    assert.equal(isExternal(SHARED_CLIENT), true);
+    // 子路径登记项不泛化成整个包：宿主模块表按说明符全等查键，`/lib/record` 没有登记就
+    // 不该外置（外置出去就是一条加载期必然 miss 的 require）。
+    assert.equal(isExternal("@jayyuen66/dsh-plugin-shared/lib/record"), false);
+    assert.equal(isExternal("lodash"), false);
+    assert.equal(isExternal("./local.ts"), false);
+  });
+
+  it("react 家族：登记的放行，未登记抛错（不静默返回 false）", () => {
+    assert.equal(isExternal("react"), true);
+    assert.equal(isExternal(REACT_DOM_SUBDIR), true);
+    assert.throws(() => isExternal(REACT_DOM_SERVER), /不在外置清单/u);
+    assert.throws(() => isExternal("react/jsx-dev-runtime"), /不在外置清单/u);
+  });
+});
+
+describe("clientExternalPatterns / clientReactGuard", () => {
+  it("react 家族被剔除出 external 数组，裸包名泛化、子路径精确匹配", () => {
+    const patterns = clientExternalPatterns([
+      ...REACT_RUNTIME_MODULES,
+      "zod",
+      "zod/v4",
+      SHARED_CLIENT,
+    ]);
+    const sources = patterns.map((pattern) => pattern.source);
+    assert.ok(
+      sources.every((source) => !source.includes("react")),
+      sources.join(" "),
+    );
+    // 去重按**登记项字面**做，不按匹配面做：`zod` 与 `zod/v4` 是两条不同的登记项，
+    // 前者泛化出的包名边界虽然已经覆盖后者，但两条都留着才与「登记了什么就外置什么」一致。
+    assert.equal(sources.filter((source) => source.startsWith("^zod")).length, 2);
+    // 正则源码里 `/` 会被转义（RegExp.prototype.source 的既有行为），断言按源码写。
+    assert.ok(sources.includes(String.raw`^zod(?:\/|$)`), sources.join(" "));
+    // 子路径登记项精确匹配：泛化成整包会把没登记的兄弟子路径也外置出去。
+    assert.ok(
+      sources.includes(String.raw`^@jayyuen66\/dsh-plugin-shared\/client$`),
+      sources.join(" "),
+    );
+    assert.ok(
+      !sources.some((source) => source.includes(String.raw`dsh-plugin-shared(?:\/|$)`)),
+      "shared 只登记了 /client 子路径，不得泛化成整个包名",
+    );
+  });
+
+  it("守卫的 filter.id 只放 react 家族进来，handler 逐字核对登记集", () => {
+    const guard = clientReactGuard([...REACT_RUNTIME_MODULES, "zod"]);
+    const resolveId = guard.resolveId as GuardResolveId | undefined;
+    if (resolveId === undefined || typeof resolveId === "function") {
+      assert.fail("守卫必须以对象形态声明 resolveId（需要 filter）");
+    }
+    // filter.id 是 react 家族的正则：非 react 说明符一次都不会进 handler。
+    const idFilter = resolveId.filter?.id;
+    assert.ok(idFilter instanceof RegExp, "filter.id 必须是正则（resolveId 不接受字符串）");
+    assert.equal(idFilter.test("react"), true);
+    assert.equal(idFilter.test(REACT_DOM_SERVER), true);
+    assert.equal(idFilter.test("zod"), false);
+    const { handler } = resolveId;
+    assert.deepEqual(handler.call({} as never, "react"), { id: "react", external: true });
+    assert.throws(() => handler.call({} as never, REACT_DOM_SERVER), /react 家族/u);
+  });
+
+  it("只有 react 家族登记项时 external 数组为空", () => {
+    assert.deepEqual(clientExternalPatterns([...REACT_RUNTIME_MODULES]), []);
+  });
+});
+
+describe("buildClientArtifacts", () => {
+  const CHUNK_FILE = "client.charts.js";
+  const CHUNK_SOURCE = path.join("src", "charts.ts");
+  // 入口源码里引用 chunk 的那一行：形态必须是宿主 ClientBundleRequire.async 认的
+  // require.async("./client.<name>.js")，且占位符不能带变量（构建期只做字面匹配）。
+  const ENTRY_ASKS_CHUNK = 'const chart = () => require.async("./client.charts.js");';
+
+  it("入口在首位，chunk 按声明顺序；外壳 只给 chunk 加 chunk 位", async () => {
+    const { factory, calls } = stubRolldown({
+      outputs: [[chunkOf(ENTRY_ASKS_CHUNK)], [chunkOf(CHUNK_BODY)]],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const artifacts = await buildClientArtifacts({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+      });
+      assert.equal(artifacts.length, 2);
+      const [entry, chunk] = artifacts;
+      if (entry === undefined || chunk === undefined) {
+        assert.fail("产物数量不足");
+      }
+      assert.equal(entry.fileName, "client.js");
+      assert.equal(chunk.fileName, CHUNK_FILE);
+      // 入口没有 chunk 位，chunk 有：宿主据此决定注册键是包名还是 chunkId。
+      assert.ok(!entry.text.includes("  chunk:"));
+      assert.ok(chunk.text.includes(`  chunk: ${JSON.stringify(CHUNK_FILE)},`));
+      // 两份产物各自带 header（产物是独立文件，不能只有第一份带）。
+      assert.ok(entry.text.startsWith(`${HEADER}\n`));
+      assert.ok(chunk.text.startsWith(`${HEADER}\n`));
+      // 每份源文件各起一趟构建。
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0]?.options.input, path.join(root, CLIENT_ENTRY_REL));
+      assert.equal(calls[1]?.options.input, path.join(root, CHUNK_SOURCE));
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("没有 chunk 时与 buildClientBundle 逐字节一致", async () => {
+    const plan = { outputs: [[chunkOf(ENTRY_BODY)]] } as const;
+    const first = stubRolldown(plan);
+    const second = stubRolldown(plan);
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const artifacts = await buildClientArtifacts({
+        root,
+        rolldown: first.factory,
+        header: HEADER,
+      });
+      const text = await buildClientBundle({ root, rolldown: second.factory, header: HEADER });
+      assert.equal(artifacts.length, 1);
+      assert.equal(artifacts[0]?.text, text);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("chunk 产物名不含 client. 前缀：构建期失败", async () => {
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientArtifacts({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          chunks: [{ source: CHUNK_SOURCE, fileName: "charts.js" }],
+        }),
+        /不匹配宿主的包内 chunk 规则/u,
+      );
+      assert.equal(calls.length, 0);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("chunk 产物名含非法字符或多余扩展：构建期失败", async () => {
+    const { factory } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await Promise.all(
+        ["client.ch arts.js", "client.charts.ts", "client..js", "client.jsx"].map((fileName) =>
+          assert.rejects(
+            buildClientArtifacts({
+              root,
+              rolldown: factory,
+              header: HEADER,
+              chunks: [{ source: CHUNK_SOURCE, fileName }],
+            }),
+            /不匹配宿主的包内 chunk 规则/u,
+          ),
+        ),
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("chunk 撞上 client.node.* 保留名：构建期失败", async () => {
+    const { factory } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await Promise.all(
+        ["client.node.js", "client.node.charts.js"].map((fileName) =>
+          assert.rejects(
+            buildClientArtifacts({
+              root,
+              rolldown: factory,
+              header: HEADER,
+              chunks: [{ source: CHUNK_SOURCE, fileName }],
+            }),
+            /撞上 Node 客户端入口的保留名/u,
+          ),
+        ),
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("同一产物名声明两次：构建期失败", async () => {
+    const { factory } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientArtifacts({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          chunks: [
+            { source: CHUNK_SOURCE, fileName: CHUNK_FILE },
+            { source: "src/other.ts", fileName: CHUNK_FILE },
+          ],
+        }),
+        /chunk 产物名重复/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("声明了却没人 require.async：构建期失败（打进包里却永远不加载）", async () => {
+    const { factory } = stubRolldown({
+      outputs: [[chunkOf(ENTRY_BODY)], [chunkOf(CHUNK_BODY)]],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientArtifacts({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+        }),
+        /已声明但没有任何产物用 require\.async/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("入口里的同步相对 require 指向 chunk：构建期失败（宿主模块表没有这条边）", async () => {
+    const { factory } = stubRolldown({
+      outputs: [
+        // 同时写了 require.async 与同步 require：判据必须是同步那条先响，
+        // 否则「引用齐全」会把静态边遮住。
+        [
+          chunkOf(
+            'const a = require.async("./client.charts.js");\nconst b = require("./client.charts.js");',
+          ),
+        ],
+        [chunkOf(CHUNK_BODY)],
+      ],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientArtifacts({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+        }),
+        /出现跨 chunk 的同步 require/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("引用形态：反引号与括号内空白都算引用", async () => {
+    const { factory } = stubRolldown({
+      // 压缩产物用反引号写字符串，且可能带空白；两者都是合法引用。
+      outputs: [
+        [chunkOf("const a = require.async( `./client.charts.js` );")],
+        [chunkOf(CHUNK_BODY)],
+      ],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const artifacts = await buildClientArtifacts({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+      });
+      assert.equal(artifacts.length, 2);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("chunk 侧引用另一个 chunk 也算已引用（入口不必自己引用每个 chunk）", async () => {
+    const { factory } = stubRolldown({
+      outputs: [
+        [chunkOf(ENTRY_ASKS_CHUNK)],
+        [chunkOf('require.async("./client.detail.js");')],
+        [chunkOf("module.exports = 3;")],
+      ],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const artifacts = await buildClientArtifacts({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        chunks: [
+          { source: CHUNK_SOURCE, fileName: CHUNK_FILE },
+          { source: "src/detail.ts", fileName: "client.detail.js" },
+        ],
+      });
+      assert.deepEqual(
+        artifacts.map((artifact) => artifact.fileName),
+        ["client.js", CHUNK_FILE, "client.detail.js"],
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("verifyName 对每份产物各调一次（包名同源校验不漏 chunk）", async () => {
+    const { factory } = stubRolldown({
+      outputs: [[chunkOf(ENTRY_ASKS_CHUNK)], [chunkOf(CHUNK_BODY)]],
+    });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    const seen: string[] = [];
+    try {
+      await buildClientArtifacts({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+        verifyName: (context) => {
+          seen.push(`${context.pkgName}:${context.body.trim()}`);
+        },
+      });
+      assert.deepEqual(seen, [
+        `${FIXTURE_NAME}:${ENTRY_ASKS_CHUNK}`,
+        `${FIXTURE_NAME}:module.exports = 2;`,
+      ]);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("未登记的外置 require：构建期失败（否则加载期撞模块表）", async () => {
+    const leaked = 'const x = require("lodash");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(leaked)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /未登记的外置 require："lodash"/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("包名登记了但子路径没登记：同样失败（按包名边界外置的配套闸门）", async () => {
+    // 这正是三个仓泄漏的形态：外置规则按包名命中，产物里留下一条宿主模块表里没有的
+    // require。宿主按说明符全等查键，所以「包名在清单里」不等于「这一条能加载」。
+    const leaked = 'const x = require("@jayyuen66/dsh-plugin-shared/lib/record");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(leaked)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          externals: [...REACT_RUNTIME_MODULES, SHARED_CLIENT],
+        }),
+        /dsh-plugin-shared\/lib\/record/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("登记过的外置 require 与包内相对 require 都放行", async () => {
+    const body = [
+      'const r = require("react");',
+      'const z = require("zod");',
+      'const helper = require("./helper.js");',
+      ENTRY_ASKS_CHUNK,
+    ].join("\n");
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const out = await buildClientBundle({
+        root,
+        rolldown: factory,
+        header: HEADER,
+        externals: [...REACT_RUNTIME_MODULES, "zod"],
+      });
+      assert.ok(out.includes('require("react")'));
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("chunk 构建失败时整批失败，且失败那次的 bundle 也已释放", async () => {
+    const plan: StubPlan = {
+      outputs: [[chunkOf(ENTRY_ASKS_CHUNK)], []],
+    };
+    const { factory, calls } = stubRolldown(plan);
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientArtifacts({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
+        }),
+        /期望恰好一个 entry chunk/u,
+      );
+      assert.equal(calls[1]?.closed, true);
     } finally {
       await cleanup(root);
     }

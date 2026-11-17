@@ -12,7 +12,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
-import type { InputOptions } from "rolldown";
+import type { CommentsOptions, InputOptions } from "rolldown";
 
 /**
  * 对象守卫：数组与非对象都不算 Record。
@@ -67,6 +67,47 @@ export function packageNameOf(id: string): string {
   }
   const secondSlash = firstSlash === -1 ? -1 : id.indexOf("/", firstSlash + 1);
   return secondSlash === -1 ? id : id.slice(0, secondSlash);
+}
+
+/**
+ * 字面串里会被正则语法误读的字符转义。
+ * @param literal - 字面串
+ * @returns 正则源码片段
+ */
+export function escapeRegExp(literal: string): string {
+  return literal.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
+}
+
+/**
+ * 包名 → 锚定的外置正则（`^pkg(/|$)`）。
+ *
+ * 为什么不再用函数形态：rolldown 官方 `external` 文档的 warning 段写明，函数形态每个模块都要
+ * 回调一次 JS，性能开销显著，建议用非函数值。而字符串项是**全等**匹配（Rust 侧 `String` 走
+ * `memmem::find`，见 `is_external.rs`），写 `"pkg"` 不会命中 `pkg/sub`，于是子路径要么漏外置、
+ * 要么得枚举——正则数组是两者之间唯一同时满足「非函数」与「子路径也命中」的形状。
+ * @param name - 包名段（`@scope/pkg` 或 `pkg`）
+ * @returns 锚定到包名边界的正则
+ */
+export function packagePatternOf(name: string): RegExp {
+  return new RegExp(`^${escapeRegExp(name)}(?:/|$)`, "u");
+}
+
+/**
+ * 说明符 → 锚定的外置正则：裸包名按包名边界泛化，带子路径的登记项**精确匹配**。
+ *
+ * 为什么子路径不能泛化：宿主模块表按说明符全等查键，泛化后 `^@scope/pkg(?:/|$)` 会把
+ * `@scope/pkg/lib/record` 这类**没有登记**的子路径也外置，产物里于是留下一条加载期必然
+ * miss 的 `require(...)`（三个仓实测各多出一条）。而精确匹配的语义与旧实现的
+ * 「`externalNames.has(packageNameOf(id))` + 子路径不命中」在裸包名一侧完全一致，
+ * 差异只在「登记了子路径时要不要连带外置它的兄弟子路径」——旧实现不会，这里也不该。
+ * @param specifier - 登记的外置说明符（裸包名或子路径）
+ * @returns 锚定正则
+ */
+export function externalPatternOf(specifier: string): RegExp {
+  if (packageNameOf(specifier) === specifier) {
+    return packagePatternOf(specifier);
+  }
+  return new RegExp(`^${escapeRegExp(specifier)}$`, "u");
 }
 
 /**
@@ -272,12 +313,22 @@ export interface CloseableBundle {
   readonly close: () => Promise<void>;
 }
 
-/** generate 交给调用方的最小输出结构（属性式签名，真实 bundle 结构满足）。 */
+/**
+ * generate 交给调用方的最小输出结构（属性式签名，真实 bundle 结构满足）。
+ *
+ * 只列本包真正会下发的键，每个都带官方出处：`comments` 还接受对象形态（`legal` /
+ * `annotation` / `jsdoc` 三档，见 rolldown 的 `CommentsOptions`），`codeSplitting` 与
+ * `dynamicImportInCjs` 来自 `OutputOptions`。这几项默认值都不是「我们想要的」形态：
+ * `codeSplitting` 缺省会把动态 import 拆成额外 chunk、`dynamicImportInCjs` 缺省会把外部
+ * 动态 import 留成 `import()`，而宿主的外壳只认 `require`。
+ */
 export interface RolldownBundle extends CloseableBundle {
   readonly generate: (options: {
     format: "esm" | "cjs";
     minify?: boolean;
-    comments?: boolean;
+    comments?: boolean | CommentsOptions;
+    codeSplitting?: boolean;
+    dynamicImportInCjs?: boolean;
   }) => Promise<{ output: readonly OutputItem[] }>;
 }
 

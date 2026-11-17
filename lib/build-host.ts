@@ -11,17 +11,45 @@
 // 规范化与结构性判断都在这里，一处可改。rolldown 由调用方注入：它是各包自己的
 // devDependency，本包不为构建工具声明运行期依赖。
 import path from "node:path";
-import type { RolldownPluginOption } from "rolldown";
+import type { CommentsOptions, RolldownPluginOption } from "rolldown";
 import { canonicalizeRegionPaths } from "./canonicalize-region-paths.ts";
 import {
   asRecord,
   closeQuietly,
   isRecord,
-  packageNameOf,
+  packagePatternOf,
   readManifest,
   singleEntryChunk,
 } from "./build-artifacts.ts";
 import type { RolldownFactory } from "./build-artifacts.ts";
+
+/**
+ * 压缩 host 产物的注释档位：只留法律注释。
+ *
+ * `comments: false` 会把随包发布的第三方许可头一并抹掉；三档必须一起写，只给 `legal` 时
+ * annotation 与 jsdoc 仍取缺省 true，产物会多出若干 `@__PURE__` 标注字节。
+ */
+const LEGAL_COMMENTS: CommentsOptions = { legal: true, annotation: false, jsdoc: false };
+
+/**
+ * 注释键的三态分派：显式 false 抹掉、未给定且压缩时降到 legal-only、其余省略键。
+ *
+ * 与客户端侧同源（lib/build-client.ts 的 generateOptionsOf）。显式 `comments: true` 必须
+ * 保持「省略键」——rolldown 对「显式缺省值」与「省略键」不承诺逐字节同形，而各仓的新鲜度检查
+ * 是逐字节比磁盘产物。
+ * @param comments - 调用方的声明
+ * @param minify - 是否压缩
+ * @returns 要合并进 generate 选项的那一条片
+ */
+function commentOptionOf(
+  comments: boolean | undefined,
+  minify: boolean,
+): { comments?: CommentsOptions | false } {
+  if (comments === false) {
+    return { comments: false };
+  }
+  return comments === undefined && minify ? { comments: LEGAL_COMMENTS } : {};
+}
 
 /** 一个 host 入口：源码、产物与生成头。多个入口各自单独构建，互不共享 chunk。 */
 export interface HostEntry {
@@ -155,22 +183,29 @@ export async function buildHostEntries(options: HostBuildOptions): Promise<HostA
       "package.json 的 dependencies / peerDependencies 都取不到字符串条目，外部化集合为空——依赖会被整包内联。",
     );
   }
-  const isExternal = (id: string): boolean => externalNames.has(packageNameOf(id));
+  // 外置规则用正则数组而不是判定函数：rolldown 官方文档写明函数形态每个模块回调一次 JS，
+  // 开销显著；正则数组在 Rust 侧一次遍历即可，且 `^pkg(/|$)` 保持「按包名段命中子路径」的
+  // 语义（字符串项是全等匹配，写 "pkg" 不命中 pkg/sub）。产物字节与函数形态逐字节相同。
+  const externalPatterns = Array.from(externalNames, (name) => packagePatternOf(name));
   const resolveExtensions = options.resolveExtensions ?? [".ts", ".mjs", ".js"];
   const minify = options.minify ?? false;
-  const comments = options.comments ?? !minify;
-  // 只在偏离缺省时下发这两个键：rolldown 对「显式缺省值」与「省略键」并不承诺逐字节
-  // 同形，而消费方的产物一致性检查是逐字节比对——省略键是各仓旧脚本的实际调用形状。
+  // 省略键在缺省态是承重的：rolldown 对「显式缺省值」与「省略键」不承诺逐字节同形，而消费方的
+  // 产物一致性检查是逐字节比对——省略键正是各仓旧脚本的实际调用形状。三态的分派与客户端侧
+  // 同源（见 lib/build-client.ts 的 generateOptionsOf）：显式 true 照旧全留，显式 false 整片
+  // 抹掉，未给时压缩态降到 legal-only。
+  const { comments } = options;
   const generateOptions = {
-    format: "esm",
+    format: "esm" as const,
     ...(minify ? { minify: true } : {}),
-    ...(comments ? {} : { comments: false }),
-  } as const;
+    ...commentOptionOf(comments, minify),
+    codeSplitting: false,
+    dynamicImportInCjs: false,
+  };
 
   const buildEntry = async (entry: HostEntry): Promise<HostArtifact> => {
     const bundle = await options.rolldown({
       input: path.join(options.root, entry.source),
-      external: isExternal,
+      external: externalPatterns,
       platform: "node",
       // 固定 rolldown 的 cwd：`//#region` 行按 process.cwd() 算路径，不固定它同一份源码在
       // 包根与子目录下会产出两种字节（跨 cwd 构建不可复现）。
