@@ -27,7 +27,9 @@ describe("card-ui 样式表", () => {
     for (const needle of [
       ".dsu-field",
       "grid-template-columns:minmax(0,1fr) minmax(240px,360px)",
+      ".dsu-field:hover",
       ".dsu-switch",
+      '.dsu-switch[aria-checked="true"]{background:var(--dsw-alias-state-business-primary)}',
       ".dsu-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}",
       ".dsu-menu",
       "position-area:block-end span-inline-end",
@@ -36,7 +38,28 @@ describe("card-ui 样式表", () => {
       "margin-top:6px",
       "margin-top:8px",
       ".dsu-savebar",
+      ".dsu-btnPrimary{background:var(--dsw-alias-button-primary-fill)",
+      ".dsu-badge",
+      ".dsu-fieldCols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}",
+      ".dsu-tblEllip{display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".dsu-tbl th.dsu-tblNum{text-align:right}",
+      ".dsu-tblTip{position:fixed;z-index:90;",
+      ".dsu-tblSticky th:first-child,.dsu-tblSticky td:first-child{position:sticky;left:0;",
+      ".dsu-statusDirty{color:var(--dsw-alias-state-warn-primary)}",
+      ".dsu-dirtyPill{flex:none;font-size:11px;font-weight:600;",
+      "@property --dsu-count-target",
+      ".dsu-kpiValue[data-count]{font-size:0;",
+      ".dsu-actions",
+      ".dsu-callout",
+      ".dsu-kpi",
+      ".dsu-tbl",
+      ".dsu-meter",
+      ".dsu-log",
+      ".dsu-seg",
+      ".dsu-empty",
+      ".dsu-toolrow",
       "@media (max-width:640px)",
+      "@media (prefers-reduced-motion:reduce)",
     ]) {
       assert.ok(CARD_UI_CSS.includes(needle), `缺少规则：${needle}`);
     }
@@ -48,22 +71,10 @@ describe("card-ui 样式表", () => {
 });
 
 describe("splitHint", () => {
-  it("不超过阈值时作为常显提示", () => {
-    assert.deepEqual(splitHint("留空跟随会话模型。"), { hint: "留空跟随会话模型。" });
-  });
-
-  it("超过阈值时只作为浮层详情", () => {
+  it("介绍文字一律走浮层详情（设计稿口径：行内不放介绍）", () => {
+    assert.deepEqual(splitHint("留空跟随会话模型。"), { detail: "留空跟随会话模型。" });
     const long = "这不是一句能在行内放下的话，因为它确实超过了三十个字符的上限。";
     assert.deepEqual(splitHint(long), { detail: long });
-  });
-
-  it("恰好等于阈值仍然常显", () => {
-    const exact = "一".repeat(30);
-    assert.deepEqual(splitHint(exact), { hint: exact });
-  });
-
-  it("支持自定义阈值", () => {
-    assert.deepEqual(splitHint("abcdef", 3), { detail: "abcdef" });
   });
 });
 
@@ -81,12 +92,12 @@ describe("布局组件", () => {
       createElement(
         Section,
         { title: "门禁", hint: "一句话" },
-        createElement("div", null, "field"),
+        createElement("div", { className: "dsu-sectionChild" }, "field"),
       ),
     );
     assert.equal(textOf(view.container, ".dsu-sectionTitle"), "门禁");
     assert.equal(textOf(view.container, ".dsu-sectionHint"), "一句话");
-    assert.equal(textOf(view.container, "div"), "field");
+    assert.equal(textOf(view.container, ".dsu-sectionChild"), "field");
     await view.unmount();
   });
 
@@ -331,6 +342,42 @@ describe("输入字段", () => {
     );
     assert.equal(input.value, "30");
     assert.equal(input.disabled, true);
+    await view.unmount();
+  });
+
+  it("numberField 聚焦中不采纳外部值，失焦后跟随父值（与 textField 同一契约）", async () => {
+    const view = await mount(
+      createElement(NumberField, {
+        label: "预算",
+        field: "budget",
+        value: 10,
+        min: 1,
+        max: 20,
+        invalidHint: "越界",
+        onChange: noop,
+      }),
+    );
+    const input = view.container.querySelector<HTMLInputElement>("input")!;
+    // 聚焦后输入一个越界草稿：越界不发射 onChange，父值与草稿就此脱节。
+    await fire(input, new FocusEvent("focusin", { bubbles: true }));
+    await typeInto(input, "99");
+    assert.equal(input.value, "99");
+    // 外部刷新父值：聚焦中草稿保留，不被远端值覆盖。
+    await view.render(
+      createElement(NumberField, {
+        label: "预算",
+        field: "budget",
+        value: 30,
+        min: 1,
+        max: 20,
+        invalidHint: "越界",
+        onChange: noop,
+      }),
+    );
+    assert.equal(input.value, "99");
+    // 失焦后草稿跟随父值（与未聚焦字段的受控语义一致）。
+    await fire(input, new FocusEvent("focusout", { bubbles: true }));
+    assert.equal(input.value, "30");
     await view.unmount();
   });
 
@@ -1003,7 +1050,8 @@ describe("saveBar", () => {
     );
     const bar = view.container.querySelector<HTMLElement>(".dsu-savebar")!;
     assert.equal(bar.dataset["dirty"], "true");
-    assert.equal(textOf(view.container, ".dsu-status"), "已修改 2 项");
+    assert.equal(textOf(view.container, ".dsu-dirtyPill"), "已修改 2 项");
+    assert.equal(view.container.querySelector(".dsu-status"), null);
     const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
     await click(buttons[0]!);
     await click(buttons[1]!);
@@ -1061,10 +1109,31 @@ describe("saveBar", () => {
         onDiscard: noop,
       }),
     );
+    // 脏态 + 错误：计数胶囊（承载 role=status）与红色错误字并存。
+    const pill = view.container.querySelector<HTMLElement>(".dsu-dirtyPill")!;
+    assert.equal(pill.getAttribute("role"), "status");
     const status = view.container.querySelector<HTMLElement>(".dsu-status")!;
     assert.equal(status.textContent, "写入失败");
-    assert.equal(status.getAttribute("role"), "status");
     assert.ok(status.classList.contains("dsu-statusError"));
+    await view.unmount();
+  });
+
+  it("非脏态带错误时状态字显示错误并带错误类", async () => {
+    const view = await mount(
+      createElement(SaveBar, {
+        ...labels,
+        dirty: false,
+        busy: false,
+        writable: true,
+        error: "保存未生效",
+        onSave: noop,
+        onDiscard: noop,
+      }),
+    );
+    const status = view.container.querySelector<HTMLElement>(".dsu-status")!;
+    assert.equal(status.textContent, "保存未生效");
+    assert.ok(status.classList.contains("dsu-statusError"));
+    assert.equal(view.container.querySelector(".dsu-dirtyPill"), null);
     await view.unmount();
   });
 
@@ -1080,9 +1149,9 @@ describe("saveBar", () => {
         onDiscard: noop,
       }),
     );
-    const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
-    assert.equal(buttons[0]?.textContent, "保存中");
-    assert.equal(buttons[0].disabled, true);
+    const save = view.container.querySelector<HTMLButtonElement>("[data-field='save']")!;
+    assert.equal(save.textContent, "保存中");
+    assert.equal(save.disabled, true);
     await view.unmount();
   });
 
@@ -1109,16 +1178,13 @@ describe("saveBar", () => {
     );
     const bar = view.container.querySelector<HTMLElement>(".dsu-savebar")!;
     assert.equal(bar.dataset["dirty"], "true", "越界时也要吸底，否则那句提示滚出视野就没人看得到");
-    const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
-    assert.equal(buttons[0]!.disabled, true, "写不进去就别让点");
-    assert.equal(
-      buttons[1]!.disabled,
-      false,
-      "撤销必须留着：界面上明明写着「先修正或撤销后再保存」",
-    );
-    await click(buttons[0]!);
+    const save = view.container.querySelector<HTMLButtonElement>("[data-field='save']")!;
+    const discard = view.container.querySelector<HTMLButtonElement>("[data-field='discard']")!;
+    assert.equal(save.disabled, true, "写不进去就别让点");
+    assert.equal(discard.disabled, false, "撤销必须留着：界面上明明写着「先修正或撤销后再保存」");
+    await click(save);
     assert.equal(saved, 0, "灰着就点不动");
-    await click(buttons[1]!);
+    await click(discard);
     assert.equal(reverted, 1);
     await view.unmount();
   });
@@ -1139,10 +1205,11 @@ describe("saveBar", () => {
         },
       }),
     );
-    const buttons = [...view.container.querySelectorAll("button")] as HTMLButtonElement[];
-    assert.equal(buttons[0]!.disabled, true);
-    assert.equal(buttons[1]!.disabled, false);
-    await click(buttons[1]!);
+    const save = view.container.querySelector<HTMLButtonElement>("[data-field='save']")!;
+    const discard = view.container.querySelector<HTMLButtonElement>("[data-field='discard']")!;
+    assert.equal(save.disabled, true);
+    assert.equal(discard.disabled, false);
+    await click(discard);
     assert.equal(reverted, 1);
     await view.unmount();
   });

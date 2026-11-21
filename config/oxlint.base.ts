@@ -51,6 +51,11 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   // 被 require-hook 判成「setup 没进 hook」（3 条）、注释里出现官方设置 API 名 `describe()`
   // 被 no-commented-out-tests 判成「注释掉了用例」（3 条）、
   // dir-prep-organize 的 client-entry.ts 同类 1 条。
+  "import/consistent-type-specifier-style": {
+    kind: "实测有害",
+    measured: 2,
+    note: "TS 7.0.2 对同模块的分立 value import + import type 解析判成功但丢 value 绑定（TS2307），按规则改顶层分立即编译不过；合并成 inline type 后 lint 关掉的这 2 条即该文件的全部命中",
+  },
   "vitest/*": { kind: "仅限特定文件", measured: 7, note: "用例结构类判断在非用例文件上无从计算" },
   "vitest/no-hooks": {
     kind: "上游不推荐",
@@ -724,7 +729,7 @@ export const REGEXP_RULES: RuleTable = {
  *    `STATS_SNAPSHOT_SCHEMA`），规则的默认做法是把 `Schema` 后缀再拼一次，得到
  *    `MAX_DENIES_SCHEMASchema` 这类坏名字；把它当命名缺陷改 71 处只是风格迁移，不指向缺陷。
  *
- * 该插件只对真的 import zod 的文件生效；本仓九个包都声明了 zod，这些规则不会没有实际校验作用。
+ * 该插件只对真的 import zod 的文件生效；本仓所有包都声明了 zod，这些规则不会没有实际校验作用。
  */
 export const ZOD_RULES: RuleTable = {
   "zod/consistent-import": ["error", { syntax: "named" }],
@@ -742,6 +747,7 @@ export const ZOD_RULES: RuleTable = {
   "zod/no-number-schema-with-step": "error",
   "zod/no-optional-and-default-together": "error",
   "zod/no-promise-schema": "error",
+  "zod/no-reshape-on-refined-object": "error",
   "zod/no-schema-with-is-nullable": "error",
   "zod/no-schema-with-is-optional": "error",
   "zod/no-throw-in-refine": "error",
@@ -1006,9 +1012,11 @@ export const BASE_RULES: RuleTable = {
   "import/no-anonymous-default-export": "off",
   // 具名导出的默认对象上做成员访问是本仓对 cordis 官方声明的常态用法。
   "import/no-named-as-default-member": "off",
-  // 顶层 `import type { X }` 267 处 vs 行内 156 处：混用本身就是「配置格式不统一」的一个实测轴，
-  // 方向取多数形态。
-  "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
+  // 顶层 `import type` 与行内 `type` 修饰符原本取多数形态统一；TS 7.0.2（catalog 已升级）
+  // 对「同模块的分立 value import + import type」解析判成功但检查器丢 value 绑定
+  // （lesson-loop/rules-reader.ts 实测 TS2307，rtk 同款形态无恙），按规则改成顶层分立即编译不过。
+  // 两条要求互斥，关规则保编译；混用形态的统一等 TS 上游修复后再议。
+  "import/consistent-type-specifier-style": "off",
   "import/no-duplicates": "error",
   "import/no-cycle": "error",
   "import/named": "error",

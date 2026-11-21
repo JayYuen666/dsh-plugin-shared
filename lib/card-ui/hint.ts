@@ -1,10 +1,9 @@
 /**
- * 把一段完整说明拆成常显提示与浮层详情。
- * 超过阈值的文案不进常显行，避免行内出现截断的省略号。
+ * 字段的设置值介绍统一送进 ⓘ 悬浮提示（设计稿口径：行内不放介绍文字，标签下只有控件，
+ * 说明随 ⓘ 按钮 hover/键盘聚焦/点击钉住时展开）。
  * @param text - 完整说明
- * @param max - 常显阈值（字符数）
- * @returns 常显提示或浮层详情
+ * @returns 浮层详情（`detail` 位，FieldLabel 渲染成 ⓘ 按钮）
  */
-export function splitHint(text: string, max = 30): { hint?: string; detail?: string } {
-  return text.length <= max ? { hint: text } : { detail: text };
+export function splitHint(text: string): { hint?: string; detail?: string } {
+  return { detail: text };
 }

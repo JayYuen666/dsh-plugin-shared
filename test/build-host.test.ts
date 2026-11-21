@@ -106,6 +106,12 @@ describe("shared buildHost()", () => {
       "skill",
       // 占位符插值同样只走子路径：消费方是各包自己的 messages 表。
       "placeholder",
+      // 三个新骨架模块同样只走子路径：typert-client 类型面引用 typert-protocol（不装
+      // typert 的消费方不该被 barrel 逼着解析它）；session-projection 消费方只有两个；
+      // with-timeout 客户端内联 / 宿主外置两种取法都走子路径。
+      "typert-client",
+      "session-projection",
+      "with-timeout",
       // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
       "card-ui",
       "index",

@@ -1,6 +1,6 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。宿主半由各插件 import；客户端半以 ./client 共享行由插件 patch 启用，该供应行必须保持开启——停用后各插件设置卡会失去组件供应",
   "keywords": [
     "cordis",
@@ -108,6 +108,18 @@
       "types": "./dist/types/placeholder.d.ts",
       "default": "./dist/placeholder.js"
     },
+    "./lib/typert-client": {
+      "types": "./dist/types/typert-client.d.ts",
+      "default": "./dist/typert-client.js"
+    },
+    "./lib/session-projection": {
+      "types": "./dist/types/session-projection.d.ts",
+      "default": "./dist/session-projection.js"
+    },
+    "./lib/with-timeout": {
+      "types": "./dist/types/with-timeout.d.ts",
+      "default": "./dist/with-timeout.js"
+    },
     "./lib/canonicalize-region-paths": {
       "types": "./dist/types/canonicalize-region-paths.d.ts",
       "default": "./dist/canonicalize-region-paths.js"
@@ -161,23 +173,23 @@
     "prepare": "npm run --loglevel=warn build"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-fs-patch": "0.2.2-rc.2"
+    "@deepseek-ai/dsh-fs-patch": "0.2.2-rc.5"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
-    "@deepseek-ai/dsh-brand": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-error": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-output-retention": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-scope": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-shell": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.2",
-    "@deepseek-ai/dsh-util-values": "0.2.2-rc.2",
+    "@deepseek-ai/dsh-brand": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-error": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-jobs": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-output-retention": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-scope": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-shell": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-util-values": "0.2.2-rc.5",
     "@e18e/eslint-plugin": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
@@ -186,7 +198,7 @@
     "eslint-plugin-regexp": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
     "eslint-plugin-zod": "catalog:",
-    "fast-check": "4.10.2",
+    "fast-check": "4.10.3",
     "happy-dom": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -200,14 +212,14 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5||^4.0.6-alpha.1",
-    "@deepseek-ai/dsh": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-client-locale": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-jobs": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-output-retention": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-session": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-shell": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.2.2-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "^0.2.2-rc.2",
+    "@deepseek-ai/dsh": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-locale": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-jobs": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-output-retention": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-session": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-shell": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-tools": "^0.2.2-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "^0.2.2-rc.5",
     "react": "^19.3.0"
   },
   "peerDependenciesMeta": {
@@ -244,7 +256,7 @@
   },
   "icon": "icon.svg",
   "engines": {
-    "dsh": "^0.2.2-rc.2",
+    "dsh": "^0.2.2-rc.5",
     "node": ">=24.9.0"
   },
   "dsh": {

@@ -8,7 +8,7 @@ export const CARD_UI_STYLE_ID = "dsh-card-ui-css";
 export const CARD_UI_OVERRIDE_STYLE_ID = "dsh-card-ui-css-override";
 
 /** 样式内容版本。`CARD_UI_CSS` 发生需要压过旧样式表的变化时递增；0 表示旧版未标记。 */
-export const CARD_UI_CSS_VERSION = 1;
+export const CARD_UI_CSS_VERSION = 3;
 
 /** 版本写在 style 元素上，跨 bundle 共享；同一个 style 元素只保留最高版本的正文。 */
 export const CARD_UI_VERSION_KEY = Symbol.for("@jayyuen66/dsh-plugin-shared/card-ui-css/version");

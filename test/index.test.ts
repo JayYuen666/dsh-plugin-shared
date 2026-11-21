@@ -56,6 +56,13 @@ const BARREL_EXEMPT = new Set([
   "skill.ts",
   // 占位符插值：消费方是各包自己的 messages 表，根 barrel 没有通用消费方。
   "placeholder.ts",
+  // Typert 客户端读取器的公共骨架：类型面引用 typert-protocol，不装 typert 的消费方
+  // （dsh-quality-gate）不该被 barrel 逼着解析它。
+  "typert-client.ts",
+  // sessionProjections 注册协议判别件：消费方只有两个，进 barrel 只会多一次导入。
+  "session-projection.ts",
+  // 限时竞速骨架：消费方按子路径取用（客户端内联 / 宿主外置两种取法）。
+  "with-timeout.ts",
 ]);
 
 describe("lib/index 聚合导出", () => {

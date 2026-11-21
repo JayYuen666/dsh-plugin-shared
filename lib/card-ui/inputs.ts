@@ -61,6 +61,8 @@ export function NumberField(
   const [draft, setDraft] = useState(text);
   const [invalid, setInvalid] = useState(false);
   const [showInvalid, setShowInvalid] = useState(false);
+  // 聚焦标记：与 TextField/ListField 同一条契约——聚焦中不采纳外部值，失焦后草稿跟随父值。
+  const [focused, setFocused] = useState(false);
   const lastEmitted = useRef<number | undefined>(undefined);
   const resetSeen = useRef(props.resetToken);
   const onInvalidChange = useRef(props.onInvalidChange);
@@ -98,11 +100,17 @@ export function NumberField(
     if (props.value === lastEmitted.current) {
       return;
     }
+    // 聚焦中不采纳外部值：父层快照在输入中途被外部刷新（另一客户端/宿主推送）时，
+    // 不能把正在输入的草稿覆盖掉——尤其越界草稿不会发射 onChange，父值与草稿本就脱节。
+    // 失焦后跟随父值，与未聚焦字段的受控语义一致。
+    if (focused) {
+      return;
+    }
     lastEmitted.current = props.value;
     setDraft(text);
     setInvalid(false);
     setShowInvalid(false);
-  }, [props.value, text]);
+  }, [props.value, text, focused]);
 
   const accepts = (value: number): boolean => {
     const min = props.min ?? -Infinity;
@@ -162,7 +170,7 @@ export function NumberField(
         "div",
         { className: "dsu-number" },
         createElement("input", {
-          className: "dsu-input",
+          className: props.unit === undefined ? "dsu-input" : "dsu-input dsu-inputWithUnit",
           type: "number",
           inputMode: "numeric",
           id: controlId,
@@ -178,7 +186,13 @@ export function NumberField(
           onChange: (event: { target: { value: string } }) => {
             change(event.target.value);
           },
-          onBlur: blur,
+          onFocus: () => {
+            setFocused(true);
+          },
+          onBlur: () => {
+            setFocused(false);
+            blur();
+          },
         }),
         props.unit === undefined
           ? null

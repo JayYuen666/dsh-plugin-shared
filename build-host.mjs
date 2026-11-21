@@ -10,7 +10,7 @@
 // d.ts 会让消费方解析不到（`.ts` 后缀不是可解析的说明符），故重写成 ./types/x.js。
 // 顶部 node reference：oxlint 类型检查对 .mjs 不自动加载 @types/node，需显式声明
 // 才能解析 node:fs/promises、process、import.meta（否则整文件按 error 类型误报 unsafe）。
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { rolldown } from "rolldown";
 import { canonicalizeRegionPaths } from "./lib/canonicalize-region-paths.ts";
@@ -21,7 +21,11 @@ const outDir = path.join(root, "dist");
 
 // 四段机械代码（asRecord / dependencyNames / packageNameOf / isExternal）与外部化规则都收在
 // build-shared.mjs——此前这里与 build-config.mjs 各有一份逐字节相同的副本。
-const isExternal = await createIsExternal(root);
+// extraNames 补 react-dom：card-ui 的省略格浮层经 createPortal 用到它，而它只在 devDependencies
+// （依赖段判定外置不了，会被整段打进 dist/card-ui 产物）。浏览器侧由宿主平台模块供应
+// （消费仓的 client 构建经 REACT_RUNTIME_MODULES 外置的同一位）；把它抬进 peerDependencies
+// 是发布契约层面的正改，归用户裁决，这里只先保证产物形状正确。
+const isExternal = await createIsExternal(root, ["react-dom"]);
 
 /** 各模块（消费方按子路径取，谁也不必为别人的依赖多付导入成本）。与 lib/ 下模块的一致性
  * 由 test/build-host.test.ts 固定：新增模块只改 lib/ 不改这里时，barrel 的 d.ts 会静默缺成员。 */
@@ -61,6 +65,15 @@ const entries = [
   // 占位符插值：六个插件各写过一遍（两派语义），现在只有这一份。同样只走子路径——
   // 消费方是各包的 messages.ts，根 barrel 里没有通用消费方。
   "lib/placeholder.ts",
+  // Typert 客户端读取器的公共骨架：类型面引用 typert-protocol，照 remote-marker 的
+  // 取舍不进 barrel（根 barrel 的消费方里有不装 typert 的插件）。
+  "lib/typert-client.ts",
+  // sessionProjections 新旧两代注册协议的判别件：消费方只有两个，进 barrel 只会让
+  // 其余运行期消费方为它多一次导入。
+  "lib/session-projection.ts",
+  // 限时竞速骨架：零依赖，客户端消费方（dir-prep）把它内联进自己的 bundle、宿主侧
+  // 消费方（scrapling）随 shared 外置取用，两种取法都走子路径。
+  "lib/with-timeout.ts",
 ];
 
 /** 构建编排模块：各包 build-*.mjs 的统一实现（host / client / types 编排与通用机械代码）。
@@ -181,7 +194,20 @@ async function main() {
       await writeFile(file, code, "utf8");
     }),
   );
+  // 清掉不在本轮产物清单里的陈旧 chunk：入口产物用 [name].js（改名即覆盖），共享 chunk 用
+  // [hash].js（内容哈希）——lib 一变哈希就换，旧 chunk 若不清会永远留在 dist/，运行期体积
+  // 预算的读数被它越垫越高，消费方 link 进的也是一份谁都不引用的死代码。dist/ 一层的 .js
+  // 里只有 client.js 不归这条编排管（build-client.mjs 的产物），保留。
+  const known = new Set(artifacts.map(([file]) => path.basename(file)));
+  const present = await readdir(outDir);
+  const stale = present.filter(
+    (name) => name.endsWith(".js") && !known.has(name) && name !== "client.js",
+  );
+  await Promise.all(stale.map((name) => unlink(path.join(outDir, name))));
   console.info("host built:", artifacts.length, "files -> dist/");
+  if (stale.length > 0) {
+    console.info("pruned stale chunks:", stale.join(", "));
+  }
 }
 
 if (isMainModule(import.meta.filename)) {

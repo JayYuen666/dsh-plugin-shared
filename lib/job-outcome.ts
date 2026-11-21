@@ -26,15 +26,10 @@
 
 import type { ShellProcess } from "@deepseek-ai/dsh-shell";
 import type { JobOutcome } from "@deepseek-ai/dsh-jobs";
-
-/** thenable 判断：`kill()` 的返回值只会被丢弃或被接管，不需要 Promise 的其余部分。 */
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  // 判断必须直接写在 value 上：把 typeof 结果存进变量不产生收窄，Reflect.get 会收到 unknown。
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
-    return false;
-  }
-  return typeof Reflect.get(value, "then") === "function";
-}
+// thenable 判断与 lesson-bus 是同一份（此前两处逐字相同、md5 一致）：`kill()` 的返回值只会
+// 被丢弃或被接管，不需要 Promise 的其余部分。失败出口刻意不合——本模块静默吞（清理分支的
+// 失败没有可行动的下一步），lesson-bus 要记日志或送回 onFailure，是两个模块各自的职责。
+import { isThenable } from "./lesson-bus.ts";
 
 /**
  * 把 `kill()` 返回的 Promise 的拒绝接管下来。单独成函数是因为 `killProc` 自己必须同步返回：

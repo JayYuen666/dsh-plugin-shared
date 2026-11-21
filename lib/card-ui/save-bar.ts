@@ -36,24 +36,31 @@ export function SaveBar(props: {
   if (props.error !== null) {
     status = props.error;
   } else if (props.writable) {
-    status = props.dirty ? props.dirtyLabel : props.cleanLabel;
+    status = props.cleanLabel;
   } else {
     status = props.readOnlyLabel;
   }
+  // 脏态左侧是计数胶囊 + （有错时）红色错误字；干净/只读态是普通状态字。
+  // 只有越界草稿、没有真实改动时不画计数胶囊——胶囊写着「N 项」而 N=0 是自相矛盾，
+  // 越界说明已经由状态字/错误行承担。
+  const dirty = props.dirty || blocked;
+  const left = props.dirty
+    ? createElement("span", { role: "status", className: "dsu-dirtyPill" }, props.dirtyLabel)
+    : createElement(
+        "span",
+        {
+          role: "status",
+          className: props.error === null ? "dsu-status" : "dsu-status dsu-statusError",
+        },
+        status,
+      );
   return createElement(
     "div",
-    { className: "dsu-savebar", "data-dirty": props.dirty || blocked },
-    createElement(
-      "button",
-      {
-        type: "button",
-        className: "dsu-btn dsu-btnPrimary",
-        "data-field": "save",
-        disabled: saveDisabled,
-        onClick: props.onSave,
-      },
-      props.busy ? props.savingLabel : props.saveLabel,
-    ),
+    { className: "dsu-savebar", "data-dirty": dirty },
+    left,
+    props.dirty && props.error !== null
+      ? createElement("span", { className: "dsu-status dsu-statusError" }, props.error)
+      : null,
     createElement(
       "button",
       {
@@ -66,12 +73,15 @@ export function SaveBar(props: {
       props.revertLabel,
     ),
     createElement(
-      "span",
+      "button",
       {
-        role: "status",
-        className: props.error === null ? "dsu-status" : "dsu-status dsu-statusError",
+        type: "button",
+        className: "dsu-btn dsu-btnPrimary",
+        "data-field": "save",
+        disabled: saveDisabled,
+        onClick: props.onSave,
       },
-      status,
+      props.busy ? props.savingLabel : props.saveLabel,
     ),
   );
 }

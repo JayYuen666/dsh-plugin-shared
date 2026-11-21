@@ -13,15 +13,12 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 import type { CommentsOptions, InputOptions } from "rolldown";
+// 对象守卫的真源在 ./record.ts（本文件此前的副本仅 `&&` 操作数换序，record.ts 头注已
+// 认定语义同余）。这里保留转发导出——build-host.ts 与本文件自己的 asRecord 都用它——
+// 本地绑定换名（isRecordOf）以满足「导出用 export-from 形态」的 lint 契约。
+import { isRecord as isRecordOf } from "./record.ts";
 
-/**
- * 对象守卫：数组与非对象都不算 Record。
- * @param raw - JSON.parse 之后的任意值
- * @returns 是否为普通对象
- */
-export function isRecord(raw: unknown): raw is Record<string, unknown> {
-  return raw !== null && typeof raw === "object" && !Array.isArray(raw);
-}
+export { isRecord } from "./record.ts";
 
 /**
  * 从 JSON.parse 的 unknown 投影为 Record（非对象 → 空对象回退），避免 any 索引。
@@ -29,7 +26,7 @@ export function isRecord(raw: unknown): raw is Record<string, unknown> {
  * @returns 普通对象；输入不是对象时为空对象
  */
 export function asRecord(raw: unknown): Record<string, unknown> {
-  return isRecord(raw) ? raw : {};
+  return isRecordOf(raw) ? raw : {};
 }
 
 /**

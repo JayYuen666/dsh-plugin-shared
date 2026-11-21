@@ -26,7 +26,7 @@
 // 引入非确定性，改为规范哈希比较并在 build-host.mjs 里输出 canonical 形态。
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -93,7 +93,9 @@ function packageNameOf(pkgDir: string): string {
  * 多产物形态：把清单折成按路径排序的「相对路径 + 正文摘要」文本，两侧共用同一排序。
  * @param pkgDir - 包根绝对路径（相对化是为了清单不绑定装机位置）
  * @param files - 构建函数交回的「待写入的绝对路径 → 正文」
- * @param fromDisk - true 时逐个读盘算摘要（缺文件即摘要不同，行里已写明是哪个产物）
+ * @param fromDisk - true 时逐个读盘算摘要（缺文件即摘要不同，行里已写明是哪个产物），
+ *   并把磁盘 dist/ 一层里**不在产物清单内**的 .js 也算作一行（EXTRA-ON-DISK）——内容哈希
+ *   chunk 换哈希后旧文件会残留，只比产物清单键的那一侧看不见它，运行期体积预算会被越垫越高。
  * @returns 可直接与另一侧逐字节相等的清单文本
  */
 function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolean): string {
@@ -110,6 +112,22 @@ function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolea
   )) {
     const identity = fromDisk ? digestOf(readText(file)) : digestOf(code);
     rows.push(`${path.relative(pkgDir, file)}\t${identity}`);
+  }
+  if (fromDisk) {
+    const distDir = path.resolve(pkgDir, "dist");
+    const known = new Set(Array.from(files.keys(), (file) => path.basename(file)));
+    const extras = readdirSync(distDir)
+      .filter(
+        (name) =>
+          name.endsWith(".js") &&
+          !known.has(name) &&
+          // client.js 归 build-client.mjs（另一条编排）管辖，不在这份清单的比对范围里。
+          name !== "client.js",
+      )
+      .toSorted();
+    for (const name of extras) {
+      rows.push(`${path.relative(pkgDir, path.join(distDir, name))}\tEXTRA-ON-DISK`);
+    }
   }
   return `${rows.join("\n")}\n`;
 }

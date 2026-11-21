@@ -350,8 +350,10 @@ describe("card-ui style tag", () => {
   });
 
   describe("保存条底色", () => {
-    it("基础规则只铺 transparent，dirty 吸底时才铺半透明底色", () => {
-      expect(ruleBody(".dsu-savebar.dsu-savebar")).toContain("background:transparent");
+    it("基础规则显式铺面板底色，dirty 吸底时才铺半透明玻璃底", () => {
+      expect(ruleBody(".dsu-savebar.dsu-savebar")).toContain(
+        "background:var(--dsw-alias-bg-layer-2)",
+      );
       expect(ruleBody('.dsu-savebar.dsu-savebar[data-dirty="true"]')).toContain(
         "background:color-mix(",
       );
@@ -383,11 +385,14 @@ describe("card-ui style tag", () => {
     });
 
     // 级联是按「属性」逐条比，不是按「规则」整块比：特异性更高的规则只要没声明 background，
-    // 低特异性旧规则里的 background 就照样生效。所以基础规则必须显式写 background:transparent，
-    // 不能靠「我不声明就没人声明」——旧一代的 `.dsu-savebar{…background:var(--dsw-alias-bg-base)}`
-    // 正好就是靠这一点在脏态之外也铺出底色（用户实测到的就是这一条）。
-    it("基础规则显式声明 transparent，不靠「未声明」挡旧规则", () => {
-      expect(ruleBody(".dsu-savebar.dsu-savebar")).toContain("background:transparent");
+    // 低特异性旧规则里的 background 就照样生效。所以基础规则必须显式写 background（v2 是
+    // 面板底 var(--dsw-alias-bg-layer-2)），不能靠「我不声明就没人声明」——旧一代的
+    // `.dsu-savebar{…background:var(--dsw-alias-bg-base)}` 正好就是靠这一点在脏态之外
+    // 也铺出底色（用户实测到的就是这一条）。
+    it("基础规则显式声明底色，不靠「未声明」挡旧规则", () => {
+      expect(ruleBody(".dsu-savebar.dsu-savebar")).toContain(
+        "background:var(--dsw-alias-bg-layer-2)",
+      );
     });
   });
 });

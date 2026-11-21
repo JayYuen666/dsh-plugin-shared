@@ -208,6 +208,12 @@ jobs:
           # ERR_MODULE_NOT_FOUND 误报，看起来像发布产物缺入口。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           npm install -D "react@${react_range}" --no-audit --no-fund
+          # `./lib/card-ui` 的省略格浮层经 `createPortal` 静态 import `react-dom`。它只在
+          # devDependencies（宿主平台模块在运行期与 react 同一位供应，产物保持裸说明符），
+          # npm 与 pnpm 都不会自动装；探针按装进来的那份 manifest 的 devDependencies 范围
+          # 装上它，否则 card-ui 子路径在装载期 ERR_MODULE_NOT_FOUND，看起来像发布产物缺入口。
+          reactdom_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').devDependencies['react-dom']")
+          npm install -D "react-dom@${reactdom_range}" --no-audit --no-fund
           # `./lib/remote-marker` 同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
           # npm 不装 optional peer，漏装时这一条子路径会在装载期 ERR_MODULE_NOT_FOUND。
           # 范围读自发布 manifest，不在 workflow 里抄版本。
@@ -266,12 +272,15 @@ jobs:
           # 清单不照抄：只取「产物 .d.ts 里引到 且 package.json 里声明过」的交集——未声明的引用
           # 因此装不进来，这道门原本要抓的"未声明依赖导致退化"照样有牙。宿主包与只作值导入的
           # dsh-output-retention 都不在这个交集里，所以探测脚本装出来的依赖树不因此变大。
+          # devDependencies 同算"声明过"：tool-events 的 PTC 真源 `dsh-tool-executor-ptc` 按设计
+          # 只声明在那里（解析义务转到消费仓的 devDeps，README 有说明），peer 交集装不到它，
+          # skipLibCheck=false 那档就会对 tool-events.d.ts 报 TS2307。范围仍取声明处现量。
           # 清单不写成空格分隔：范围本身可能带空白（`^a||^b`），那样按空白切会把一枚说明符拆成多个参数。
           peers=$(node --input-type=module -e '
           import { readFileSync, readdirSync } from "node:fs";
           const ROOTDIR = "node_modules/@jayyuen66/dsh-plugin-shared";
           const pkg = JSON.parse(readFileSync(ROOTDIR + "/package.json", "utf8"));
-          const declared = { ...pkg.dependencies, ...pkg.peerDependencies };
+          const declared = { ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.devDependencies };
           const specifiers = [];
           const walk = (dir) => {
             for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -372,6 +381,10 @@ jobs:
           # 范围读自发布 manifest，不在 workflow 里抄版本。
           typert_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies['@deepseek-ai/dsh-typert-protocol']")
           pnpm add -D "@deepseek-ai/dsh-typert-protocol@${typert_range}"
+          # `./lib/card-ui` 同样静态 import `react-dom`（省略格浮层的 createPortal）；范围读自
+          # 发布 manifest 的 devDependencies，不在 workflow 里抄版本。
+          reactdom_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').devDependencies['react-dom']")
+          pnpm add -D "react-dom@${reactdom_range}"
           # 不能只停在「装上了」：publish.yml 真正用的发布器是 pnpm，npm 侧那套逐子路径
           # import 与消费方类型探测在这里必须再跑一遍，否则 pnpm 布局下的解析差异无人看。
           node --input-type=module -e '

@@ -16,54 +16,27 @@
 //
 // 事件形状取官方判别联合 `@deepseek-ai/dsh-session` 的 `SessionEvent`，不再本地声明
 // 「最小投影」：按 `event.type` 分支即收窄 `event.data`，宿主改名/换形状在编译期暴露，
-// 而不是靠注释照抄 d.ts 行号。
+// 而不是靠注释照抄 d.ts 行号。PTC 两个变体同为官方面：载荷类型与 `SessionEventMap`
+// 增补都来自 `@deepseek-ai/dsh-tool-executor-ptc/types`（官方 types.d.ts 自带那份增补），
+// 本包不再自声明。engines.dsh 收窄到单条 `^0.2.2-rc.5` 后，窗口内宿主代际（rc.2/rc.5
+// 实测）该增补同宿主同形，旧的「增补换过宿主包」理由废止。
 //
-// 两个 PTC 事件是这条规则的**例外**，载荷在本包内声明：官方把这两个变体增强进
-// `SessionEventMap` 的那份声明**换过宿主包**，而支持窗口同时含换之前与换之后的版本，
-// 新包在旧版宿主上根本没发布——从任何一侧具名 re-export 都会在另一侧解析不到。
-// `skipLibCheck` 只豁免被消费的 `.d.ts`，不豁免本包自己的源码，所以解析不到的那一次是构建硬失败
-// 而不是消费方的隐患。自己声明接口、自己做那份增强，两条宿主线上都成立。
-// 与宿主真实定义是否仍同形由 test/tool-events-host-parity.ts 的双向可赋值断言钉住——那是
-// 一条**编译期**判据，只有 tsc 兑现得了（该文件头记了为什么不能包成用例）。
+// ⚠ 解析义务在消费仓：本包发运的是 dist/types/*.d.ts，官方包的裸说明符会存活进
+// `dist/types/tool-events.d.ts`，由各消费仓自己的 devDependencies 解析（九仓各钉同一条
+// 版本线）。增补是否仍然在位由 test/tool-events-ptc-keys.ts 的编译期键断言钉住。
 
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
-import type { ToolCallId } from "@deepseek-ai/dsh-llm/brand";
-import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import type { JsonValue } from "@deepseek-ai/dsh-util-values";
+import type { ToolErrorInfo } from "@deepseek-ai/dsh-tools";
 import { parsePatch } from "@deepseek-ai/dsh-fs-patch";
 import { isRecord } from "./record.ts";
 
 export type { SessionEvent } from "@deepseek-ai/dsh-session";
 
-/** 一枚 PTC 子调度**开始**时记下的载荷。字段与宿主声明逐位同形，理由见文件头。 */
-export interface PtcDispatchStartEventData {
-  rootCallId: ToolCallId;
-  parentCallId: ToolCallId;
-  subCallId: ToolCallId;
-  name: string;
-  arguments: unknown;
-}
-
-/** 一枚 PTC 子调度**结算**时记下的载荷：结算沿用 `tool/result` 自己的词表。 */
-export interface PtcDispatchEventData extends PtcDispatchStartEventData {
-  isError: boolean;
-  content: ContentBlock[];
-  /** 可重放的工具侧呈现元数据，与模型可见内容分开记录。 */
-  meta?: JsonValue;
-  /** 可选的失败身份与原始用户可见细节，不在模型可见内容里。 */
-  error?: {
-    name: string;
-    code: string;
-    reason?: string;
-  };
-}
-
-declare module "@deepseek-ai/dsh-session/types" {
-  interface SessionEventMap {
-    "tool/ptc-dispatch-start": PtcDispatchStartEventData;
-    "tool/ptc-dispatch": PtcDispatchEventData;
-  }
-}
+// PTC 子调度的两个载荷：真源是官方声明（连同它自带的 SessionEventMap 增补），这里只转发名字。
+export type {
+  PtcDispatchStartEventData,
+  PtcDispatchEventData,
+} from "@deepseek-ai/dsh-tool-executor-ptc/types";
 
 /**
  * 一条 tool/call 的记录。
@@ -111,18 +84,12 @@ export interface ToolCallRecord {
  * 失败的结构化身份：官方 `tool/result` 与 `tool/ptc-dispatch` 的 `data.error`
  * （`{ name, code, reason? }`，只允许出现在 `isError: true` 的结算旁）。
  *
- * 复制而不是引用官方 `ToolErrorInfo`：本包的商品面同时服务多个宿主版本，而错误码是
- * **持久化契约**（官方把 `[name, code]` 记在日志里供消费方比较字符串）。形状上逐字段同形，
- * 两边改名会在这里的字段读取处暴露，不需要再引入一层运行时依赖。
+ * 真源是官方 `ToolErrorInfo`（`@deepseek-ai/dsh-tools` 根导出）；`Readonly` 保住本地
+ * 语义——记录一旦入表只作证据读（官方字段本身非 readonly）。错误码是**持久化契约**
+ * （官方把 `[name, code]` 记在日志里供消费方比较字符串）；两边改名会在本文件的字段
+ * 读取处暴露。
  */
-export interface ToolErrorIdentity {
-  /** 错误类名（如 `AbortError`、`ApprovalError`）。 */
-  readonly name: string;
-  /** 稳定错误码（如 `ABORTED`、`APPROVAL_REJECTED`）。 */
-  readonly code: string;
-  /** 可选的原始用户可见细节；模型侧内容不含它。 */
-  readonly reason?: string;
-}
+export type ToolErrorIdentity = Readonly<ToolErrorInfo>;
 
 /** 一条 tool/result 的成败。同样只读。 */
 export interface ToolResultRecord {

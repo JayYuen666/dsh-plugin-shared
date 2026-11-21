@@ -44,15 +44,47 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
  *  `color-mix` 前的主题色兜底。
  *  受影响的公共面：`SkillRegistryContext` 在 `get` 之外多了可选 `effect`（向后兼容：
  *  只传 `get` 的老调用点照旧编译）；同步面：`CHANGELOG.md` 当期版本段，
- *  以及三个消费仓的 `lib/skill.ts` 薄壳（它们只转发 `ctx`，无需改）。 */
-const RUNTIME_BUDGET_BYTES = 37_800;
+ *  以及三个消费仓的 `lib/skill.ts` 薄壳（它们只转发 `ctx`，无需改）。
+ *  再一轮 37624 → 52534 B（+14910）：card-ui v2——样式表重写（悬停起底字段行、3px 业务色焦点环、
+ *  业务色开关与主按钮、保存条面板化）并新增九个展示组件（Badge/StatusDot/Callout/KPI/
+ *  DataTable/Meter/LogPanel/Segmented/EmptyState/ToolRow），九仓各自手搓的私加 CSS 由这套
+ *  组件收回 shared（各仓净删的样式字节大于这里的增量）。`CARD_UI_CSS_VERSION` 同步升到 2。
+ *  受影响的公共面：`./lib/card-ui` 的导出面（新增九组组件与类型，纯加法）；同步面：
+ *  各消费仓删除私有样式改用共享组件。
+ *  再一轮 52534 → 54391 B（+1857）：DataTable 补 sticky 首列修饰（rtk 明细表换用 shared 的
+ *  前提——冻结列/斑马纹/列宽技巧下沉）与保存条脏态状态字的独立类（session-rescue 的
+ *  RetryPolicy 保存条从手拼改回 shared 形态的最后一步）。
+ *  受影响的公共面：`DataTable` 增可选 `stickyFirst`（纯加法）。
+ *  再一轮 54391 → 55459 B（+1068）：FieldTwoCol 双列字段栅格（设计稿的两列数字字段布局，
+ *  session-rescue 消费）。
+ *  受影响的公共面：新增 `FieldTwoCol`（纯加法）。
+ *  再一轮 55459 → 55903 B（+444）：NumberField 的单位画进输入框内部右侧（设计稿
+ *  .input-wrap 形态：`dsu-inputWithUnit` 的 padding-right、单位的绝对定位与
+ *  pointer-events、隐藏 number 原生步进箭头的一组规则），外加 hint.ts 改写后的注释字节。
+ *  受影响的公共面：无（纯样式与注释）。
+ *  再一轮 55903 → 56663 B（+760）：省略格悬停浮层（EllipsisCell 组件替换原生 title——
+ *  宿主 webview 不渲染原生 tooltip——含 `.dsu-tblTip` 样式与数值列表头右对齐的规则、
+ *  斑马纹一条随设计稿移除）。
+ *  受影响的公共面：`DataTable` 的 ellipsis 格改由组件渲染（DOM 形状多一层浮层 span，
+ *  纯加法）。
+ *  再一轮 56663 → 56718 B（+55）：浮层经 createPortal 挂到 body（冻结列是 sticky 定位
+ *  元素、会劫持格内 fixed 的包含块），portal 那几行的代码字节。
+ *  受影响的公共面：无（渲染位置变化，组件面不变）。 */
+const RUNTIME_BUDGET_BYTES = 56_800;
 /** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算。
  *  压缩前历史读数 54,765 → 54,878 → 54,925 → 57,139 B，涨幅来自 card-ui 样式与注入兜底；
  *  这些改动的说明仍在 `lib/card-ui/styles.ts` 与 CHANGELOG。shared 自己的 build-client.mjs
  *  现在显式传 `minify: true`，当前实测 27,087 B（gzip 7,906 B），预算按实测值取整留一档。
+ *  再一轮 27087 → 42877 B（+15790）：与运行期切面同因——card-ui v2 样式表与九组新展示组件
+ *  整体打进这条 UMD（样式字符串在产物里原样保留，是本轮增量的主体）。
+ *  再一轮 42877 → 44738 B（+1861）：与运行期同因（DataTable sticky 首列 + statusDirty）。
+ *  再一轮 44738 → 45721 B（+983）：与运行期同因（单位入框的样式规则与 splitHint 改写）。
+ *  再一轮 45721 → 46530 B（+809）：与运行期同因（省略格悬停浮层的组件与样式）。
+ *  再一轮 46530 → 46653 B（+123）：NumberField 聚焦守卫（聚焦中不采纳外部值，与
+ *  textField 聚焦契约对齐）与新展示组件 badge 一起打进客户端行。
  *  宿主侧子路径（`skill` / `placeholder`）不进这条 bundle。
  *  受影响的公共面：无（常量只在本用例内）；同步面：README 的 "What ships"。 */
-const CLIENT_BUDGET_BYTES = 28_000;
+const CLIENT_BUDGET_BYTES = 46_700;
 /** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型声明的入口。 */
 const HOST_RUNTIME_EXCLUDE = new Set(["client.js", "client-entry.js"]);
 /** 配置产物预算（在实测值上加一档取整）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。

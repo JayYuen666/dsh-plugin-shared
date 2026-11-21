@@ -1,10 +1,10 @@
 // lib/remote-marker.ts —— 标准装饰器的**程序化调用**：把 `@Remote("x")` 的标记打到类原型上，
 // 源码因此不必引装饰器语法，消费方的构建与测试两条流水线都不必挂装饰器降级插件。
 //
-// 为什么值得单点定义：`markRemote` 在 dsh-zvec-grep / dsh-lesson-loop 各有一份 17 行的逐字
-// 副本（md5 相同），dsh-scrapling 那份 14 行只差注释——三份都在做同一件事，且都在各自的注释里
-// 解释同一套 TC39 形状。收进这里之后，三处只有调用点（`markRemote(X.prototype, "m")`），
-// 形状解释只有这一份。
+// 为什么值得单点定义：`markRemote` 此前在五个仓各有一份逐字或近逐字副本（剥注释后 md5 相同）。
+// dsh-lesson-loop / dsh-scrapling / dsh-dir-prep-organize / dsh-session-rescue / dsh-ocr-review
+// 都改从这里取用；dsh-zvec-grep 改走真装饰器语法（build-host 的 decorator-lowering 流水线）。
+// 五份形状解释只剩这里一份。
 //
 // 为什么是程序化调用而不是装饰器语法：`@Remote` 的全部作用就是往类原型写一枚描述符，而标准
 // 装饰器语法需要一条 tsc 降级流水线（每个文件一次 tsc 子进程）。走程序化调用的消费方不需要

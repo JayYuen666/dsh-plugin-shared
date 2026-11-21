@@ -2,6 +2,35 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.12
+
+tool 事件面的类型真源交给官方包：PTC 两个载荷与失败身份不再本地声明；两份逐字相同的 thenable 判别合一。设置卡组件库扩到 v2：一批展示组件与双列字段栅格上线，表单层按宿主设计稿重写视觉层；三个骨架子路径开始收编各仓的逐字副本。
+
+### Changed
+
+- **PTC 载荷改官方直引**：`lib/tool-events.ts` re-export `PtcDispatchStartEventData` / `PtcDispatchEventData`（`@deepseek-ai/dsh-tool-executor-ptc/types`），`SessionEventMap` 增补由官方包自带——`engines.dsh` 收窄到单条 `^0.2.2-rc.5` 后，窗口内宿主代际（rc.2/rc.5 实测）的增补同宿主同形，旧的「增补换过宿主包」理由废止。本地两份接口与本包自己的 `declare module` 删除；`test/tool-events-host-parity.ts`（直引后两侧同一类型，断言恒真）随之删除，换 `test/tool-events-ptc-keys.ts` 的编译期键断言——两个事件键从联合里消失时 `pnpm typecheck` 先于任何消费方红出来。
+- **`ToolErrorIdentity` 改为 `Readonly<ToolErrorInfo>`**：真源是 `@deepseek-ai/dsh-tools` 根导出；`Readonly` 保住「记录入表只作证据读」的本地语义（官方字段本身非 readonly）。官方包的裸说明符因此存活进 `dist/types/tool-events.d.ts`，解析义务转到消费仓：`tool-events` 的两个消费方（dsh-danger-guard、dsh-quality-gate）在各自 devDependencies 钉 `dsh-tool-executor-ptc` 与 `dsh-tools`。
+- **`isThenable` 单点**：`lib/lesson-bus.ts` 导出，`lib/job-outcome.ts` 改为复用（此前两份逐字相同）。失败出口刻意不合——lesson-bus 记日志或送回 onFailure，job-outcome 静默吞（清理分支的失败没有可行动的下一步），是两个模块各自的职责。经 barrel `export *` 进入公共面，additive。
+- **`lib/remote-marker.ts` 头注更新**：五个仓副本的收编现状——lesson-loop / scrapling / dir-prep / session-rescue / ocr-review 改从这里取用，zvec-grep 改走真装饰器语法（build-host 的 decorator-lowering 流水线）。
+- **README 同步**：optional peers、PTC 真源、上游已知限制三段改为官方直引口径（含消费仓解析义务的说明）；三个骨架子路径进 exports 表与 barrel 豁免清单，card-ui 行补展示组件与 `react-dom` 的依赖形态。
+- **三个骨架子路径上线**：`./lib/typert-client`（七仓读取器的 `RemoteHost` / `RemoteMounter` / `isRemoteMounter`，逐字副本收编）、`./lib/session-projection`（danger-guard / session-rescue 两仓投影挂载的三段判别件与判序）、`./lib/with-timeout`（scrapling / dir-prep 两仓的限时竞速骨架，拒绝值按回调参数化）。三件都只走子路径、不进根 barrel——typert-client 的类型面引用 typert-protocol，照 `lib/remote-marker` 的取舍。发布窗口：消费仓改 import 前本包须先发版，否则其单仓 CI 解析不到新子路径。
+- **`lib/build-artifacts.ts` 的 `isRecord` 真源归 `./record.ts`**（本文件副本仅 `&&` 操作数换序、语义同余）；转发导出维持 build-host.ts 与 asRecord 的既有使用面。
+- **`build-host.mjs` 的外置判定补 `react-dom`**：card-ui 省略格的全文浮层经 `createPortal` 挂到 body，`react-dom` 因此进了 card-ui 产物的依赖图，而它只在 devDependencies——依赖段判定外置不了，会被整段打进 `dist/card-ui` 产物。浏览器侧由宿主平台模块供应（消费仓的 client 构建经 `REACT_RUNTIME_MODULES` 外置的同一位）；把它抬进 peerDependencies 属发布契约改动，归 manifest 裁决，此处只保证产物形状正确。
+- **oxlint 基线一处关停、一条新增**（`config/oxlint.base.ts`，同时作用于九仓门禁）：`import/consistent-type-specifier-style` 按 OFF_JUSTIFICATIONS 关停——TS 7.0.2 对同模块的分立 value import + import type 判成功但丢 value 绑定（TS2307），按规则改写反而编译不过；`zod/no-reshape-on-refined-object` 收进 ZOD_RULES 全家生效。
+- **表单层视觉重写**（`CARD_UI_CSS_VERSION` 1 → 3，旧 bundle 的样式由注入层的版本判断压回）：字段行去掉逐行分隔线，改悬停起底（左右 12px 内边距 + 等量负外边距，文字与高亮边缘留间距）；焦点环 3px 业务色；开关「开」态与下拉选中项用业务色，主按钮底色取宿主 `--dsw-alias-button-primary-fill`、其上文字取 `--dsw-alias-label-primary-foreground`（宿主自己主按钮的写法）；保存条从顶部分隔线改成圆角面板，脏态左侧改计数胶囊，只有越界草稿、没有真实改动时不画「0 项」胶囊；语义色淡底一律 `color-mix(in srgb, var(--dsw-alias-state-*) N%, transparent)`，与宿主徽章/提示同型、不写死十六进制色（`test/card-ui.test.ts` 有禁色断言）。
+- **`NumberField` 两处对齐**：单位画进输入框内部右侧（`dsu-inputWithUnit`，绝对定位 + `pointer-events: none`，隐藏原生 number 步进箭头）；聚焦守卫补齐——聚焦中不采纳外部值（父层快照被外部刷新时不能覆盖正在输入的草稿，越界草稿不发射 `onChange`、父值与草稿本就脱节），失焦后跟随父值，与 TextField / ListField 同一条契约。
+- **`splitHint` 收敛**：设置值介绍统一送进 ⓘ 悬浮提示（设计稿口径：行内不放介绍文字，标签下只有控件），全量交回 `{ detail }`，`hint` 位不再产出。
+- **产物预算按实测抬档**（`test/dist-size.test.ts` 注释逐轮记账）：运行期 37,624 → 56,718 B（预算 37,800 → 56,800），客户端行 27,087 → 46,653 B（预算 28,000 → 46,700）；增量主体是 v2 样式表与新展示组件，另有 sticky 首列、双列栅格、单位入框、省略格浮层与 portal 化各一轮。
+
+### Tests
+
+- 新增 `test/card-ui-v2.test.ts`：新组件逐组钉色调类名、缺省值与可选位渲染，`DataTable` 钉缺列补空、`ellipsis` 浮层与 `stickyFirst`、`KpiTile` 钉涨跌色与动画锚点。
+- 新增 `test/session-projection.test.ts` / `test/typert-client.test.ts` / `test/with-timeout.test.ts`（三个骨架子路径各自的行为判据）；`test/tool-events-host-parity.ts` 删除（直引后断言恒真），换 `test/tool-events-ptc-keys.ts` 的编译期键断言；`test/card-ui.test.ts` 补 `NumberField` 单位入框与聚焦守卫、`SaveBar` 胶囊与越界态的判据。
+
+- **新增展示组件**（`./lib/card-ui` 导出面纯加法）：`Badge` / `StatusDot`（五档 `BadgeTone` 徽章与四档 `DotTone` 状态点）、`Callout`（四档语义警示条）、`KpiGrid` / `KpiTile`（auto-fit KPI 瓦片栅格，`KpiDelta` 涨跌标注，`count` 位带 `data-count` 动画锚点）、`DataTable` / `Meter`（列描述驱动的表格与进度条；`ellipsis` 列单行省略、悬停经 `createPortal` 弹全文浮层——宿主 webview 不渲染原生 tooltip，且 sticky 冻结列会劫持格内 fixed 的包含块，浮层必须挂 body；可选 `stickyFirst` 冻结首列）、`LogPanel`（日志面板，头部带 `LogPanelAction` 动作位）、`Segmented`（页签切换）、`EmptyState`（空态：空数据替换整块内容，不画空壳）、`ToolRow` / `ToolRowGrid` / `ToolRowItem`（工具调用摘要行）。九仓各自手搓的私加 CSS 由这套组件收回 shared（各仓净删的样式字节大于产物增量）。
+- **`FieldTwoCol`**：双列字段栅格，并排两组 Field（标签在上、控件在下），窄屏折单列；只放 Field 系组件——栅格假定子项是 `.dsu-field`。
+- **`Section` 扩展位**：可选 `count`（标题旁计数徽章，如 "4 Provider"）与 `actions`（标题右侧动作位：刷新、恢复默认一类小按钮）。
+
 ## 0.2.11
 
 客户端构建层新增**包内按需 chunk**：`build-client` 从「只有一个入口产物」扩到「入口 + 若干包内 chunk」，让体积大的可选依赖（图表库、文档解析器一类）拖到用户真正打开那一页时才下载，而不是把每个消费者的 `client.js` 都撑大。

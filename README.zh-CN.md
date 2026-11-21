@@ -12,7 +12,7 @@
   <a href="https://github.com/JayYuen666/dsh-plugin-shared/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JayYuen666/dsh-plugin-shared/ci.yml?branch=main&style=flat-square&label=ci" alt="ci" /></a>
   <img src="https://img.shields.io/badge/license-MIT-4c1?style=flat-square" alt="MIT" />
   <img src="https://img.shields.io/badge/node-%3E%3D24.9-4c1?style=flat-square&logo=nodedotjs&logoColor=white" alt="node" />
-  <img src="https://img.shields.io/badge/dsh-%5E0.2.2--rc.2-658EFF?style=flat-square" alt="dsh" />
+  <img src="https://img.shields.io/badge/dsh-%5E0.2.2--rc.5-658EFF?style=flat-square" alt="dsh" />
   <a href="https://github.com/deepseek-ai/deepseek-harness"><img src="https://img.shields.io/badge/powered_by_dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white" alt="powered by dsh" /></a>
 </p>
 
@@ -85,7 +85,7 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 | 要求 | 值 |
 | --- | --- |
 | Node.js | `>=24.9.0`——插件家族共用的发布侧下限，声明同一个 `engines.node` 的包不会因为这个库而被拒 |
-| dsh | `^0.2.2-rc.2`，声明为 **optional** peer（import 本包不需要宿主存在） |
+| dsh | `^0.2.2-rc.5`，声明为 **optional** peer（import 本包不需要宿主存在） |
 | 模块形态 | 仅 ESM。`require()` 只在支持 `require(esm)` 的 Node 上可用 |
 | Tree shaking | `"sideEffects": false` |
 
@@ -98,9 +98,9 @@ import { isRecord, fieldOf } from "@jayyuen66/dsh-plugin-shared/lib/record";
 - **`@deepseek-ai/dsh-fs-patch` 是唯一允许的普通依赖。** 它是无状态纯解析器，不承载服务实例或模块级身份，多一份不会分裂 `Symbol`；随包安装是为了让宿主窗口内没有该包的版本也能解析 `apply_patch` 语法。其余宿主包仍然必须留在 peer/dev。
 - **宿主包写进 `dependencies` 会让消费方的宿主无法工作。** profile 用 `nodeLinker: hoisted` 与 `autoInstallPeers: false` 安装，于是列在 `dependencies` 里的宿主包会被安装成真实目录，与宿主进程已加载的那份并存。`@deepseek-ai/dsh-tools` 的工具运行期调度键是普通 `Symbol`（不是 `Symbol.for`），符号身份按模块实例计算：宿主从副本上读那个键得到 `undefined`，于是每一次原生工具调用都抛错。构建、类型检查与测试在此之前全部通过；这条不变式只能写在 manifest 上。
 - **`@deepseek-ai/dsh-output-retention` 是唯一必需 peer。** 它是值导入（`truncateEnd`），运行期由宿主提供；在 `peerDependenciesMeta` 里明写成 `"optional": false`，不靠"没写就等于必需"，因为没写进那张表对 npm 7+ 就是硬要求。
-- **其余 peer 都是 optional。** 除裸 `@deepseek-ai/dsh`（只声明宿主版本线）外，它们大多只承载类型声明；两个按子路径收窄的值导入 peer 是例外：`react` 被 `./lib/card-ui` 按值导入，`@deepseek-ai/dsh-typert-protocol` 被 `./lib/remote-marker` 按值导入。两者仍是 optional，只有取用对应子路径的消费方才需要它们在场。`devDependencies` 保存精确的开发线，其中包括本包 PTC 声明所引用的 `@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-util-values`，以及只有对照断言会读其类型的 `@deepseek-ai/dsh-tool-executor-ptc`。profile 不装 peer，所以不会产生副本。
-- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 写同一条窗口——`^0.2.2-rc.2`，单条宿主线。caret 的预发布比较只吃自己那条 patch 元组，所以 `^0.2.2-rc.2` 收得进 `0.2.2-rc.2`、同元组更晚的预发布以及 `0.2.2`/`0.2.x`，收不进更早的 `0.2.2-rc.1`、更旧的 `0.2.1` 线或 `0.2.2-alpha.*`；宿主自己那道比较带 `{includePrerelease:true}`，正是这一档让同元组预发布参与。代价是量出来写在这里的：npm 逐条 peer 独立解析，宿主家族每一枚包内部又把自己的那条线精确钉住（`0.2.2-rc.2` 要求 cordis `~4.1.0`、schemastery `~3.19.0`），所以消费者把宿主钉在旧线时仍可能止步 `ERESOLVE`，同一条树落在受支持的线上则可解。pnpm——本工作区支持、也是宿主 `dsh plugin add` 在用的安装器——两种形状都解得出，只打一条 peer 告警。装载门两边都不受影响，因为宿主比较 `engines.dsh` 时带 `includePrerelease: true`。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-rc.2`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.1.0`；peer 范围 `^4.0.5||^4.0.6-alpha.1` 保持不变，收得下 `4.1.0`。cordis 这条并集在 `||` 两侧不带空格；install-matrix 探针现已按行逐枚读取。`test/publish-manifest.test.ts` 分别检查这几件事。
-- 已知上游限制：`@deepseek-ai/dsh-llm` 的声明文件引用了它自己没声明的 `@deepseek-ai/dsh-attachment`。它经 `dsh-session` 传递进来，所以开 `skipLibCheck: false` 的消费方会看到来自那个包的 `TS2307`，不是来自本包。发布出去的 `./lib/tool-events` 声明还引用了 `@deepseek-ai/dsh-util-values`，它经 `dsh-session` / `dsh-tools` 传递进来；开 `skipLibCheck: false` 的消费方同样必须能解析到这个包。
+- **其余 peer 都是 optional。** 除裸 `@deepseek-ai/dsh`（只声明宿主版本线）外，它们大多只承载类型声明；两个按子路径收窄的值导入 peer 是例外：`react` 被 `./lib/card-ui` 按值导入，`@deepseek-ai/dsh-typert-protocol` 被 `./lib/remote-marker` 按值导入。两者仍是 optional，只有取用对应子路径的消费方才需要它们在场。`devDependencies` 保存精确的开发线，其中包括 `./lib/tool-events` 类型面点名的 `@deepseek-ai/dsh-llm` 与 `@deepseek-ai/dsh-util-values`、PTC 两个载荷的官方真源 `@deepseek-ai/dsh-tool-executor-ptc`，以及 `ToolErrorIdentity` 的真源 `@deepseek-ai/dsh-tools`。profile 不装 peer，所以不会产生副本。
+- **版本要求把装载门与构建基线分开。** 每条 `@deepseek-ai/dsh-*` peer 与 `engines.dsh` 写同一条窗口——`^0.2.2-rc.5`，单条宿主线。caret 的预发布比较只吃自己那条 patch 元组，所以 `^0.2.2-rc.5` 收得进 `0.2.2-rc.5`、同元组更晚的预发布以及 `0.2.2`/`0.2.x`，收不进 `0.2.2-rc.2` 到 `rc.4`、更早的 `0.2.2-rc.1`、更旧的 `0.2.1` 线或 `0.2.2-alpha.*`；宿主自己那道比较带 `{includePrerelease:true}`，正是这一档让同元组预发布参与。代价是量出来写在这里的：npm 逐条 peer 独立解析，宿主家族每一枚包内部又把自己的那条线精确钉住（`0.2.2-rc.5` 要求 cordis `~4.1.0`、schemastery `~3.19.0`），所以消费者把宿主钉在旧线时仍可能止步 `ERESOLVE`，同一条树落在受支持的线上则可解。pnpm——本工作区支持、也是宿主 `dsh plugin add` 在用的安装器——两种形状都解得出，只打一条 peer 告警。装载门两边都不受影响，因为宿主比较 `engines.dsh` 时带 `includePrerelease: true`。`devDependencies` 精确锁定本仓编译与测试用的那一线（`0.2.2-rc.5`），且必须统一：一棵树里只有一份 `dsh-session`，nominal 类型才互相认得。`@deepseek-ai/cordis` 在 `devDependencies` 里精确锁定 `4.1.0`；peer 范围 `^4.0.5||^4.0.6-alpha.1` 保持不变，收得下 `4.1.0`。cordis 这条并集在 `||` 两侧不带空格；install-matrix 探针现已按行逐枚读取。`test/publish-manifest.test.ts` 分别检查这几件事。
+- 已知上游限制：`@deepseek-ai/dsh-llm` 的声明文件引用了它自己没声明的 `@deepseek-ai/dsh-attachment`。它经 `dsh-session` 传递进来，所以开 `skipLibCheck: false` 的消费方会看到来自那个包的 `TS2307`，不是来自本包。发布出去的 `./lib/tool-events` 声明还引用 `@deepseek-ai/dsh-util-values`（经 `dsh-session` / `dsh-tools` 传递进来）、`@deepseek-ai/dsh-tool-executor-ptc` 与 `@deepseek-ai/dsh-tools`；开 `skipLibCheck: false` 的消费方必须都能解析到它们——`./lib/tool-events` 的两个消费方（dsh-danger-guard、dsh-quality-gate）为此在 `devDependencies` 里钉了后面两枚包。
 
 ### shared 的版本下限
 
@@ -155,7 +155,7 @@ const artifacts = await buildClientArtifacts({
 ## <img src="https://api.iconify.design/lucide/circle-check.svg?color=%23658EFF&height=22" height="22" width="22" align="absmiddle" alt="" /> 确认它在正常工作
 
 1. **子路径能解析。** 在消费包里运行 `node -e 'import("@jayyuen66/dsh-plugin-shared/lib/record").then((m) => console.log(typeof m.isRecord))'`，输出 `function`。`ERR_MODULE_NOT_FOUND` 表示依赖没装上；`does not provide an export named ...` 表示装到的那份比你 import 的子路径旧。
-2. **barrel 能解析。** 换成裸包名做同一件事，应能取到运行期模块。`canonicalize-region-paths`（构建期）、`instance-lock` / `skill` / `placeholder`（只走子路径的运行期模块）、`remote-marker`（值导入 typert）与 `card-ui`（客户端专用）刻意不在 barrel 里；需要时按子路径取。
+2. **barrel 能解析。** 换成裸包名做同一件事，应能取到运行期模块。`canonicalize-region-paths`（构建期）、`instance-lock` / `skill` / `placeholder` / `session-projection` / `with-timeout`（根 barrel 没有通用消费方）、`remote-marker`（值导入 typert）、`typert-client`（类型面引用 typert）与 `card-ui`（客户端专用）刻意不在 barrel 里；需要时按子路径取。
 3. **消费方宿主能启动。** 启动声明该插件的 profile。若启动日志出现 `N entries did not activate` 与 `does not provide an export named ...`，说明 profile 的 `overrides` 固定得比包含该子路径的版本低——调高固定版本，不要改插件。
 4. **本地源码改动能反映到消费方。** 消费方载入的是 `dist/`，不是 `lib/`。改完先运行 `pnpm run build`；`test/build-host.test.ts` 会把磁盘上的运行期产物与内存构建逐字节比对，产物过期即报错。"代码改了却没生效"多半是产物过期，不是缓存问题。
 
@@ -173,11 +173,11 @@ const artifacts = await buildClientArtifacts({
 
 | 子路径 | 提供什么 |
 | --- | --- |
-| `.` | 下面列出的运行期模块的 barrel，由 `dist/plugin.js` 提供：同样的导出名，再加 `name` 与一条空操作的 `apply`，宿主 Loader 因此也能把本包当作一行载入。`canonicalize-region-paths`（构建期）、`instance-lock` / `skill` / `placeholder`（根 barrel 没有通用消费方）、`remote-marker`（值导入 typert）与 `card-ui`（客户端专用）刻意不进；根 barrel 不得把用不到的包带进每个消费方 |
-| `./lib/tool-events` | `scanToolEvents` 返回 `calls` / `results` 两张表，PTC 子调用一并合并；`toolEventRowsOf` 处理单个事件，交回的记录已带归一后的 `arguments` 与 `badArguments`。`editPathOf` 返回按 `kind` 判别的 `EditTarget`，只有 `write` / `read-view` 两个分支；路径取不到时为 `undefined`。`applyPatchTargetsOf` 用官方 `dsh-fs-patch` 解析 `apply_patch` 的有序操作；`editPathsOf` 展开全部写目标（move 的源与目的都算）。记录字段一律 `readonly`。结果行另带结算事件 `data.error` 的结构化失败身份 `error`（`name` / `code` 必须是非空字符串，半截形状按缺席处理；`reason` 只在它是字符串时保留）。同时再导出官方 `SessionEvent`；`PtcDispatchStartEventData` / `PtcDispatchEventData` 在本包内声明并自行增强 `SessionEventMap`，因为宿主在支持窗口内换过承载这份增强的包 |
+| `.` | 下面列出的运行期模块的 barrel，由 `dist/plugin.js` 提供：同样的导出名，再加 `name` 与一条空操作的 `apply`，宿主 Loader 因此也能把本包当作一行载入。`canonicalize-region-paths`（构建期）、`instance-lock` / `skill` / `placeholder` / `session-projection` / `with-timeout`（根 barrel 没有通用消费方）、`remote-marker`（值导入 typert）、`typert-client`（类型面引用 typert）与 `card-ui`（客户端专用）刻意不进；根 barrel 不得把用不到的包带进每个消费方 |
+| `./lib/tool-events` | `scanToolEvents` 返回 `calls` / `results` 两张表，PTC 子调用一并合并；`toolEventRowsOf` 处理单个事件，交回的记录已带归一后的 `arguments` 与 `badArguments`。`editPathOf` 返回按 `kind` 判别的 `EditTarget`，只有 `write` / `read-view` 两个分支；路径取不到时为 `undefined`。`applyPatchTargetsOf` 用官方 `dsh-fs-patch` 解析 `apply_patch` 的有序操作；`editPathsOf` 展开全部写目标（move 的源与目的都算）。记录字段一律 `readonly`。结果行另带结算事件 `data.error` 的结构化失败身份 `error`（`name` / `code` 必须是非空字符串，半截形状按缺席处理；`reason` 只在它是字符串时保留）。同时再导出官方 `SessionEvent` 与 PTC 两个载荷——`PtcDispatchStartEventData` / `PtcDispatchEventData` 与 `SessionEventMap` 增补的真源都是 `@deepseek-ai/dsh-tool-executor-ptc/types`（官方声明自带增补），这里只转发名字，本地声明已删 |
 | `./lib/card-apply` | `claimApply` + `CardApplyCtx`：保证 apply 幂等的保护逻辑，建立在 `globalThis` 上的**自有**标记（symbol，或外部写入的 `true`）加 `ctx.effect` 清理。标记是进程级的，所以同一页面的第二个 ctx 会被拒绝——这是有意的设计 |
 | `./lib/card-diff` | `diffTouched`：touched 层里哪些字段真的与快照不同，按表单值比较。`undefined`、`null` 与键缺失是同一种值；数组与对象逐元素比较；循环引用也能正常结束 |
-| `./lib/card-ui` | 客户端专用设置卡组件：`CardForm`、`Section`、`FieldGrid`、`StatusBar`、`Field`、`FieldLabel`、`InfoTip`、`ToggleField`、`NumberField`、`TextField`、`ListField`、`SelectField`、`SaveBar`、`splitHint`、`withInvalidField`、`useInvalidFields`、`InvalidFields` 类型与样式字符串 `CARD_UI_CSS`。`SaveBar` 的可选 `blocked` 只封保存、保留撤销。`CARD_UI_STYLE_ID` 与 `ensureCardUiCss` 把该样式表以固定 `<style id="dsh-card-ui-css">` 幂等注入；引用计数记在 style 元素上，因此各自打包的消费者共用一份，未带该计数的外部 style 不认领、不移除。只用 `createElement`；`react` 是 optional peer，该子路径永不进根 barrel。声明的 peer 下限是 `^19.3.0`；组件只用 React 18 就已存在的 API（`useId`、`useState`、`useEffect`、refs） |
+| `./lib/card-ui` | 客户端专用设置卡组件。表单层：`CardForm`、`Section`（可选 `count` 计数徽章与 `actions` 动作位）、`FieldGrid`、`FieldTwoCol`、`StatusBar`、`Field`、`FieldLabel`、`InfoTip`、`ToggleField`、`NumberField`、`TextField`、`ListField`、`SelectField`、`SaveBar`、`splitHint`、`withInvalidField`、`useInvalidFields`、`InvalidFields` 类型。展示层（v2 新增）：`Badge` / `StatusDot`、`Callout`、`KpiGrid` / `KpiTile`、`DataTable`（`ellipsis` 列悬停经 `createPortal` 弹全文浮层，可选 `stickyFirst` 冻结首列）/ `Meter`、`LogPanel`、`Segmented`、`EmptyState`、`ToolRow` / `ToolRowGrid` / `ToolRowItem`，以及样式字符串 `CARD_UI_CSS`。`SaveBar` 的可选 `blocked` 只封保存、保留撤销。三个输入组件（`TextField`/`ListField`/`NumberField`）各持内部草稿并跟随外部值：聚焦中不采纳外部值、失焦后跟随，跨条目渲染时必须以条目 id 作 `key`，否则实例复用会把上一个条目的草稿与错误提示带进下一个。`CARD_UI_STYLE_ID` 与 `ensureCardUiCss` 把该样式表以固定 `<style id="dsh-card-ui-css">` 幂等注入；引用计数记在 style 元素上，因此各自打包的消费者共用一份，未带该计数的外部 style 不认领、不移除。只用 `createElement` 与 `createPortal`；`react` 是 optional peer，`react-dom` 只被浮层 portal 取用、仅声明在 `devDependencies`（产物保持裸说明符，运行期由宿主平台模块与 react 同一位供应），该子路径永不进根 barrel。声明的 peer 下限是 `^19.3.0`；组件只用 React 18 就已存在的 API（`useId`、`useState`、`useEffect`、`useRef`、refs） |
 | `./client` | 浏览器客户端行：宿主模块图只提供一份的 `__ModuleLoader__` bundle。消费者外置这个说明符，并在自己的 patch 里以 `id: dsh-plugin-shared` 启用这一行；该行必须保持开启——停用后各插件设置卡会失去 shared 组件供应，下一次页面加载会报 `missed the module table` |
 | `./client-node` | 同一份客户端接口的 Node/ESM 形态，供测试与类型感知的 Node 消费方使用 |
 | `./lib/project-key` | `deriveProjectKey` + `ProjectKeyOptions`：cwd → `尾目录名-<sha256(norm) 前 8 位 hex>`；非字符串、空串或归一后的根目录归入 `default`。`realpathSync` 会解析软链接，失败则退回解析后的路径。Windows 的 `\` 与 `/` 产生同一个键 |
@@ -192,10 +192,13 @@ const artifacts = await buildClientArtifacts({
 | `./lib/skill` | `registerSkill(ctx, spec)` + `SkillSpec`：经可选的 `skills` 服务注册一枚虚拟 skill，并始终填上 `source`（缺省 `"runtime"`）——宿主 `validateDefinition()` 在加载全文时要求它。正文为空时不注册；服务缺席或形状不对回 `false` 而不抛。不进根 barrel |
 | `./lib/placeholder` | `fillPlaceholders(template, values)` + `PlaceholderValues`：单趟 `{name}` 插值。缺值与 `undefined` 保留占位符原文，`null` 渲染成 `"null"`，只取自有属性（键可带点，`{gate.command}` 照样可替换）。不进根 barrel |
 | `./lib/remote-marker` | `markRemote(prototype, methodName)`：官方 `@Remote` 方法装饰器的程序化等价物。它把同一个装饰器函数作用在手写的 TC39 context 上，源码因此不必写装饰器语法，也不需要降级流水线。按值导入 `@deepseek-ai/dsh-typert-protocol`（optional peer），且不进根 barrel |
+| `./lib/typert-client` | Typert Remote 客户端读取器的公共骨架：`RemoteHost` / `RemoteMounter` 类型与 `isRemoteMounter` 守卫。此前在七个仓的读取面各有一份逐字副本；骨架只收这三件正主，descriptors、codec、命名空间常量、unwrap 的宽严与错误文案等领域判断留在各仓。类型面引用 `@deepseek-ai/dsh-typert-protocol`（不进根 barrel 的同一取舍） |
+| `./lib/session-projection` | `ctx.sessionProjections` 新旧两代注册协议的判别件：`ProjectionHandle` / `isDisposer` / `isProjectionHandle` 与 `discriminateProjection`，判序固定（先判 handle 后判 disposer——把可调用性当成 handle 的排除条件时，「可调用 + 带 stateOf/dispose」的合成值会掉进旧读口）。零 import；两仓的挂载主体（失败语义 fail-open / fail-fast 相反）留在原地。不进根 barrel |
+| `./lib/with-timeout` | `raceTimeout<Value>(promise, timeoutMs, onTimeout)`：「限时等待、到点不再等但底层操作继续跑」的竞速骨架。计时器在成功与超时两端都清掉，不给事件循环留空转定时器；`onTimeout` 到点时构造拒绝值（文案与错误类型属调用方），底层操作不可中止、仍在后台跑完。零依赖、零 import。不进根 barrel |
 | `./lib/decorator-lowering` | 标准装饰器的构建/测试辅助：`needsDecoratorLowering`、`lowerStandardDecorators`、`rolldownDecorators`、`viteDecorators`。它用调用方注入的 `tsc` 入口单文件编译（`--noResolve`，模块说明符逐字保留），交回代码与源映射；Vite 侧还会把注入样板从覆盖率映射里摘掉。仅构建期使用，绝不进运行期 barrel |
 | `./lib/canonicalize-region-paths` | 构建期字符串处理：把 rolldown 写下的 `//#region <路径>` 改写成与 `process.cwd()` 无关的形态。只提供子路径，是为了让构建脚本取得到它，同时不把运行期 barrel 增大 |
 
-`instance-lock`、`skill` 与 `placeholder` 是根 barrel 没有通用消费方的运行期模块；`card-ui`（值导入 `react`）与 `remote-marker`（值导入 `@deepseek-ai/dsh-typert-protocol`）同样不进 barrel，免得每个 host 侧 importer 都去解析一枚它用不到的包。五个模块都刻意只走子路径。
+`instance-lock`、`skill`、`placeholder`、`session-projection` 与 `with-timeout` 是根 barrel 没有通用消费方的运行期模块；`card-ui`（值导入 `react`）、`remote-marker`（值导入 `@deepseek-ai/dsh-typert-protocol`）与 `typert-client`（类型面引用同一枚包）同样不进 barrel，免得每个 host 侧 importer 都去解析一枚它用不到的包。八个模块都刻意只走子路径。
 
 客户端行由消费插件启用，不由单独安装本包启用。消费者写 `- id: dsh-plugin-shared`、`name: "@jayyuen66/dsh-plugin-shared"`，并**保持开启**；停用后所有需要该行组件的设置卡都会失效，下一次页面加载会报 `missed the module table`。多个消费者插入同一个 id 时，宿主会把该组件的开关标成“无法唯一定位”并禁用。
 

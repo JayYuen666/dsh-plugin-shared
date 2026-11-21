@@ -9,8 +9,9 @@
 // 可等待类型直接用全局的 PromiseLike<unknown>，不再本地手写一份 thenable 接口：标准库那份
 // 描述的就是同一件事（只认 then 方法，真 Promise 与自带 then 的替身都算），手写一份只会
 // 与它漂移，还要自己维护与下面那个判别谓词的一致性。本模块只 await、从不调 .then，所以
-// lib.d.ts 里 onrejected 的 any 不会渗进这里的类型声明。它是模块私有的——
-// dist/types/lesson-bus.d.ts 里查无此名，故对消费方零影响。
+// lib.d.ts 里 onrejected 的 any 不会渗进这里的类型声明。
+// isThenable 导出给 lib/job-outcome.ts 复用（此前两份逐字相同、md5 一致）；经 barrel 的
+// `export *` 进入公共面，对消费方 additive。
 
 /**
  * 值是否为可等待对象。逐层收窄而不是 instanceof Promise：宿主给的 Promise 可能来自另一份
@@ -21,7 +22,7 @@
  * @param value - 待判定的调用返回值。
  * @returns true 表示要给它挂一个 rejection 出口。
  */
-function isThenable(value: unknown): value is PromiseLike<unknown> {
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
   // 判断必须直接写在 value 上：把 typeof 结果存进变量不产生收窄，Reflect.get 会收到 unknown。
   if (value === null || (typeof value !== "object" && typeof value !== "function")) {
     return false;
