@@ -1,9 +1,9 @@
 /// <reference lib="dom" />
+import { nextDomId } from "./ids.ts";
 import {
   createElement,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -34,16 +34,24 @@ export function SelectField(
     value: string;
     options: readonly SelectOption[];
     onChange: (next: string) => void;
+    /** 表格单元格、页头筛选这类紧凑场景：不画 Field 外壳（标签行与说明位都不占高）。 */
+    bare?: boolean;
   },
 ): ReactElement {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const baseId = useId();
-  const controlId = useId();
+  const baseId = nextDomId("dsu-select");
+  const controlId = nextDomId("dsu-select");
   const anchorId = `--dsu-${controlId.replaceAll(/[^a-zA-Z0-9]/gu, "")}`;
-  const describedBy = props.hint === undefined ? undefined : `${controlId}-hint`;
+  const describedBy = [
+    props.hint === undefined && props.detail === undefined ? undefined : `${controlId}-hint`,
+    props.invalidText === undefined ? undefined : `${controlId}-err`,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
+  const errorId = props.invalidText === undefined ? undefined : `${controlId}-err`;
   const { disabled, value, options, onChange } = props;
   const enabled = useMemo(
     () =>
@@ -65,8 +73,14 @@ export function SelectField(
       return;
     }
     const rect = trigger.getBoundingClientRect();
-    const width = Math.min(rect.width, window.innerWidth - 16);
-    menu.style.width = `${width}px`;
+    // 浮层至少与触发器同宽，但不再把宽度死锁在触发器上：`最近 30 天` 这类候选比筛选框
+    // 宽，按 85px 裁会把标签折成两行、把每一项撑到 52px。先量一次 `max-content`，再取
+    // 两者较大值；视口装不下时仍收到 `innerWidth - 16`，由选项文字单行省略兜底。
+    menu.style.width = "max-content";
+    const available = Math.max(0, window.innerWidth - 16);
+    const naturalWidth = menu.getBoundingClientRect().width;
+    const contentWidth = Math.min(Math.max(rect.width, naturalWidth), available);
+    menu.style.width = `${contentWidth}px`;
     // CSS anchor 支持时位置由 position-area 跟随触发器（抗缩放/平移），不写 JS 矩形坐标；
     // 间距由样式表的 margin-top 提供。已经回退过的浮层（position-area 被显式关成 none）
     // 不再重新尝试锚定，否则每次 resize 都会在「锚定 → 回退」之间来回跳。
@@ -83,15 +97,15 @@ export function SelectField(
     }
     menu.style.marginTop = "0px";
     let { left } = rect;
-    if (left + width > window.innerWidth - 8) {
-      left = window.innerWidth - width - 8;
+    if (left + contentWidth > window.innerWidth - 8) {
+      left = window.innerWidth - contentWidth - 8;
     }
     const height = menu.offsetHeight;
     let top = rect.bottom + 6;
     if (top + height > window.innerHeight - 8) {
       top = rect.top - height - 6;
     }
-    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const maxLeft = Math.max(8, window.innerWidth - contentWidth - 8);
     const maxTop = Math.max(8, window.innerHeight - height - 8);
     menu.style.left = `${Math.min(Math.max(8, left), maxLeft)}px`;
     menu.style.top = `${Math.min(Math.max(8, top), maxTop)}px`;
@@ -304,6 +318,7 @@ export function SelectField(
           id: `${baseId}-${index}`,
           className: "dsu-option",
           tabIndex: -1,
+          "data-value": option.value,
           "aria-selected": option.value === props.value,
           "data-active": index === active,
           disabled: option.disabled === true,
@@ -344,79 +359,80 @@ export function SelectField(
     );
   }
 
-  return createElement(
-    Field,
-    { ...props, controlId },
+  const control = createElement(
+    "div",
+    {
+      className: `dsu-selectWrap${props.bare === true ? " dsu-selectBare" : ""}`,
+      onBlur: (event: ReactFocusEvent<HTMLDivElement>): void => {
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) {
+          return;
+        }
+        close();
+      },
+    },
+    createElement(
+      "button",
+      {
+        ref: triggerRef,
+        type: "button",
+        id: controlId,
+        style: { anchorName: anchorId },
+        className: "dsu-select dsu-input",
+        role: "combobox",
+        "aria-haspopup": "listbox",
+        "aria-expanded": open,
+        "aria-controls": `${baseId}-list`,
+        "aria-activedescendant": open && activeValid ? `${baseId}-${active}` : undefined,
+        "aria-describedby": describedBy.length === 0 ? undefined : describedBy,
+        "aria-invalid": props.invalidText === undefined ? undefined : true,
+        "aria-errormessage": errorId,
+        "aria-label": props.bare === true ? props.label : undefined,
+        "data-field": props.field,
+        "data-value": value,
+        disabled: disabled === true || options.length === 0,
+        onClick: () => {
+          if (open) {
+            close();
+            return;
+          }
+          openMenu();
+        },
+        onKeyDown,
+      },
+      createElement("span", { className: "dsu-selectValue" }, selectedLabel),
+      createElement(
+        "svg",
+        {
+          className: "dsu-chevron",
+          width: 14,
+          height: 14,
+          viewBox: "0 0 14 14",
+          "aria-hidden": true,
+        },
+        createElement("path", {
+          d: "M3 5l4 4 4-4",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.5,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+        }),
+      ),
+    ),
     createElement(
       "div",
       {
-        className: "dsu-selectWrap",
-        onBlur: (event: ReactFocusEvent<HTMLDivElement>): void => {
-          const next = event.relatedTarget;
-          if (next instanceof Node && event.currentTarget.contains(next)) {
-            return;
-          }
-          close();
-        },
+        ref: menuRef,
+        id: `${baseId}-list`,
+        role: "listbox",
+        className: "dsu-menu",
+        style: { positionAnchor: anchorId, positionTryFallbacks: "flip-block, flip-inline" },
+        "aria-label": props.label,
+        hidden: !open,
       },
-      createElement(
-        "button",
-        {
-          ref: triggerRef,
-          type: "button",
-          id: controlId,
-          style: { anchorName: anchorId },
-          className: "dsu-select dsu-input",
-          role: "combobox",
-          "aria-haspopup": "listbox",
-          "aria-expanded": open,
-          "aria-controls": `${baseId}-list`,
-          "aria-activedescendant": open && activeValid ? `${baseId}-${active}` : undefined,
-          "aria-describedby": describedBy,
-          "data-field": props.field,
-          disabled: disabled === true || options.length === 0,
-          onClick: () => {
-            if (open) {
-              close();
-              return;
-            }
-            openMenu();
-          },
-          onKeyDown,
-        },
-        createElement("span", { className: "dsu-selectValue" }, selectedLabel),
-        createElement(
-          "svg",
-          {
-            className: "dsu-chevron",
-            width: 14,
-            height: 14,
-            viewBox: "0 0 14 14",
-            "aria-hidden": true,
-          },
-          createElement("path", {
-            d: "M3 5l4 4 4-4",
-            fill: "none",
-            stroke: "currentColor",
-            strokeWidth: 1.5,
-            strokeLinecap: "round",
-            strokeLinejoin: "round",
-          }),
-        ),
-      ),
-      createElement(
-        "div",
-        {
-          ref: menuRef,
-          id: `${baseId}-list`,
-          role: "listbox",
-          className: "dsu-menu",
-          style: { positionAnchor: anchorId, positionTryFallbacks: "flip-block, flip-inline" },
-          "aria-label": props.label,
-          hidden: !open,
-        },
-        ...optionNodes,
-      ),
+      ...optionNodes,
     ),
   );
+  return props.bare === true ? control : createElement(Field, { ...props, controlId }, control);
 }

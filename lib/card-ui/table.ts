@@ -101,6 +101,8 @@ export function DataTable(props: {
   scroll?: boolean | undefined;
   /** 首列冻结：横向滚动时身份列钉在左边（长表行数多、身份列窄的明细表用）。 */
   stickyFirst?: boolean | undefined;
+  /** 读屏用的表名（设计稿要求每张全量表带 caption）；视觉上由 `.dsu-srOnly` 隐藏。 */
+  caption?: string | undefined;
   /** `rows` 为空时替代整张表的内容；缺省什么都不渲染。 */
   empty?: ReactNode;
 }): ReactElement | null {
@@ -110,6 +112,10 @@ export function DataTable(props: {
     }
     return createElement("div", { className: "dsu-tblWrap" }, props.empty);
   }
+  const caption =
+    props.caption === undefined
+      ? null
+      : createElement("caption", { className: "dsu-srOnly" }, props.caption);
   const head = createElement(
     "thead",
     null,
@@ -144,7 +150,9 @@ export function DataTable(props: {
     ),
   );
   const tableClass = `dsu-tbl${props.stickyFirst === true ? " dsu-tblSticky" : ""}`;
-  const children: ReactNode[] = [createElement("table", { className: tableClass }, head, body)];
+  const children: ReactNode[] = [
+    createElement("table", { className: tableClass }, caption, head, body),
+  ];
   if (props.foot !== undefined) {
     children.push(createElement("div", { className: "dsu-tblFoot" }, props.foot));
   }

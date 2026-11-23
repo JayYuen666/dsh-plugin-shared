@@ -57,15 +57,19 @@ export function SaveBar(props: {
   return createElement(
     "div",
     { className: "dsu-savebar", "data-dirty": dirty },
-    left,
-    props.dirty && props.error !== null
-      ? createElement("span", { className: "dsu-status dsu-statusError" }, props.error)
-      : null,
+    createElement(
+      "div",
+      { className: "dsu-saveInfo" },
+      left,
+      props.dirty && props.error !== null
+        ? createElement("span", { className: "dsu-status dsu-statusError" }, props.error)
+        : null,
+    ),
     createElement(
       "button",
       {
         type: "button",
-        className: "dsu-btn",
+        className: "dsu-btn dsu-btnSm",
         "data-field": "discard",
         disabled: discardDisabled,
         onClick: props.onDiscard,
@@ -76,7 +80,7 @@ export function SaveBar(props: {
       "button",
       {
         type: "button",
-        className: "dsu-btn dsu-btnPrimary",
+        className: "dsu-btn dsu-btnSm dsu-btnPrimary",
         "data-field": "save",
         disabled: saveDisabled,
         onClick: props.onSave,

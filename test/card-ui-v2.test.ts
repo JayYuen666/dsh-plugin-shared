@@ -57,6 +57,15 @@ describe("badge 与状态点", () => {
     assert.equal(html, '<span class="dsu-badge dsu-badgeNeutral"></span>');
   });
 
+  it("badge 可带状态点与 data-field，点的色调独立于底色", () => {
+    const html = markup(
+      createElement(Badge, { tone: "warn", dot: "warn", field: "cli-badge" }, "版本偏离"),
+    );
+    assert.ok(html.includes('data-field="cli-badge"'));
+    assert.ok(html.includes('class="dsu-dot dsu-dotWarn"'));
+    assert.ok(html.endsWith("版本偏离</span>"));
+  });
+
   it("状态点四种色调各渲染对应类名", () => {
     for (const tone of DOT_TONES) {
       assert.ok(
@@ -67,6 +76,14 @@ describe("badge 与状态点", () => {
 
   it("状态点缺省色调是 mute", () => {
     assert.ok(markup(createElement(StatusDot, null)).includes('class="dsu-dot dsu-dotMute"'));
+  });
+
+  it("状态点带 label 时是可读的状态而不是装饰", () => {
+    const html = markup(createElement(StatusDot, { tone: "warn", label: "非规范档位形状" }));
+    assert.ok(html.includes('role="img"'));
+    assert.ok(html.includes('aria-label="非规范档位形状"'));
+    assert.ok(html.includes('title="非规范档位形状"'));
+    assert.ok(!html.includes("aria-hidden"));
   });
 });
 
@@ -178,6 +195,13 @@ describe("dataTable", () => {
     );
     assert.ok(html.includes('class="dsu-tblWrap dsu-tblScroll"'));
     assert.ok(html.includes('<div class="dsu-tblFoot">窗口 14 天</div>'));
+  });
+
+  it("caption 只做读屏表名，视觉由 srOnly 隐藏", () => {
+    const html = markup(createElement(DataTable, { columns, rows, caption: "跳过原因构成完整表" }));
+    assert.ok(html.includes('<caption class="dsu-srOnly">跳过原因构成完整表</caption>'));
+    const plain = markup(createElement(DataTable, { columns, rows }));
+    assert.ok(!plain.includes("<caption"));
   });
 
   it("ellipsis 列的字符串格带单行省略、aria-label 全文，悬停弹出全文浮层", async () => {
@@ -309,6 +333,10 @@ describe("meter 量条", () => {
 });
 
 describe("日志面板", () => {
+  const ACTION = ".dsu-logAction";
+  const ACTIONS = ".dsu-logActions";
+  const OCR_VERSION = "ocr version";
+
   it("头部带状态点、说明与动作，动作可点击", async () => {
     const onCopy = vi.fn<() => void>();
     const view = await mount(
@@ -320,16 +348,133 @@ describe("日志面板", () => {
     );
     assert.ok(view.container.querySelector(".dsu-dotOk"));
     assert.equal(textOf(view.container, ".dsu-logHead"), "重建作业 #a3f2复制");
-    await click(view.container.querySelector(".dsu-logAction")!);
+    await click(view.container.querySelector(ACTION)!);
     expect(onCopy).toHaveBeenCalledExactlyOnceWith(expect.anything());
     assert.equal(textOf(view.container, ".dsu-logBody"), "第 1 行");
     await view.unmount();
+  });
+
+  it("命令型输出在头部给复制动作，复制成功后换成已复制", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      const command = "dsh-scrapling setup --feature browser --apply";
+      const view = await mount(
+        createElement(
+          LogPanel,
+          {
+            label: "安装命令",
+            copyText: command,
+            copyLabel: "复制",
+            copiedLabel: "已复制",
+          },
+          command,
+        ),
+      );
+      assert.equal(textOf(view.container, ACTIONS), "复制");
+      await click(view.container.querySelector(ACTION)!);
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(command);
+      assert.equal(textOf(view.container, ACTIONS), "已复制");
+      await view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("没有剪贴板时复制动作不谎报成功", async () => {
+    vi.stubGlobal("navigator", {});
+    try {
+      const command = OCR_VERSION;
+      const view = await mount(
+        createElement(
+          LogPanel,
+          { label: "命令", copyText: command, copyLabel: "复制", copiedLabel: "已复制" },
+          command,
+        ),
+      );
+      await click(view.container.querySelector(ACTION)!);
+      assert.equal(textOf(view.container, ACTIONS), "复制");
+      await view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("剪贴板拒绝时保持复制标签", async () => {
+    const writeText = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      const command = OCR_VERSION;
+      const view = await mount(
+        createElement(
+          LogPanel,
+          { label: "命令", copyText: command, copyLabel: "复制", copiedLabel: "已复制" },
+          command,
+        ),
+      );
+      await click(view.container.querySelector(ACTION)!);
+      await Promise.resolve();
+      assert.equal(textOf(view.container, ACTIONS), "复制");
+      await view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("没有 copiedLabel 时沿用 copyLabel，不凭空造词", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      const command = OCR_VERSION;
+      const view = await mount(
+        createElement(LogPanel, { label: "命令", copyText: command, copyLabel: "COPY" }, command),
+      );
+      await click(view.container.querySelector(ACTION)!);
+      assert.equal(textOf(view.container, ACTIONS), "COPY");
+      await view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("无动作时动作区不渲染", () => {
     const html = markup(createElement(LogPanel, { label: "输出" }, "正文"));
     assert.ok(html.includes('class="dsu-logHead"'));
     assert.ok(!html.includes("dsu-logActions"));
+  });
+
+  it("semanticLines 只给可识别的状态行上色，不动正文", () => {
+    const html = markup(
+      createElement(
+        LogPanel,
+        { label: "作业", semanticLines: true },
+        "roots: 3 个工作区已登记\n[12:04:16] 跳过 node_modules\nERROR: zg exited\n普通一行",
+      ),
+    );
+    assert.ok(html.includes('class="dsu-logOk"'));
+    assert.ok(html.includes('class="dsu-logWarn"'));
+    assert.ok(html.includes('class="dsu-logErr"'));
+    assert.ok(!html.includes('class="dsu-logOk">普通一行'));
+    assert.ok(html.includes("普通一行"));
+  });
+
+  it("semanticLines 不把路径里的 error 当成失败", () => {
+    const html = markup(
+      createElement(
+        LogPanel,
+        { label: "路径", semanticLines: true },
+        "/tmp/error.log\n/var/log/warnings",
+      ),
+    );
+    assert.ok(!html.includes("dsu-logErr"));
+    assert.ok(!html.includes("dsu-logWarn"));
+  });
+
+  it("semanticLines 关闭时不把命令原文按关键词染色", () => {
+    const html = markup(createElement(LogPanel, { label: "命令" }, "echo error > error.log"));
+    assert.ok(!html.includes("dsu-logErr"));
   });
 
   it("头部三项全缺省时不渲染头部", () => {
@@ -366,20 +511,35 @@ describe("分段页签", () => {
 });
 
 describe("空态", () => {
-  it("标题与正文都渲染", () => {
+  const EMPTY_ICON = 'class="dsu-emptyIcon"';
+  const EMPTY_TITLE = '<span class="dsu-emptyTitle">窗口内没有数据</span>';
+
+  it("图标、标题与正文都渲染", () => {
     const html = markup(createElement(EmptyState, { title: "窗口内没有数据" }, "调整范围后重试"));
-    assert.ok(html.includes('<span class="dsu-emptyTitle">窗口内没有数据</span>调整范围后重试'));
+    assert.ok(html.includes(EMPTY_ICON));
+    assert.ok(html.includes(EMPTY_TITLE));
+    assert.ok(html.includes('<span class="dsu-emptyBody">调整范围后重试</span>'));
   });
 
-  it("只有正文时不渲染标题位", () => {
+  it("只有正文时仍带空托盘图标，不渲染标题位", () => {
     const html = markup(createElement(EmptyState, null, "暂无数据"));
+    assert.ok(html.includes(EMPTY_ICON));
     assert.ok(!html.includes("dsu-emptyTitle"));
-    assert.ok(html.includes('class="dsu-empty">暂无数据</div>'));
+    assert.ok(html.includes('<span class="dsu-emptyBody">暂无数据</span>'));
   });
 
   it("只有标题时不渲染正文位", () => {
     const html = markup(createElement(EmptyState, { title: "窗口内没有数据" }));
-    assert.ok(html.includes('<span class="dsu-emptyTitle">窗口内没有数据</span></div>'));
+    assert.ok(html.includes(EMPTY_ICON));
+    assert.ok(html.includes(EMPTY_TITLE));
+    assert.ok(!html.includes("dsu-emptyBody"));
+  });
+
+  it("plain 只去掉底色，图标与文案照旧", () => {
+    const html = markup(createElement(EmptyState, { title: "窗口内没有数据", plain: true }));
+    assert.ok(html.includes('class="dsu-empty dsu-emptyPlain"'));
+    assert.ok(html.includes(EMPTY_ICON));
+    assert.ok(html.includes(EMPTY_TITLE));
   });
 });
 
@@ -482,6 +642,11 @@ describe("savebar 面板顺序", () => {
       (node) => node.dataset["field"] ?? "status",
     );
     assert.deepEqual(order, ["status", "discard", "save"]);
+    const info = view.container.querySelector<HTMLElement>(".dsu-saveInfo");
+    assert.ok(info);
+    assert.equal(info.textContent, "已修改");
+    assert.equal(info.querySelector("button"), null);
+    assert.equal(view.container.querySelector(".dsu-savebar")!.firstElementChild, info);
     await view.unmount();
   });
 });

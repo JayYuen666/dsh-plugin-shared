@@ -2,6 +2,41 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.2.13
+
+宿主开发基线切到 `dsh 0.2.3-alpha.2`（cordis `4.2.0-alpha.1`、schemastery `3.20.0-alpha.1`、cosmokit `1.10.0-alpha.1`，Node `^24.22.3 || >=26.13.1`）。设置卡视觉层升到 v3 基线：字段标签在上、帮助按钮/错误徽标、行式布尔项、统一保存条与 KPI/Insights 辅助样式；`JobOutcome` 补 `exitCode`，React optional peer 放宽到 `^18.2.0 || ^19.0.0`。
+
+### Changed
+
+- **宿主线收成单条 alpha。** `engines.dsh` 与全部 `@deepseek-ai/dsh-*` peer 同走 `^0.2.3-alpha.2`，devDependencies 全族精确同步；`@deepseek-ai/cordis` 的 peer 由旧 rc 线的并集 `^4.0.5||^4.0.6-alpha.1` 收成同一窗口 `^4.2.0-alpha.1`（开发钉版 `4.2.0-alpha.1`）。`@deepseek-ai/cosmokit` 与 schemastery 随宿主族线走到 `1.10.0-alpha.1` / `3.20.0-alpha.1`。Node 地板抬到 `^24.22.3 || >=26.13.1`，CI 矩阵、install-matrix 与 publish 的 node 同步 `24.22.3`；覆盖率上传步骤的 `matrix.node` 判据一并改到同一枚字面值，否则那一步永远不跑。
+- **card-ui v3 表单层重排。** 字段从「标签在左、说明占第三行」改成标签行在上、控件在下（`Field` 的 `layout` 缺省 `stack`，布尔行用 `row`）；`hint`、`detail` 与 `invalidText` 全部收进 24px 帮助按钮的浮层（悬停/聚焦显示、点击钉住、Esc 或点外部关闭），错误另有标签行徽标 `dsu-errBadge`，字段不再长第三行。`TipPlacement` 只有 `side`（字段）与 `above`（小节标题）两档。
+- **展示层补齐**：`Badge` 加可选 `dot` 色调与 `data-field`，`StatusDot` 加可选 `label`（只有一颗点的状态列去掉 `aria-hidden`，改 `role="img"` + `aria-label` + `title`），`DataTable` 加可选 `caption`（读屏表名，视觉由 `.dsu-srOnly` 隐藏），`EmptyState` 加统一空托盘图标与 `plain`（外层已有边框时不画第二层虚线）。
+- **保存条**：状态区收进 `.dsu-saveInfo`，撤销/保存改小号按钮（`dsu-btnSm`）；基础底色由 `bg-layer-2` 改 `card-fill`（宿主「设置」对话框里 `bg-layer-2` 会成一条比四周更暗的横带），`CARD_UI_CSS_VERSION` 3 → 3.1。
+- **控件 DOM id 改 `nextDomId`。** 进程内自增替代 React `useId`：插件测试用自带的渲染器展开组件树并把 `react` 换成轻量 hook，共享包从自己 node_modules 解析 React 时是另一份实例，`useId` 的 dispatcher 为 null。id 只服务 `label[for]` 与 `aria-*`，进程内唯一即可。
+- **`JobOutcome` 补 `exitCode`。** `jobOutcomeOf` 的 completed 结局同时带官方 `JobView.exitCode`，作业列表据此给非零退出码画警告点；`detail` 的 `exit code: N` 文案不变。
+- **`config/vitest.base` 的客户端别名改走发布产物。** `@jayyuen66/dsh-plugin-shared/client` → `client-node`（`files` 只带 `dist`，源码路径在 registry 安装态不存在），`react` / `react-dom` 显式指回消费仓根 `node_modules` 并 `dedupe`，shared 加进 `server.deps.inline`——node_modules 下的包默认被外部化，Node 加载器会绕过 alias 与 `vi.mock("react")`；内联后 dist 里的 `import "react"` 走 Vite 的同一套解析，mock 才作用在同一个模块实例上。
+- **React optional peer 放宽到 `^18.2.0 || ^19.0.0`。** 组件只用 React 18 就已存在的 API，宿主运行时是 18.3.1；devDependencies 仍钉 `19.3.0` / `19.3.1` 作编译期基线。
+- **CI 与发布机器**：`node-version` 从 `24.9` 抬到 `24.22.3`（gate 矩阵、install-matrix、publish 三处同源）。
+- **产物预算按实测抬档**（`test/dist-size.test.ts` 逐轮记账）：运行期预算 56,800 → 70,000 B（实测 69,921），客户端行预算 46,700 → 60,000 B（实测 59,881）。
+- **README / README.zh-CN 同步**：card-ui 行补齐 v3 表单件、`nextDomId`、`TipPlacement`、展示层可选位与 React peer 窗口；`config/vitest.base` 行补别名目标、react 族别名与内联规则；`job-outcome` 行补 `exitCode`；英文版「客户端行不写 id」的旧段改成固定 id `dsh-plugin-shared` 与「必须保持开启」；两份 README 的 PTC 段与中文版开发清单补齐 0.2.12 起的官方直引口径（旧的 `tool-events-host-parity.ts` 引用删除）。
+
+### Added
+
+- **card-ui v3 表单件（`./lib/card-ui` 导出面纯加法）**：`SectionToggle`（节级开关，放 `Section` 的 `toggle` 位）、`ToggleGrid` / `ToggleCell`（成组布尔项的紧凑双列栅格）、`SecretField`（password 输入 + 框内 28×28 眼睛按钮，`revealToken` 让撤销后回到遮蔽）、`SelectField` 的 `bare` 变体（表格单元格与页头筛选不画 Field 外壳）、`NumberField` 的 `inputMode`（小数步长默认 `decimal`，其余 `numeric`）与越界错误态（`invalidText` 由标签行承担）。
+
+### Tests
+
+- `test/card-ui.test.ts` 新增 v3 三组（`SectionToggle`、`ToggleGrid`/`ToggleCell`、`SecretField`）与标签/错误浮层、控件 id 与 ARIA 关联、`NumberField` 聚焦守卫与 `inputMode` 的判据。
+- `test/card-ui-v2.test.ts` 补 `Badge` 的 `dot`/`data-field`、`StatusDot` 的 `label`、`DataTable` 的 `caption`、`EmptyState` 的 `plain`。
+- `test/vitest-base.test.ts` 新增别名与内联形状断言：客户端别名必须是发布产物说明符（源码路径在 tarball 里不存在），`react` 族指向 `process.cwd()` 下的副本，内联规则必须是能匹配包路径的正则。
+- `test/card-ui-style-tag.test.ts` 的保存条底色断言改 `card-fill`；`test/dist-size.test.ts` 预算抬档并记账。
+- 全量：39 个测试文件 / 667 条用例、覆盖率四项 100%、oxfmt 117 份文件全符合。
+
+### Notes
+
+- 发布顺序：本包先发；消费仓的 catalog 与 card-ui v3 迁移随后。发布前 `sync --check` 会在「无版本可满足」上红，那是发布顺序，不是代码缺陷。
+- 已发布产物面已在 `/tmp` 干净安装探针里验过：tarball 里没有 `lib/`，所以别名只能指 `dist`；`vi.mock("react")` 经内联后作用到 shared 组件（`Badge` 调的是 mock 的 `createElement`）。九仓各自 CI 的实跑不在本提交范围。
+
 ## 0.2.12
 
 tool 事件面的类型真源交给官方包：PTC 两个载荷与失败身份不再本地声明；两份逐字相同的 thenable 判别合一。设置卡组件库扩到 v2：一批展示组件与双列字段栅格上线，表单层按宿主设计稿重写视觉层；三个骨架子路径开始收编各仓的逐字副本。

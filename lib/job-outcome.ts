@@ -56,7 +56,8 @@ export type SettledProcess = Pick<ShellProcess, "status" | "exitCode" | "signal"
 /**
  * 已结束进程 → 作业结局。
  * @param proc 已结束的子进程句柄（`done` 已 resolve 之后再读，值才是终态）
- * @returns 交给 {@link JobRegistry} 生产者的结局：killed / completed，理由在 detail
+ * @returns 交给 {@link JobRegistry} 生产者的结局：killed / completed，理由在 detail；
+ *          completed 同时带官方 `exitCode`（作业列表据此画非零退出码的警告点）
  */
 export function jobOutcomeOf(proc: SettledProcess): JobOutcome {
   if (proc.status === "killed") {
@@ -68,8 +69,10 @@ export function jobOutcomeOf(proc: SettledProcess): JobOutcome {
   }
   // `exitCode === null` 只在「被信号终止」或「还在跑」时出现；走到这一支说明 status 是
   // completed，故按宿主的 `processOutcome` 行为记 0（宿主对「跑完了但没报退出码」同样记 0）。
-  // 卡片侧不受影响：消费方投影时直接读 `proc.exitCode` 原样下发，这里只决定作业列表里那行理由。
-  return { status: "completed", detail: `exit code: ${String(proc.exitCode ?? 0)}` };
+  const exitCode = proc.exitCode ?? 0;
+  // 卡片侧继续读 `proc.exitCode` 原样下发；`exitCode` 这一位是给官方作业列表的
+  // `JobView.exitCode`（alpha.1 起有），非零退出码会显示 warning dot。
+  return { status: "completed", detail: `exit code: ${String(exitCode)}`, exitCode };
 }
 
 /**

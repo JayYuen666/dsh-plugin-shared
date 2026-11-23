@@ -193,8 +193,8 @@ describe("兼容：truncateEnd 依赖的官方件仍在装着的 DSH 里", () =>
     // 类型检查挡得住"导出被删"（tsc 会报错），但挡不住**运行期拿到 undefined**——例如
     // 消费插件装在另一份更老的 DSH 上。那种情况下 truncateEnd 会在第一次调用时抛
     // TypeError，而它的调用点全在把工具结果写进会话日志的路径上。
-    // 本包把 DSH 依赖锁成精确版本（0.2.0-rc.2），但 9 个消费插件各自的 DSH 由宿主决定，
-    // 所以这里把"符号存在且是函数"当成一条要固定的约定。
+    // 本包把 DSH 依赖钉在开发基线（`0.2.3-alpha.2`），但 9 个消费插件各自的 DSH 由宿主决定，
+    // 而 peer 窗口是按 `0.2` 线吃的，所以这里把"符号存在且是函数"当成一条要固定的约定。
     const official = await import("@deepseek-ai/dsh-output-retention");
     assert.equal(typeof official.truncateWithoutSplittingSurrogatePair, "function");
     // 顺带固定它确实是我们以为的那件事：截断位置切开代理对时丢的是尾部那个孤立高代理。

@@ -26,6 +26,7 @@ describe("jobOutcomeOf", () => {
     expect(jobOutcomeOf(settled({ exitCode: 127 }))).toStrictEqual({
       status: "completed",
       detail: "exit code: 127",
+      exitCode: 127,
     });
     expect(jobOutcomeOf(settled()).detail).toBe("exit code: 0");
   });
@@ -33,7 +34,11 @@ describe("jobOutcomeOf", () => {
   it("completed 但没报退出码 ⇒ 按 0 记录（与宿主 bash 同做法）", () => {
     // 卡片侧不受影响：zvec-grep 的投影直接读 proc.exitCode 原样下发，这里只影响
     // 官方作业列表里那一行理由。
-    expect(jobOutcomeOf(settled({ exitCode: null })).detail).toBe("exit code: 0");
+    expect(jobOutcomeOf(settled({ exitCode: null }))).toMatchObject({
+      status: "completed",
+      detail: "exit code: 0",
+      exitCode: 0,
+    });
   });
 
   it("信号终止 ⇒ killed，detail 给信号名", () => {

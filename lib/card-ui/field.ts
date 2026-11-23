@@ -1,15 +1,10 @@
 /// <reference lib="dom" />
-import {
-  createElement,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { nextDomId } from "./ids.ts";
+import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FocusEvent as ReactFocusEvent, ReactElement, ReactNode } from "react";
-import { anchorPlacementOff, cssAnchorSupported } from "./anchor.ts";
+
+/** 浮层方位：字段说明从帮助图标右侧展开；小节标题的说明从上方展开（设计稿 `.sec-tip`）。 */
+export type TipPlacement = "side" | "above";
 
 /** 所有字段共享的文案与状态位。 */
 export interface FieldBase {
@@ -21,7 +16,11 @@ export interface FieldBase {
   disabled?: boolean;
   wide?: boolean;
   compact?: boolean;
-  /** 控件的 DOM id；字段组件用 `useId` 生成，FieldLabel 用它建立 label↔control 关联。 */
+  /** 校验错误：只进标签行的错误徽标与帮助浮层，不在字段下方另起一行。 */
+  invalidText?: string;
+  /** 标签与控件的排布；成组布尔项用 `row`（设计稿 `.toggle-cell`）。 */
+  layout?: "stack" | "row";
+  /** 控件的 DOM id；字段组件用 `nextDomId` 生成，FieldLabel 用它建立 label↔control 关联。 */
   controlId?: string;
 }
 
@@ -32,9 +31,15 @@ export function InfoTip(props: {
   /** 是否渲染可见字段名；FieldLabel 自己渲染标签时传 false，避免重复。 */
   showLabel?: boolean;
   compact?: boolean;
+  /** 错误态：帮助按钮与浮层换成 error 语义色。 */
+  error?: boolean;
+  /** 错误正文；与说明同处一个浮层，错误排在说明之前。 */
+  errorText?: string;
+  /** 字段默认在右侧；小节标题使用 above，箭头向下。 */
+  placement?: TipPlacement;
 }): ReactElement {
-  const id = useId();
-  const anchorId = `--dsu-tip-${id.replaceAll(/[^a-zA-Z0-9]/gu, "")}`;
+  const id = nextDomId("dsu-tip");
+  const placement = props.placement ?? "side";
   const [open, setOpen] = useState(false);
   const hoveredRef = useRef(false);
   const focusedRef = useRef(false);
@@ -58,35 +63,53 @@ export function InfoTip(props: {
     if (anchor === null || tip === null) {
       return;
     }
-    // CSS anchor 支持时位置由 position-area 跟随按钮（抗缩放/平移），不写 JS 矩形坐标；
-    // 间距由样式表的 margin-top 提供。已经回退过的浮层（position-area 被显式关成 none）
-    // 不再重新尝试锚定，否则每次 resize 都会在「锚定 → 回退」之间来回跳。
-    const anchored = cssAnchorSupported() && tip.style.positionArea !== "none";
-    const rect = anchor.getBoundingClientRect();
-    if (anchored && !anchorPlacementOff(rect, tip.getBoundingClientRect())) {
-      return;
-    }
-    if (anchored) {
-      // 锚定没兑现：position-area 在场时 left/top 只覆盖行内那一半，块向仍由锚定决定，
-      // 所以先把它关掉再写矩形坐标。
-      tip.style.positionArea = "none";
-    }
     tip.style.marginTop = "0px";
     const width = tip.offsetWidth;
     const height = tip.offsetHeight;
-    let { left } = rect;
-    let top = rect.bottom + 8;
-    if (top + height > window.innerHeight - 8) {
-      top = rect.top - height - 8;
+    const rect = anchor.getBoundingClientRect();
+    const edge = 8;
+    let left: number;
+    let top: number;
+    let side: "right" | "left" | "above" | "below";
+    if (placement === "above") {
+      // 小节标题：浮层在按钮上方居中，箭头向下（设计稿 `.tip.sec-tip`）。
+      left = rect.left + rect.width / 2 - width / 2;
+      top = rect.top - height - edge;
+      side = "above";
+      if (top < edge) {
+        top = rect.bottom + edge;
+        side = "below";
+      }
+    } else {
+      // 字段说明：浮层贴在帮助图标右侧，顶部对齐；右侧放不下时翻到左侧，再退到上方。
+      left = rect.right + edge;
+      top = Math.max(edge, rect.top);
+      side = "right";
+      if (left + width > window.innerWidth - edge) {
+        const onLeft = rect.left - width - edge;
+        if (onLeft >= edge) {
+          left = onLeft;
+          side = "left";
+        } else {
+          left = rect.left + rect.width / 2 - width / 2;
+          top = rect.top - height - edge;
+          side = "above";
+          if (top < edge) {
+            top = rect.bottom + edge;
+            side = "below";
+          }
+        }
+      }
+      if (top + height > window.innerHeight - edge) {
+        top = Math.max(edge, window.innerHeight - height - edge);
+      }
     }
-    if (left + width > window.innerWidth - 8) {
-      left = window.innerWidth - width - 8;
-    }
-    const maxLeft = Math.max(8, window.innerWidth - width - 8);
-    const maxTop = Math.max(8, window.innerHeight - height - 8);
-    tip.style.left = `${Math.min(Math.max(8, left), maxLeft)}px`;
-    tip.style.top = `${Math.min(Math.max(8, top), maxTop)}px`;
-  }, []);
+    const maxLeft = Math.max(edge, window.innerWidth - width - edge);
+    const maxTop = Math.max(edge, window.innerHeight - height - edge);
+    tip.dataset["side"] = side;
+    tip.style.left = `${Math.min(Math.max(edge, left), maxLeft)}px`;
+    tip.style.top = `${Math.min(Math.max(edge, top), maxTop)}px`;
+  }, [placement]);
 
   const close = useCallback((): void => {
     cancelHide();
@@ -180,9 +203,8 @@ export function InfoTip(props: {
     {
       ref: anchorRef,
       type: "button",
-      className: "dsu-helpBtn",
-      style: { anchorName: anchorId },
-      "aria-label": `${props.label} 说明`,
+      className: `dsu-helpBtn${props.error === true ? " dsu-helpBtnError" : ""}`,
+      "aria-label": props.error === true ? `${props.label}，错误详情与说明` : `${props.label} 说明`,
       "aria-expanded": open,
       "aria-controls": id,
       onClick: () => {
@@ -215,17 +237,27 @@ export function InfoTip(props: {
     ),
   );
 
+  const tipBody: ReactNode[] = [];
+  if (props.errorText !== undefined) {
+    tipBody.push(
+      createElement("span", { key: "error", className: "dsu-tipErrorText" }, props.errorText),
+    );
+  }
+  if (props.detail.length > 0) {
+    tipBody.push(createElement("span", { key: "detail" }, props.detail));
+  }
+
   const tip = createElement(
     "div",
     {
       ref: tipRef,
       id,
       role: "tooltip",
-      className: "dsu-tip",
-      style: { positionAnchor: anchorId, positionTryFallbacks: "flip-block, flip-inline" },
+      className: `dsu-tip${props.error === true ? " dsu-tipError" : ""}`,
+      "data-side": placement === "above" ? "above" : "right",
       hidden: !open,
     },
-    props.detail,
+    createElement("div", { className: "dsu-tipBody" }, ...tipBody),
   );
 
   const labelNode =
@@ -275,44 +307,71 @@ export function FieldLabel(props: {
   detail?: string | undefined;
   compact?: boolean | undefined;
   controlId?: string | undefined;
+  invalidText?: string | undefined;
 }): ReactElement {
   const labelClass = `dsu-label${props.compact === true ? " dsu-labelMono" : ""}`;
   const labelNode =
     props.controlId === undefined
       ? createElement("span", { className: labelClass }, props.label)
       : createElement("label", { className: labelClass, htmlFor: props.controlId }, props.label);
+  const hasTip = props.detail !== undefined || props.invalidText !== undefined;
   return createElement(
     "div",
     { className: "dsu-labelRow" },
     labelNode,
-    props.detail === undefined
-      ? null
-      : createElement(InfoTip, {
+    hasTip
+      ? createElement(InfoTip, {
           label: props.label,
-          detail: props.detail,
+          detail: props.detail ?? "",
           showLabel: false,
-        }),
+          error: props.invalidText !== undefined,
+          ...(props.invalidText === undefined ? {} : { errorText: props.invalidText }),
+        })
+      : null,
+    props.invalidText === undefined
+      ? null
+      : createElement("span", { className: "dsu-errBadge" }, props.invalidText),
   );
 }
 
-/** 行式字段的基础布局：左标签/提示，右控件。 */
+/** 字段的基础布局：标签行在上、控件在下；说明与错误都只在帮助浮层里。
+ *  `hint` 仍保留为控件的 `aria-describedby` 目标（`.dsu-srOnly`），视觉上不占第三行。 */
 export function Field(props: FieldBase & { children?: ReactNode }): ReactElement {
   const hintId = props.controlId === undefined ? undefined : `${props.controlId}-hint`;
+  const errorId = props.controlId === undefined ? undefined : `${props.controlId}-err`;
+  const tipDetail =
+    props.hint === undefined || props.detail === undefined
+      ? (props.detail ?? props.hint)
+      : `${props.detail} ${props.hint}`;
   return createElement(
     "div",
-    { className: `dsu-field${props.wide === true ? " dsu-fieldWide" : ""}` },
+    {
+      className: `dsu-field${props.wide === true ? " dsu-fieldWide" : ""}${props.layout === "row" ? " dsu-fieldRow" : ""}`,
+    },
     createElement(
       "div",
       { className: "dsu-fieldMeta" },
       createElement(FieldLabel, {
         label: props.label,
-        detail: props.detail,
+        detail: tipDetail,
         compact: props.compact,
         controlId: props.controlId,
+        invalidText: props.invalidText,
       }),
-      props.hint === undefined
+      props.hint === undefined && props.detail === undefined
         ? null
-        : createElement("p", { className: "dsu-hint", id: hintId }, props.hint),
+        : createElement(
+            "span",
+            { className: "dsu-srOnly", id: hintId },
+            [props.detail, props.hint].filter((part) => part !== undefined).join(" "),
+          ),
+      props.invalidText === undefined
+        ? null
+        : createElement(
+            "span",
+            { className: "dsu-srOnly", id: errorId, role: "alert" },
+            props.invalidText,
+          ),
     ),
     createElement("div", { className: "dsu-control" }, props.children),
   );

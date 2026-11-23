@@ -13,10 +13,14 @@ import {
   NumberField,
   SaveBar,
   Section,
+  SectionToggle,
+  SecretField,
   SelectField,
   StatusBar,
   TextField,
+  ToggleCell,
   ToggleField,
+  ToggleGrid,
   splitHint,
 } from "../lib/card-ui.ts";
 import { ANCHOR_PLACEMENT_TOLERANCE, anchorPlacementOff } from "../lib/card-ui/anchor.ts";
@@ -26,26 +30,30 @@ describe("card-ui 样式表", () => {
   it("包含行式字段、开关、下拉与保存条的关键规则", () => {
     for (const needle of [
       ".dsu-field",
-      "grid-template-columns:minmax(0,1fr) minmax(240px,360px)",
+      ".dsu-fieldRow{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}",
       ".dsu-field:hover",
       ".dsu-switch",
       '.dsu-switch[aria-checked="true"]{background:var(--dsw-alias-state-business-primary)}',
       ".dsu-input:disabled{color:var(--dsw-alias-label-tertiary);cursor:not-allowed}",
       ".dsu-menu",
-      "position-area:block-end span-inline-end",
-      ".dsu-tip{width:max-content;position:fixed;position-area:block-end span-inline-end",
-      "justify-self:start",
-      "margin-top:6px",
-      "margin-top:8px",
+      ".dsu-menu{box-sizing:border-box;position:fixed;position-area:block-end span-inline-end",
+      ".dsu-option>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".dsu-tip{width:280px;max-width:min(280px,calc(100vw - 16px));height:max-content;position:fixed",
+      ".dsu-tipBody{max-height:min(60vh,320px);overflow:auto",
+      '.dsu-tip[data-side="right"]::before',
+      '.dsu-tip[data-side="above"]::before',
+      ".dsu-tipError{--dsu-tip-edge:var(--dsu-err)",
+      ".dsu-toggleGrid{display:grid;grid-template-columns:1fr 1fr",
       ".dsu-savebar",
+      ".dsu-saveInfo{display:flex;flex:1",
       ".dsu-btnPrimary{background:var(--dsw-alias-button-primary-fill)",
       ".dsu-badge",
-      ".dsu-fieldCols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}",
+      ".dsu-fieldCols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}",
       ".dsu-tblEllip{display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".dsu-tbl th.dsu-tblNum{text-align:right}",
       ".dsu-tblTip{position:fixed;z-index:90;",
       ".dsu-tblSticky th:first-child,.dsu-tblSticky td:first-child{position:sticky;left:0;",
-      ".dsu-statusDirty{color:var(--dsw-alias-state-warn-primary)}",
+      ".dsu-statusDirty{color:var(--dsu-warn-text)}",
       ".dsu-dirtyPill{flex:none;font-size:11px;font-weight:600;",
       "@property --dsu-count-target",
       ".dsu-kpiValue[data-count]{font-size:0;",
@@ -68,6 +76,27 @@ describe("card-ui 样式表", () => {
   it("颜色只引用主题令牌", () => {
     assert.ok(!/#[0-9a-f]{3,8}/iu.test(CARD_UI_CSS), "样式表里不得写死十六进制颜色");
   });
+
+  it("语义色 token 挂在 body，Setting 卡之外也能取到", () => {
+    // Callout / KpiTile 会被 Insights 这类整页直接使用，不在 .dsu-form 里；
+    // token 若只挂在表单上，页面上的 warn 圆底与 KPI 涨跌胶囊都会静默失色。
+    const body = /(?:^|\n)body\{(?<rules>[^}]*)\}/u.exec(CARD_UI_CSS)?.groups?.["rules"] ?? "";
+    const dark =
+      /(?:^|\n)body\[data-ds-dark-theme\]\{(?<rules>[^}]*)\}/u.exec(CARD_UI_CSS)?.groups?.[
+        "rules"
+      ] ?? "";
+    for (const token of ["--dsu-ok-text", "--dsu-warn-text", "--dsu-err-text"]) {
+      assert.ok(body.includes(`${token}:`), `body 缺 ${token}`);
+      assert.ok(dark.includes(`${token}:`), `dark body 缺 ${token}`);
+    }
+    for (const token of ["--dsu-ok", "--dsu-warn", "--dsu-err"]) {
+      assert.ok(body.includes(`${token}:`), `body 缺 ${token}`);
+    }
+    assert.ok(
+      !/\.dsu-form\{[^}]*--dsu-(?:ok|warn|err)-text/u.test(CARD_UI_CSS),
+      "语义文字色不得退回 .dsu-form 作用域",
+    );
+  });
 });
 
 describe("splitHint", () => {
@@ -87,7 +116,7 @@ describe("布局组件", () => {
     await view.unmount();
   });
 
-  it("section 渲染标题、可选说明与子节点", async () => {
+  it("section 渲染标题、说明按钮与子节点", async () => {
     const view = await mount(
       createElement(
         Section,
@@ -96,7 +125,9 @@ describe("布局组件", () => {
       ),
     );
     assert.equal(textOf(view.container, ".dsu-sectionTitle"), "门禁");
-    assert.equal(textOf(view.container, ".dsu-sectionHint"), "一句话");
+    assert.equal(view.container.querySelector(".dsu-sectionHint"), null);
+    assert.equal(textOf(view.container, ".dsu-tip"), "一句话");
+    assert.ok(view.container.querySelector(".dsu-helpBtn"));
     assert.equal(textOf(view.container, ".dsu-sectionChild"), "field");
     await view.unmount();
   });
@@ -104,6 +135,7 @@ describe("布局组件", () => {
   it("section 无说明时不渲染说明节点", async () => {
     const view = await mount(createElement(Section, { title: "门禁" }));
     assert.equal(view.container.querySelector(".dsu-sectionHint"), null);
+    assert.equal(view.container.querySelector(".dsu-helpBtn"), null);
     await view.unmount();
   });
 
@@ -134,7 +166,7 @@ describe("field 与说明浮层", () => {
       createElement(Field, { label: "启用", hint: "一句话" }, createElement("button", null, "ctl")),
     );
     assert.equal(textOf(view.container, ".dsu-label"), "启用");
-    assert.equal(textOf(view.container, ".dsu-hint"), "一句话");
+    assert.equal(textOf(view.container, ".dsu-srOnly"), "一句话");
     assert.equal(textOf(view.container, ".dsu-control"), "ctl");
     await view.unmount();
   });
@@ -143,6 +175,19 @@ describe("field 与说明浮层", () => {
     const view = await mount(createElement(Field, { label: "启用", wide: true }));
     assert.equal(view.container.querySelector(".dsu-hint"), null);
     assert.ok(view.container.querySelector(".dsu-fieldWide"));
+    await view.unmount();
+  });
+
+  it("field 同时给 detail 与 hint 时两者合并进同一条浮层", async () => {
+    const view = await mount(
+      createElement(
+        Field,
+        { label: "启用", hint: "一句话", detail: "完整说明" },
+        createElement("button", null, "ctl"),
+      ),
+    );
+    assert.equal(textOf(view.container, ".dsu-srOnly"), "完整说明 一句话");
+    assert.ok(view.container.querySelector(".dsu-help") !== null);
     await view.unmount();
   });
 
@@ -162,6 +207,113 @@ describe("field 与说明浮层", () => {
     assert.equal(tip.hidden, true);
     vi.useRealTimers();
     await view.unmount();
+  });
+
+  it("infoTip above 在顶部空间不足时翻到下方", async () => {
+    const view = await mount(
+      createElement(InfoTip, { label: "启用", detail: "完整说明", placement: "above" }),
+    );
+    const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+    const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+    Object.defineProperty(tip, "offsetWidth", { value: 280, configurable: true });
+    Object.defineProperty(tip, "offsetHeight", { value: 100, configurable: true });
+    Object.defineProperty(btn, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 100, right: 124, top: 10, bottom: 34, width: 24, height: 24 }),
+    });
+    await click(btn);
+    assert.equal(tip.dataset["side"], "below");
+    await view.unmount();
+  });
+
+  it("infoTip above 顶部空间足够时留在上方", async () => {
+    const view = await mount(
+      createElement(InfoTip, { label: "启用", detail: "完整说明", placement: "above" }),
+    );
+    const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+    const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+    Object.defineProperty(tip, "offsetWidth", { value: 280, configurable: true });
+    Object.defineProperty(tip, "offsetHeight", { value: 100, configurable: true });
+    Object.defineProperty(btn, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 100, right: 124, top: 500, bottom: 524, width: 24, height: 24 }),
+    });
+    await click(btn);
+    assert.equal(tip.dataset["side"], "above");
+    await view.unmount();
+  });
+
+  it("infoTip 侧开时右侧与左侧都放不下，翻到上方", async () => {
+    const width = globalThis.innerWidth;
+    const height = globalThis.innerHeight;
+    Object.defineProperty(globalThis, "innerWidth", { value: 320, configurable: true });
+    Object.defineProperty(globalThis, "innerHeight", { value: 600, configurable: true });
+    try {
+      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+      Object.defineProperty(tip, "offsetWidth", { value: 280, configurable: true });
+      Object.defineProperty(tip, "offsetHeight", { value: 100, configurable: true });
+      Object.defineProperty(btn, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 20, right: 44, top: 300, bottom: 324, width: 24, height: 24 }),
+      });
+      await click(btn);
+      assert.equal(tip.dataset["side"], "above");
+      await view.unmount();
+    } finally {
+      Object.defineProperty(globalThis, "innerWidth", { value: width, configurable: true });
+      Object.defineProperty(globalThis, "innerHeight", { value: height, configurable: true });
+    }
+  });
+
+  it("infoTip 侧开时翻到上方仍放不下，落到下方", async () => {
+    const width = globalThis.innerWidth;
+    const height = globalThis.innerHeight;
+    Object.defineProperty(globalThis, "innerWidth", { value: 320, configurable: true });
+    Object.defineProperty(globalThis, "innerHeight", { value: 600, configurable: true });
+    try {
+      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+      Object.defineProperty(tip, "offsetWidth", { value: 280, configurable: true });
+      Object.defineProperty(tip, "offsetHeight", { value: 100, configurable: true });
+      Object.defineProperty(btn, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 20, right: 44, top: 10, bottom: 34, width: 24, height: 24 }),
+      });
+      await click(btn);
+      assert.equal(tip.dataset["side"], "below");
+      await view.unmount();
+    } finally {
+      Object.defineProperty(globalThis, "innerWidth", { value: width, configurable: true });
+      Object.defineProperty(globalThis, "innerHeight", { value: height, configurable: true });
+    }
+  });
+
+  it("infoTip 侧开时底部夹紧到视口内", async () => {
+    const width = globalThis.innerWidth;
+    const height = globalThis.innerHeight;
+    Object.defineProperty(globalThis, "innerWidth", { value: 1300, configurable: true });
+    Object.defineProperty(globalThis, "innerHeight", { value: 600, configurable: true });
+    try {
+      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+      Object.defineProperty(tip, "offsetWidth", { value: 280, configurable: true });
+      Object.defineProperty(tip, "offsetHeight", { value: 100, configurable: true });
+      Object.defineProperty(btn, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ left: 100, right: 124, top: 550, bottom: 574, width: 24, height: 24 }),
+      });
+      await click(btn);
+      assert.equal(tip.dataset["side"], "right");
+      assert.ok(Number(tip.style.top.replace(/px$/u, "")) <= 600 - 100 - 8);
+      await view.unmount();
+    } finally {
+      Object.defineProperty(globalThis, "innerWidth", { value: width, configurable: true });
+      Object.defineProperty(globalThis, "innerHeight", { value: height, configurable: true });
+    }
   });
 
   it("点击钉住后离开不隐藏，Esc 关闭", async () => {
@@ -284,6 +436,72 @@ describe("输入字段", () => {
     await view.unmount();
   });
 
+  it("listField 新行分隔、错误 ARIA 与禁用态", async () => {
+    const seen: string[][] = [];
+    const view = await mount(
+      createElement(ListField, {
+        label: "名单",
+        hint: "每行一条",
+        invalidText: "至少一条",
+        field: "allow",
+        separator: "newline",
+        value: ["a", "b"],
+        placeholder: "一行一条",
+        disabled: true,
+        onChange: (next: string[]) => {
+          seen.push(next);
+        },
+      }),
+    );
+    const area = view.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    assert.equal(area.value, "a\nb");
+    assert.equal(area.className.includes("dsu-textarea"), true);
+    assert.equal(area.getAttribute("aria-invalid"), "true");
+    assert.match(area.getAttribute("aria-errormessage") ?? "", /-err/u);
+    assert.equal(area.disabled, true);
+    assert.equal(seen.length, 0);
+    await view.unmount();
+  });
+
+  it("toggleField 有错误时带 aria-invalid 与错误文案锚点", async () => {
+    const view = await mount(
+      createElement(ToggleField, {
+        label: "启用",
+        field: "enabled",
+        checked: false,
+        invalidText: "必须启用",
+        onChange: noop,
+      }),
+    );
+    const sw = view.container.querySelector<HTMLButtonElement>(".dsu-switch")!;
+    assert.equal(sw.getAttribute("aria-invalid"), "true");
+    assert.match(sw.getAttribute("aria-errormessage") ?? "", /-err/u);
+    assert.match(sw.getAttribute("aria-describedby") ?? "", /-err/u);
+    await view.unmount();
+  });
+
+  it("textField 多行等宽与错误 ARIA", async () => {
+    const view = await mount(
+      createElement(TextField, {
+        label: "配置",
+        field: "config",
+        hint: "一段文本",
+        invalidText: "格式不对",
+        value: "{}",
+        multiline: true,
+        monospace: true,
+        onChange: noop,
+      }),
+    );
+    const area = view.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    assert.equal(area.className.includes("dsu-textarea"), true);
+    assert.equal(area.className.includes("dsu-mono"), true);
+    assert.equal(area.getAttribute("aria-invalid"), "true");
+    assert.match(area.getAttribute("aria-errormessage") ?? "", /-err/u);
+    assert.match(area.getAttribute("aria-describedby") ?? "", /-hint/u);
+    await view.unmount();
+  });
+
   it("numberField 合法值写回、越界显示错误、清空回 undefined", async () => {
     const seen: (number | undefined)[] = [];
     const view = await mount(
@@ -302,22 +520,24 @@ describe("输入字段", () => {
       }),
     );
     const input = view.container.querySelector<HTMLInputElement>("input")!;
-    assert.equal(input.min, "1");
-    assert.equal(input.max, "20");
-    assert.equal(input.step, "1");
+    assert.equal(input.type, "text");
+    assert.equal(input.inputMode, "numeric");
+    assert.equal(input.getAttribute("min"), null);
+    assert.equal(input.getAttribute("max"), null);
+    assert.equal(input.getAttribute("step"), null);
     assert.equal(textOf(view.container, ".dsu-unit"), "秒");
     await typeInto(input, "12");
     assert.deepEqual(seen, [12]);
     await typeInto(input, "99");
     assert.equal(input.getAttribute("aria-invalid"), null);
-    assert.equal(view.container.querySelector(".dsu-error"), null);
+    assert.equal(view.container.querySelector(".dsu-errBadge"), null);
     await fire(input, new FocusEvent("focusout", { bubbles: true }));
     assert.equal(input.getAttribute("aria-invalid"), "true");
-    assert.equal(textOf(view.container, ".dsu-error"), "越界");
+    assert.equal(textOf(view.container, ".dsu-errBadge"), "越界");
     await typeInto(input, "");
     assert.deepEqual(seen, [12, undefined]);
     assert.equal(input.getAttribute("aria-invalid"), null);
-    assert.equal(view.container.querySelector(".dsu-error"), null);
+    assert.equal(view.container.querySelector(".dsu-errBadge"), null);
     await view.unmount();
   });
 
@@ -474,12 +694,203 @@ describe("输入字段", () => {
   });
 });
 
+/** 凭据字段的受控壳：值、遮蔽与撤销 token 都由宿主侧状态驱动。 */
+function SecretHarness(): ReactElement {
+  const [value, setValue] = useState("secret");
+  const [token, setToken] = useState(0);
+  return createElement(
+    "div",
+    null,
+    createElement(SecretField, {
+      label: "API Key",
+      field: "apiKey",
+      hint: "说明",
+      detail: "详情",
+      invalidText: "必填",
+      value,
+      placeholder: "sk-…",
+      revealToken: token,
+      onChange: (next: string) => {
+        setValue(next);
+      },
+    }),
+    createElement(
+      "button",
+      {
+        type: "button",
+        id: "bump",
+        onClick: () => {
+          setToken((previous) => previous + 1);
+        },
+      },
+      "撤销",
+    ),
+  );
+}
+
+describe("v3 节级开关、成组布尔与凭据字段", () => {
+  it("sectionToggle 带可见标签与 aria-label，点击取反；禁用时不触发", async () => {
+    const seen: boolean[] = [];
+    const view = await mount(
+      createElement(SectionToggle, {
+        field: "enabled",
+        label: "启用",
+        checked: true,
+        onChange: (next: boolean) => {
+          seen.push(next);
+        },
+      }),
+    );
+    const label = view.container.querySelector(".dsu-sectionToggleLabel");
+    assert.equal(label?.textContent, "启用");
+    const sw = view.container.querySelector<HTMLButtonElement>(".dsu-switch")!;
+    assert.equal(sw.getAttribute("aria-label"), "启用");
+    assert.equal(sw.getAttribute("aria-checked"), "true");
+    assert.equal(sw.dataset["field"], "enabled");
+    await click(sw);
+    assert.deepEqual(seen, [false]);
+    await view.unmount();
+
+    let called = false;
+    const disabled = await mount(
+      createElement(SectionToggle, {
+        field: "enabled",
+        label: "启用",
+        checked: false,
+        disabled: true,
+        onChange: () => {
+          called = true;
+        },
+      }),
+    );
+    const off = disabled.container.querySelector<HTMLButtonElement>(".dsu-switch")!;
+    assert.equal(off.disabled, true);
+    await click(off);
+    assert.equal(called, false);
+    await disabled.unmount();
+  });
+
+  it("toggleGrid/toggleCell 保留说明与错误 ARIA，点击取反", async () => {
+    const seen: boolean[] = [];
+    const view = await mount(
+      createElement(
+        ToggleGrid,
+        null,
+        createElement(ToggleCell, {
+          label: "抓取",
+          hint: "静态抓取",
+          detail: "详情",
+          field: "fetch",
+          checked: true,
+          invalidText: "坏了",
+          onChange: (next: boolean) => {
+            seen.push(next);
+          },
+        }),
+        createElement(ToggleCell, {
+          label: "定位",
+          checked: false,
+          disabled: true,
+          onChange: () => {
+            seen.push(true);
+          },
+        }),
+      ),
+    );
+    const cells = view.container.querySelectorAll(".dsu-toggleCell");
+    assert.equal(cells.length, 2);
+    const sw = cells[0]!.querySelector<HTMLButtonElement>(".dsu-switch")!;
+    assert.equal(cells[0]!.querySelector("label")?.textContent, "抓取");
+    assert.match(sw.getAttribute("aria-describedby") ?? "", /-hint/u);
+    assert.match(sw.getAttribute("aria-describedby") ?? "", /-err/u);
+    assert.equal(sw.getAttribute("aria-invalid"), "true");
+    assert.equal(sw.dataset["field"], "fetch");
+    await click(sw);
+    assert.deepEqual(seen, [false]);
+    const off = cells[1]!.querySelector<HTMLButtonElement>(".dsu-switch")!;
+    assert.equal(off.disabled, true);
+    await click(off);
+    assert.deepEqual(seen, [false]);
+    await view.unmount();
+  });
+
+  it("secretField 默认遮蔽、眼睛按钮两态切换、撤销回到遮蔽", async () => {
+    const view = await mount(createElement(SecretHarness));
+    const input = view.container.querySelector<HTMLInputElement>(".dsu-secretInput")!;
+    const eye = view.container.querySelector<HTMLButtonElement>(".dsu-secretEye")!;
+    assert.equal(input.type, "password");
+    assert.equal(input.value, "secret");
+    assert.equal(input.placeholder, "sk-…");
+    assert.equal(input.getAttribute("aria-invalid"), "true");
+    assert.match(input.getAttribute("aria-errormessage") ?? "", /-err/u);
+    assert.equal(eye.getAttribute("aria-label"), "API Key，显示");
+    assert.equal(eye.getAttribute("aria-pressed"), "false");
+    assert.equal(eye.textContent, "");
+    await click(eye);
+    assert.equal(input.type, "text");
+    assert.equal(eye.getAttribute("aria-label"), "API Key，隐藏");
+    assert.equal(eye.getAttribute("aria-pressed"), "true");
+    await typeInto(input, "next");
+    assert.equal(input.value, "next");
+    input.focus();
+    await typeInto(input, "while-focused");
+    input.blur();
+    assert.equal(input.value, "while-focused");
+    const bump = view.container.querySelector<HTMLButtonElement>("#bump")!;
+    await click(bump);
+    assert.equal(input.type, "password");
+    assert.equal(eye.getAttribute("aria-pressed"), "false");
+    await view.unmount();
+
+    const bare = await mount(
+      createElement(SecretField, {
+        label: "API Key",
+        value: "",
+        disabled: true,
+        onChange: noop,
+      }),
+    );
+    const bareInput = bare.container.querySelector<HTMLInputElement>(".dsu-secretInput")!;
+    const bareEye = bare.container.querySelector<HTMLButtonElement>(".dsu-secretEye")!;
+    assert.equal(bareInput.getAttribute("aria-describedby"), null);
+    assert.equal(bareInput.getAttribute("aria-invalid"), null);
+    assert.equal(bareInput.disabled, true);
+    assert.equal(bareEye.disabled, true);
+    assert.equal(bareEye.textContent, "");
+    await bare.unmount();
+  });
+});
+
 describe("selectField", () => {
   const options = [
     { value: "a", label: "甲" },
     { value: "b", label: "乙" },
     { value: "c", label: "丙", disabled: true },
   ];
+
+  it("bare 变体不包 Field，触发器自带 aria-label 与 invalid 语义", async () => {
+    const view = await mount(
+      createElement(SelectField, {
+        label: "形态",
+        field: "kind",
+        value: "a",
+        options,
+        bare: true,
+        invalidText: "选一个",
+        onChange: (): void => {
+          /* 本用例只断言 DOM 形状 */
+        },
+      }),
+    );
+    const wrap = view.container.querySelector<HTMLElement>(".dsu-selectWrap")!;
+    const trigger = view.container.querySelector<HTMLButtonElement>(".dsu-select")!;
+    assert.equal(wrap.classList.contains("dsu-selectBare"), true);
+    assert.equal(trigger.getAttribute("aria-label"), "形态");
+    assert.equal(trigger.getAttribute("aria-invalid"), "true");
+    assert.match(trigger.getAttribute("aria-errormessage") ?? "", /-err/u);
+    assert.equal(view.container.querySelector(".dsu-field"), null);
+    await view.unmount();
+  });
 
   it("打开、键盘移动、回车选中", async () => {
     const seen: string[] = [];
@@ -917,6 +1328,29 @@ describe("selectField", () => {
     await view.unmount();
   });
 
+  it("浮层按候选内容的自然宽度展开，而不是被窄触发器压成多行", async () => {
+    const view = await mount(
+      createElement(SelectField, {
+        label: "时间范围",
+        value: "week",
+        options: [
+          { value: "week", label: "最近 7 天" },
+          { value: "month", label: "最近 30 天" },
+          { value: "quarter", label: "最近 90 天" },
+        ],
+        onChange: noop,
+      }),
+    );
+    const trigger = view.container.querySelector<HTMLButtonElement>(".dsu-select")!;
+    trigger.getBoundingClientRect = () => new DOMRect(1030, 75, 85, 28);
+    const menu = view.container.querySelector<HTMLElement>(".dsu-menu")!;
+    menu.getBoundingClientRect = () =>
+      new DOMRect(1030, 109, menu.style.width === "max-content" ? 118 : 85, 112);
+    await click(trigger);
+    assert.equal(menu.style.width, "118px");
+    await view.unmount();
+  });
+
   it("选项缩短后活动项回退到首个可用项", async () => {
     const seen: string[] = [];
     const view = await mount(
@@ -1256,7 +1690,7 @@ describe("saveBar", () => {
 });
 
 describe("卡片边界交互", () => {
-  it("InfoTip 空间不足时翻到上方并左移", async () => {
+  it("InfoTip 右侧放不下时翻到左侧", async () => {
     const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
     const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
     const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
@@ -1264,57 +1698,26 @@ describe("卡片边界交互", () => {
     await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
     btn.getBoundingClientRect = () => new DOMRect(globalThis.innerWidth, 760, 16, 8);
     await fire(globalThis, new Event("resize"));
-    assert.equal(tip.style.top, "752px");
+    assert.equal(tip.dataset["side"], "left");
     assert.equal(tip.style.left, `${globalThis.innerWidth - 8}px`);
     assert.equal(tip.style.marginTop, "0px");
+    assert.ok(Number(tip.style.top.replace(/px$/u, "")) <= globalThis.innerHeight - 8);
     await view.unmount();
   });
 
-  it("真实浏览器支持 CSS anchor 时说明浮层不写 JS 坐标", async () => {
-    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
-    delete (globalThis as { happyDOM?: unknown }).happyDOM;
-    vi.stubGlobal("CSS", { supports: () => true });
-    try {
-      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
-      const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
-      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
-      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
-      await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
-      assert.equal(tip.style.left, "");
-      assert.equal(tip.style.top, "");
-      assert.equal(tip.style.marginTop, "");
-      assert.match(btn.getAttribute("style") ?? "", /anchor-name:\s*--dsu-tip-/u);
-      assert.match(tip.getAttribute("style") ?? "", /position-anchor:\s*--dsu-tip-/u);
-      assert.match(tip.getAttribute("style") ?? "", /position-try-fallbacks:/u);
-      await view.unmount();
-    } finally {
-      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("说明浮层锚定失效时改回 JS 矩形定位并关掉 position-area", async () => {
-    const happyDom = (globalThis as { happyDOM?: unknown }).happyDOM;
-    delete (globalThis as { happyDOM?: unknown }).happyDOM;
-    vi.stubGlobal("CSS", { supports: () => true });
-    try {
-      const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
-      const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
-      const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
-      const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
-      btn.getBoundingClientRect = () => new DOMRect(400, 200, 16, 8);
-      // 锚定被更高优先级的规则覆盖时的形态：浮层留在视口左侧、块向也离开了按钮。
-      tip.getBoundingClientRect = () => new DOMRect(0, 500, 200, 60);
-      await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
-      assert.equal(tip.style.positionArea, "none");
-      assert.equal(tip.style.marginTop, "0px");
-      assert.match(tip.style.left, /px$/u);
-      assert.match(tip.style.top, /px$/u);
-      await view.unmount();
-    } finally {
-      (globalThis as { happyDOM?: unknown }).happyDOM = happyDom;
-      vi.unstubAllGlobals();
-    }
+  it("InfoTip 使用 JS 矩形定位，不依赖 CSS anchor", async () => {
+    const view = await mount(createElement(InfoTip, { label: "启用", detail: "完整说明" }));
+    const wrap = view.container.querySelector<HTMLElement>(".dsu-help")!;
+    const btn = view.container.querySelector<HTMLButtonElement>(".dsu-helpBtn")!;
+    const tip = view.container.querySelector<HTMLElement>(".dsu-tip")!;
+    btn.getBoundingClientRect = () => new DOMRect(40, 60, 24, 24);
+    await fire(wrap, new MouseEvent("mouseover", { bubbles: true }));
+    assert.equal(tip.dataset["side"], "right");
+    assert.equal(tip.style.left, "72px");
+    assert.equal(tip.style.top, "60px");
+    assert.equal(btn.getAttribute("style"), null);
+    assert.match(tip.getAttribute("style") ?? "", /^margin-top: 0px; left: 72px; top: 60px/mu);
+    await view.unmount();
   });
 
   it("关闭状态下滚动/缩放/Esc 不改变状态", async () => {
@@ -1745,8 +2148,8 @@ describe("评审修复", () => {
     await click(btn);
     btn.getBoundingClientRect = () => new DOMRect(20, 30, 16, 8);
     await fire(globalThis, new Event("scroll"));
-    assert.equal(tip.style.left, "20px");
-    assert.equal(tip.style.top, "46px");
+    assert.equal(tip.style.left, "44px");
+    assert.equal(tip.style.top, "30px");
     await view.unmount();
   });
 
@@ -1767,8 +2170,8 @@ describe("评审修复", () => {
     await click(btn);
     btn.getBoundingClientRect = () => new DOMRect(10, 10, 16, 8);
     await view.render(createElement(InfoTip, { label: "启用", detail: "新说明" }));
-    assert.equal(tip.style.left, "10px");
-    assert.equal(tip.style.top, "26px");
+    assert.equal(tip.style.left, "34px");
+    assert.equal(tip.style.top, "10px");
     await view.unmount();
   });
 
@@ -1802,7 +2205,7 @@ describe("评审修复", () => {
       ),
     );
     const label = view.container.querySelector<HTMLLabelElement>("label")!;
-    const hint = view.container.querySelector<HTMLElement>(".dsu-hint")!;
+    const hint = view.container.querySelector<HTMLElement>(".dsu-srOnly")!;
     const input = view.container.querySelector<HTMLInputElement>("input")!;
     assert.equal(label.htmlFor, "ctl-user");
     assert.equal(label.textContent, "用户名");
@@ -1887,8 +2290,10 @@ describe("评审修复", () => {
     const describedBy = input.getAttribute("aria-describedby")?.split(" ") ?? [];
     assert.equal(describedBy.length, 2);
     assert.ok(describedBy.includes(`${input.id}-hint`));
-    const error = view.container.querySelector<HTMLElement>(".dsu-error")!;
-    assert.equal(describedBy[1], error.id);
+    assert.ok(describedBy.includes(`${input.id}-err`));
+    assert.equal(input.getAttribute("aria-errormessage"), `${input.id}-err`);
+    const error = view.container.querySelector<HTMLElement>(".dsu-errBadge")!;
+    assert.equal(error.textContent, "越界");
     await view.unmount();
   });
 
@@ -1937,7 +2342,7 @@ describe("评审修复", () => {
     await typeInto(input, "99");
     await fire(input, new FocusEvent("focusout", { bubbles: true }));
     assert.equal(input.value, "99");
-    assert.ok(view.container.querySelector(".dsu-error"));
+    assert.ok(view.container.querySelector(".dsu-errBadge"));
     await view.render(
       createElement(NumberField, {
         label: "预算",
@@ -1953,7 +2358,7 @@ describe("评审修复", () => {
       }),
     );
     assert.equal(input.value, "1");
-    assert.equal(view.container.querySelector(".dsu-error"), null);
+    assert.equal(view.container.querySelector(".dsu-errBadge"), null);
     assert.equal(input.getAttribute("aria-invalid"), null);
     assert.equal(seen.at(-1), false);
     await view.unmount();
@@ -2284,8 +2689,9 @@ describe("评审修复", () => {
   });
 
   it("样式表限制浮层尺寸并允许内部滚动", () => {
-    assert.ok(CARD_UI_CSS.includes("max-height:calc(100vh - 16px)"));
-    assert.ok(CARD_UI_CSS.includes("max-width:min(340px,calc(100vw - 16px))"));
+    assert.ok(CARD_UI_CSS.includes("max-height:min(60vh,320px)"));
+    assert.ok(CARD_UI_CSS.includes("max-width:min(280px,calc(100vw - 16px))"));
     assert.ok(CARD_UI_CSS.includes("overflow-wrap:anywhere"));
+    assert.ok(CARD_UI_CSS.includes(".dsu-tipBody"));
   });
 });

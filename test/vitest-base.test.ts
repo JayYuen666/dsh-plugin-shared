@@ -4,6 +4,7 @@
 // 这两条一旦松动，某个包的一次局部改配就会静默变成整组检查失效。这里把两条固定在运行期；
 // 统计范围的唯一来源约束（include 只由 coverageInclude 供给）固定在文末的编译期负向断言上。
 
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { definePackageConfig } from "../config/vitest.base.ts";
 import type { PackageVitestOptions } from "../config/vitest.base.ts";
@@ -54,6 +55,35 @@ describe("definePackageConfig 的合并行为", () => {
     });
     expect(testBlock?.setupFiles).toStrictEqual(["test/setup-logs.ts"]);
     expect(testBlock?.include).toStrictEqual(["test/**/*.{test,spec}.{ts,tsx,mts,cts}"]);
+  });
+
+  it("客户端行指向发布产物而不是源码，react 族钉回测试根，shared 内联进 Vite", () => {
+    const config = definePackageConfig({ coverageInclude: SHARED_INCLUDE });
+    // 映射目标必须是 exports 里的包内说明符：发布包的 files 只有 dist，源码路径在
+    // registry 安装态不存在，指过去会让消费仓的测试装载期就找不到模块。
+    expect(config.resolve?.alias).toMatchObject({
+      "@jayyuen66/dsh-plugin-shared/client": "@jayyuen66/dsh-plugin-shared/client-node",
+      react: path.resolve(process.cwd(), "node_modules/react"),
+      "react-dom": path.resolve(process.cwd(), "node_modules/react-dom"),
+    });
+    // dedupe 与 alias 是两条面：alias 管测试侧显式导入，dedupe 管 Vite 解析时的同一实例。
+    expect(config.resolve?.dedupe).toStrictEqual(["react", "react-dom"]);
+    const inline = config.test?.server?.deps?.inline;
+    if (!Array.isArray(inline)) {
+      throw new TypeError("inline 规则不是数组：字符串形态按子串匹配，白名单会随路径漂移");
+    }
+    expect(inline).toHaveLength(1);
+    const [pattern] = inline;
+    if (!(pattern instanceof RegExp)) {
+      throw new TypeError("inline 规则不是正则：字符串形态按子串匹配，会把同名的其它路径一并内联");
+    }
+    // 外部化交给 Node 加载器时，产物里的 import "react" 绕开 alias 与 vi.mock；
+    // 内联这条规则让 shared 走 Vite 流水线，mock 才作用在同一个模块实例上。
+    expect(pattern.test("@jayyuen66/dsh-plugin-shared/client")).toBe(true);
+    expect(
+      pattern.test("/tmp/node_modules/@jayyuen66/dsh-plugin-shared/dist/client-entry.js"),
+    ).toBe(true);
+    expect(pattern.test("other-package")).toBe(false);
   });
 
   it("用例形态放宽：spec 命名与 tsx/mts/cts 扩展位不再被静默漏跑，目录仍收在 test/ 下", () => {

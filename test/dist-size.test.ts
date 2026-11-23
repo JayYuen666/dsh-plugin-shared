@@ -69,8 +69,18 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
  *  纯加法）。
  *  再一轮 56663 → 56718 B（+55）：浮层经 createPortal 挂到 body（冻结列是 sticky 定位
  *  元素、会劫持格内 fixed 的包含块），portal 那几行的代码字节。
- *  受影响的公共面：无（渲染位置变化，组件面不变）。 */
-const RUNTIME_BUDGET_BYTES = 56_800;
+ *  再一轮 56718 → 58805 B（+2087）：card-ui v3 视觉基线（字段行式排布、24px 帮助按钮、
+ *  错误徽标/错误浮层、行式布尔项、保存条与 Insights 辅助样式）。
+ *  受影响的公共面：`Field` 增 `layout`、`FieldBase` 增 `invalidText`（均为可选加法）。
+ *  再一轮 59300 → 59577 B（+277）：card-ui v3 的 KPI/Callout/表脚/量条字号统一与
+ *  `CARD_UI_CSS_VERSION` 升档（现值 3.1）；纯样式与版本常量，不引入宿主运行期代码。
+ *  再一轮 59577 → 67179 B（+7602）：card-ui v3 表单基线补齐——InfoTip 双 placement/错误浮层、
+ *  SecretField 眼睛按钮、ToggleGrid、bare Select、错误 ARIA 与容器查询（skills/card-ui 的
+ *  运行期导出面同步长大）。
+ *  再一轮 67179 → 69921 B（+2742）：card-ui v3 收尾（新增表单件、展示层可选位与样式、
+ *  `nextDomId` 与数字框 inputMode）；实测 69921 B，预算 70000 B，余量 79 B，
+ *  下一次增字节必须同步抬预算并在本轮账上记账。 */
+const RUNTIME_BUDGET_BYTES = 70_000;
 /** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算。
  *  压缩前历史读数 54,765 → 54,878 → 54,925 → 57,139 B，涨幅来自 card-ui 样式与注入兜底；
  *  这些改动的说明仍在 `lib/card-ui/styles.ts` 与 CHANGELOG。shared 自己的 build-client.mjs
@@ -82,13 +92,21 @@ const RUNTIME_BUDGET_BYTES = 56_800;
  *  再一轮 45721 → 46530 B（+809）：与运行期同因（省略格悬停浮层的组件与样式）。
  *  再一轮 46530 → 46653 B（+123）：NumberField 聚焦守卫（聚焦中不采纳外部值，与
  *  textField 聚焦契约对齐）与新展示组件 badge 一起打进客户端行。
+ *  再一轮 49100 → 49551 B（+451）：card-ui v3 Insights 细节——KPI 底色改 card-tile、
+ *  Callout 去左边框并统一 14px/16% 底、DataTable 等宽列/表脚/量条数值统一 12px，
+ *  以及饼图标签取 label-primary 的取色位。纯样式与取色，不引入宿主运行期代码。
+ *  再一轮 49551 → 57543 B（+7992）：与运行期同因（v3 表单基线、SecretField/ToggleGrid/bare
+ *  Select、InfoTip 双态与容器查询全部打进这条 UMD）。
+ *  再一轮 57543 → 59881 B（+2338）：card-ui v3 收尾与运行期同因；实测 59881 B，
+ *  预算 60000 B，余量 119 B。
  *  宿主侧子路径（`skill` / `placeholder`）不进这条 bundle。
  *  受影响的公共面：无（常量只在本用例内）；同步面：README 的 "What ships"。 */
-const CLIENT_BUDGET_BYTES = 46_700;
+const CLIENT_BUDGET_BYTES = 60_000;
 /** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型声明的入口。 */
 const HOST_RUNTIME_EXCLUDE = new Set(["client.js", "client-entry.js"]);
 /** 配置产物预算（在实测值上加一档取整）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。
- *  客户端行的测试别名（shared/client → shared/client-node）把配置产物推到 30064 B，按同一 +25% 规则抬到 31000 B。 */
+ *  客户端行的测试别名（shared/client → 发布产物 client-node）与 react 族别名、shared 内联规则
+ *  把配置产物推到 30617 B（旧别名的读数是 30064 B），按同一 +25% 规则抬到 31000 B。 */
 const CONFIG_BUDGET_BYTES = 31_000;
 /** 构建编排产物预算（dist/build/，各包 build-*.mjs 构建期取用）。与配置产物同一记录理由：
  *  不占插件运行期装载成本，但整目录随 tarball 发布。 */

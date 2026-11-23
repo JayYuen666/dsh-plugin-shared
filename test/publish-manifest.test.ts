@@ -375,14 +375,12 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     expect(manifest.engines?.["dsh"], "engines.dsh 与 peer 范围必须说同一个窗口").toBe(bare);
   });
 
-  it("cordis 的 peer 范围保留并集，且不带空格", async () => {
-    // cordis 的 peer 保留并集：开发基线 `0.2.2-rc.5` 的宿主声明 `~4.1.0`，而并集同时收得下
-    // 4.0.5 线与 4.1.0；钉成开发基线的单点版本会让对外窗口与安装器各说一套。
-    // 这里唯一一条不带空格的并集就是 cordis：manifest 里 dsh 家族窗口保留空格，install-matrix
-    // 已改成一行一枚说明符、按行读取，不再依赖按空白切分。
+  it("cordis 的 peer 跟宿主 alpha 线写同一条窗口", async () => {
+    // 单线 alpha.2 决策之后，cordis 由 `FAMILY_TARGETS` 逐枚给值、peer 走窗口规则；
+    // 旧 rc 线的并集不再保留，否则对外窗口与安装器各说一套。
     const { manifest } = await readSurface();
-    expect(manifest.peerDependencies?.["@deepseek-ai/cordis"], "cordis 的 peer 范围丢了并集").toBe(
-      "^4.0.5||^4.0.6-alpha.1",
+    expect(manifest.peerDependencies?.["@deepseek-ai/cordis"], "cordis 的 peer 范围丢了窗口").toBe(
+      "^4.2.0-alpha.1",
     );
     // dev 线要的是**精确**：范围操作符会让构建与测试对着一个会漂移的副本跑，而 peer 那一条
     // 承载的是对外声明的窗口，两者不是一个东西。宿主线发正式版后这一位不再带预发布尾巴。

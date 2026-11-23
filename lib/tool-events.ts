@@ -18,8 +18,8 @@
 // 「最小投影」：按 `event.type` 分支即收窄 `event.data`，宿主改名/换形状在编译期暴露，
 // 而不是靠注释照抄 d.ts 行号。PTC 两个变体同为官方面：载荷类型与 `SessionEventMap`
 // 增补都来自 `@deepseek-ai/dsh-tool-executor-ptc/types`（官方 types.d.ts 自带那份增补），
-// 本包不再自声明。engines.dsh 收窄到单条 `^0.2.2-rc.5` 后，窗口内宿主代际（rc.2/rc.5
-// 实测）该增补同宿主同形，旧的「增补换过宿主包」理由废止。
+// 本包不再自声明。`engines.dsh` 与各 dsh peer 都收在单条 `^0.2.3-alpha.2` 上，窗口里只有
+// 这一代宿主；旧 rc 线上「增补换过宿主包」的观察不再作为本地声明的理由，增补仍由官方包自带。
 //
 // ⚠ 解析义务在消费仓：本包发运的是 dist/types/*.d.ts，官方包的裸说明符会存活进
 // `dist/types/tool-events.d.ts`，由各消费仓自己的 devDependencies 解析（九仓各钉同一条

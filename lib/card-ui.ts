@@ -6,8 +6,17 @@ export { withInvalidField, useInvalidFields } from "./card-ui/invalid.ts";
 export type { InvalidFields } from "./card-ui/invalid.ts";
 export { CardForm, FieldGrid, FieldTwoCol, Section, StatusBar } from "./card-ui/layout.ts";
 export { Field, FieldLabel, InfoTip } from "./card-ui/field.ts";
-export type { FieldBase } from "./card-ui/field.ts";
-export { ListField, NumberField, TextField, ToggleField } from "./card-ui/inputs.ts";
+export type { FieldBase, TipPlacement } from "./card-ui/field.ts";
+export {
+  ListField,
+  NumberField,
+  SecretField,
+  TextField,
+  SectionToggle,
+  ToggleCell,
+  ToggleField,
+  ToggleGrid,
+} from "./card-ui/inputs.ts";
 export { SelectField } from "./card-ui/select.ts";
 export type { SelectOption } from "./card-ui/select.ts";
 export { SaveBar } from "./card-ui/save-bar.ts";

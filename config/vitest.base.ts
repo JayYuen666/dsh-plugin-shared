@@ -11,6 +11,7 @@
 //
 // 阈值不在这里放宽：四项 100% 是每包都生效的默认，任何包要例外必须在自己的配置里写明理由。
 
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 import type { ViteUserConfig } from "vitest/config";
 
@@ -91,11 +92,19 @@ export function definePackageConfig(options: PackageVitestOptions): PackageConfi
   }
   return defineConfig({
     // 客户端行在浏览器里是 `__ModuleLoader__` UMD，Node 测试直接执行会在 window 处抛错。
-    // 测试侧把公开的模块说明符映射到同一份 ESM 入口；宿主仍从 exports["./client"].default 取 UMD。
+    // 测试侧把公开的模块说明符映射到 `./client-node`（exports 里的 ESM 产物）；宿主仍从
+    // exports["./client"].default 取 UMD。映射目标必须是**发布产物**：`files` 只带 dist，
+    // 源码路径（lib/client-entry.ts）在 registry 安装态里不存在，映射过去等于让消费仓无测试可跑。
     resolve: {
       alias: {
         "@jayyuen66/dsh-plugin-shared/client": "@jayyuen66/dsh-plugin-shared/client-node",
+        // 共享包把 react/react-dom 放在 devDependencies：伞根链接态里它们就在共享包自己的
+        // node_modules 里，registry 安装态里则没有。显式指回测试根（cwd = 各包仓根）的那一份，
+        // 消费仓的 vi.mock("react") 才和共享组件解析到同一个模块 id。
+        react: path.resolve(process.cwd(), "node_modules/react"),
+        "react-dom": path.resolve(process.cwd(), "node_modules/react-dom"),
       },
+      dedupe: ["react", "react-dom"],
     },
     test: {
       // 用例形态放宽到 spec 命名与全部 TS 扩展位（.tsx/.mts/.cts）：旧规则只认
@@ -104,6 +113,10 @@ export function definePackageConfig(options: PackageVitestOptions): PackageConfi
       include: ["test/**/*.{test,spec}.{ts,tsx,mts,cts}"],
       environment: "node",
       testTimeout: 20_000,
+      // node_modules 下的包默认被外部化，交给 Node 加载器：它按产物自己的位置解析
+      // `import "react"`，绕开上面的 alias 与 vi.mock。把 shared 内联进 Vite 流水线，
+      // dist 里的 react 导入才走同一套解析，mock 才作用在同一个模块实例上。
+      server: { deps: { inline: [/@jayyuen66\/dsh-plugin-shared/u] } },
       coverage: {
         ...COVERAGE_BASE,
         ...coverage,

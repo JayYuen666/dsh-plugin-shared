@@ -1,18 +1,22 @@
 import { createElement } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { Badge } from "./badge.ts";
+import { InfoTip } from "./field.ts";
 
 /** 设置卡根容器：无外框、纵向排列。 */
 export function CardForm(props: { children?: ReactNode }): ReactElement {
   return createElement("div", { className: "dsu-form" }, props.children);
 }
 
-/** 小节：分隔线 + 标题（可带计数徽章与右侧动作位）+ 可选说明。 */
+/** 小节：分隔线 + 标题（可带说明按钮、计数徽章、节级开关与右侧动作位）。 */
 export function Section(props: {
   title: string;
+  /** 小节说明：只进标题旁 ⓘ 的上方浮层，不占正文行。 */
   hint?: string;
   /** 标题旁的计数徽章文案（如 "4 Provider"）。 */
   count?: string | undefined;
+  /** 节级开关（如“启用自动续跑”）放在标题行右侧。 */
+  toggle?: ReactNode;
   /** 标题右侧的动作位（刷新、恢复默认这一类小按钮）。 */
   actions?: ReactNode;
   children?: ReactNode;
@@ -24,14 +28,19 @@ export function Section(props: {
       "div",
       { className: "dsu-sectionHead" },
       createElement("h2", { className: "dsu-sectionTitle" }, props.title),
-      props.count === undefined ? null : createElement(Badge, { tone: "business" }, props.count),
-      props.actions === undefined
+      props.hint === undefined
         ? null
-        : createElement("div", { className: "dsu-sectionActions" }, props.actions),
+        : createElement(InfoTip, {
+            label: props.title,
+            detail: props.hint,
+            showLabel: false,
+            placement: "above",
+          }),
+      props.count === undefined ? null : createElement(Badge, { tone: "business" }, props.count),
+      props.toggle === undefined && props.actions === undefined
+        ? null
+        : createElement("div", { className: "dsu-sectionActions" }, props.toggle, props.actions),
     ),
-    props.hint === undefined
-      ? null
-      : createElement("p", { className: "dsu-sectionHint" }, props.hint),
     props.children,
   );
 }
