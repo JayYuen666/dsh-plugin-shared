@@ -207,6 +207,25 @@ describe("发布形态", () => {
     expect(manifest.exports?.["."]).toMatchObject({ default: "./dist/plugin.js" });
   });
 
+  it("根入口的 types 与运行期同一个 barrel，声明真的带 name/apply", async () => {
+    // 只看 exports["."].default 不够：types 曾指向手写的 dist/index.d.ts，而运行期是
+    // dist/plugin.js（多 name/apply），两边是两份清单。现在由 tsc 从 lib/plugin.ts 产出
+    // dist/types/plugin.d.ts，必须与运行期同源。
+    const { manifest } = await readSurface();
+    expect(manifest.types).toBe("./dist/types/plugin.d.ts");
+    expect(manifest.exports?.["."]).toMatchObject({
+      types: "./dist/types/plugin.d.ts",
+      default: "./dist/plugin.js",
+    });
+    const declaration = await readFile(path.join(pkgDir, "dist", "types", "plugin.d.ts"), "utf8");
+    expect(declaration).toMatch(/export \* from "\.\/index\.js"/u);
+    expect(declaration).toMatch(/export declare const name\b/u);
+    expect(declaration).toMatch(/export declare function apply\b/u);
+    // 不再有第二份根运行期产物：它没有 exports 指向，只会白占发布体积。
+    expect(existsSync(path.join(pkgDir, "dist", "index.js"))).toBe(false);
+    expect(existsSync(path.join(pkgDir, "dist", "index.d.ts"))).toBe(false);
+  });
+
   it("files 里的精确文件名条目确实被算进发布集合（shapeOf/expand 的回归防线）", async () => {
     // 单独钉住这两件事，因为它们坏掉时**上面那道入口覆盖断言不会响**：
     //   · 精确条目没被算进来 → 集合虚低 → 入口一旦靠精确条目承载就会误报；
@@ -322,6 +341,25 @@ describe("宿主依赖的版本形状（升级保护）", () => {
     expect(silent, "这些 peer 没写 optional，会被消费方的安装器读成硬要求").toStrictEqual([]);
   });
 
+  it("PTC 类型包是 optional peer，dev 线仍精确锁定官方版本", async () => {
+    // shared 的 d.ts 会裸 import `@deepseek-ai/dsh-tool-executor-ptc/types`；把它声明成
+    // optional peer，才能让不碰 PTC 载荷的消费方不被安装器要求装它。真正引用载荷类型或
+    // 自建 PTC 事件的消费方，仍要在自己的 devDependencies 里钉同一枚精确版本。
+    const { manifest } = await readSurface();
+    expect(
+      manifest.peerDependencies?.["@deepseek-ai/dsh-tool-executor-ptc"],
+      "PTC 包的 peer 窗口应与宿主族同一条",
+    ).toBe("^0.2.3-alpha.2");
+    expect(
+      manifest.peerDependenciesMeta?.["@deepseek-ai/dsh-tool-executor-ptc"]?.optional,
+      "PTC 包不是所有 ./tool 消费方都需要的，peer 必须 optional",
+    ).toBe(true);
+    expect(
+      manifest.devDependencies?.["@deepseek-ai/dsh-tool-executor-ptc"],
+      "dev 线必须精确锁定 shared 自己编译用的那一版",
+    ).toBe("0.2.3-alpha.2");
+  });
+
   it("devDependencies 里的 dsh-* 家族一律精确锁定版本，不留任何范围算子", async () => {
     // registry 上的 dist-tag 是实测发现过的易错点（复跑：`npm view @deepseek-ai/dsh-session dist-tags`）：
     // `latest` 指向的是一个**远早于宿主 ABI** 的版本，本包在用的那一支走 `next`。精确锁定版本是让「不带版本地
@@ -392,32 +430,34 @@ describe("宿主依赖的版本形状（升级保护）", () => {
 });
 
 describe("模块与 exports 的一致性（新增/改名模块时的静默失败点）", () => {
-  it("每个 lib/*.ts 模块都有对应的 exports 子路径", async () => {
-    // 消费方一律按裸包子路径引 shared（`@jayyuen66/dsh-plugin-shared/lib/xxx`），所以模块
-    // 少了 exports 条目 = 这个模块对 9 个消费包**不可 import**，而检查全部通过：build 走的是
-    // build-host.mjs 自己的 entries 数组，根本不看 manifest；publish-manifest 的既有断言
-    // 只验「已声明的 exports 都能落到真实文件」，验不出「该声明的没声明」。
+  it("运行期只保留 ./tool 与 ./client 两条入口，构建期子路径逐条保留", async () => {
+    // 0.2.x 的 `./tool/<module>` 与 `./lib/<module>` 运行期别名已经删除：消费方统一
+    // `/tool` / `/client`。这里逐条钉住「删干净」与「构建期面还在」两件事，避免下一次
+    // 把某个模块又悄悄加回 manifest、或把 build-* 一起删掉。
     const { manifest } = await readSurface();
-    const libNames = await readdir(path.join(pkgDir, "lib"));
-    // 两个入口别名不按 lib 子路径发布：plugin 是根入口，client-entry 由 ./client 承载。
-    const ENTRY_ALIASES = new Set(["client-entry", "plugin"]);
-    const facets = libNames
-      .filter(
-        (name) =>
-          name.endsWith(".ts") &&
-          name !== "index.ts" &&
-          !ENTRY_ALIASES.has(name.replace(/\.ts$/u, "")),
-      )
-      .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`);
-    expect(facets.length, "至少要扫到模块").toBeGreaterThan(0);
-    for (const facet of facets) {
-      expect(manifest.exports, `${facet} 缺 exports 条目`).toHaveProperty(facet);
-    }
+    const exports = manifest.exports ?? {};
+    expect(exports).toHaveProperty("./tool");
+    expect(exports).toHaveProperty("./client");
+    expect(exports).toHaveProperty("./internal/tool/*");
+    expect(exports["./internal/tool/*"]).toMatchObject({ default: "./dist/*.js" });
+    expect(Object.keys(exports).filter((key) => key.startsWith("./tool/"))).toStrictEqual([]);
+
+    const BUILD_LIB_MODULES = [
+      "canonicalize-region-paths",
+      "build-artifacts",
+      "build-host",
+      "build-client",
+      "build-types",
+      "build-tool-imports",
+      "decorator-lowering",
+    ];
+    const libSubpaths = Object.keys(exports)
+      .filter((key) => key.startsWith("./lib/"))
+      .toSorted();
+    expect(libSubpaths).toStrictEqual(BUILD_LIB_MODULES.map((name) => `./lib/${name}`).toSorted());
   });
 
-  it("exports 里没有指向已删模块的悬空子路径", async () => {
-    // 反方向同样要固定：模块改名或合并后忘了删 exports 条目，发布出去的是一个 import 即抛的
-    // 子路径，而包自身一切正常。
+  it("exports 里的构建期 lib 子路径都有对应源文件", async () => {
     const { manifest } = await readSurface();
     const libNames = await readdir(path.join(pkgDir, "lib"));
     const onDisk = new Set(
@@ -425,7 +465,6 @@ describe("模块与 exports 的一致性（新增/改名模块时的静默失败
         .filter((name) => name.endsWith(".ts"))
         .map((name) => `./lib/${name.replace(/\.ts$/u, "")}`),
     );
-    // 只看 lib 子路径（./config/* 与 "." 不在这个集合里，由别的断言负责）。
     const libSubpaths = Object.keys(manifest.exports ?? {}).filter((key) =>
       key.startsWith("./lib/"),
     );

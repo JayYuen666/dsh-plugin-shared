@@ -24,7 +24,7 @@ function headClass(column: DataTableColumn): string {
   return column.numeric === true ? "dsu-tblNum" : "";
 }
 
-/** 全文浮层的最大宽度与估算高度（视口收口用；真实高度随内容行数变）。 */
+/** 全文浮层的最大宽度与估算高度（用于限制在视口内；真实高度随内容行数变）。 */
 const TIP_MAX_WIDTH = 360;
 const TIP_EST_HEIGHT = 72;
 

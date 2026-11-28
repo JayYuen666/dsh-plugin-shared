@@ -41,6 +41,10 @@ const CLIENT_SURFACE = [
   "fieldOf",
   "isRecord",
   "errorText",
+  "clampInt",
+  "raceTimeout",
+  "parseOrThrow",
+  "remoteMounterOf",
 ];
 
 describe("shared 客户端行", () => {

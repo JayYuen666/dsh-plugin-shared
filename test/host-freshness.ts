@@ -1,10 +1,11 @@
-// test/host-freshness.ts —— host 侧产物一致性检查（指纹比对）（各包共用，复制式分发，同 client-freshness.ts）。
+// test/host-freshness.ts —— host 侧产物一致性检查（指纹比对）（各包共用，复制式分发；消费仓的
+// 客户端侧有对应的 client-freshness.ts）。
 // 本包副本形态：只提供**证据**（磁盘 host 产物 vs 当期内存构建产物 + 包名与包根），用例注册留在
 // test/build-host.test.ts 的 describe 里。共享测试数据一旦自行 it()，它就变成用例文件，
 // vitest 的结构类规则（require-hook / consistent-test-it / valid-title）全部落到它上面。
 //
-// 背景：host.ts / lib/*.ts 改后忘跑 node build-host.mjs，dsh 载入的仍是旧 host.js。client 侧
-// 早就有这道检查（test/client-freshness.ts），host 侧缺这道检查时真实漏过一次：
+// 背景：host.ts / lib/*.ts 改后忘跑 node build-host.mjs，dsh 载入的仍是旧 host.js。消费仓的
+// 客户端侧早就有这道检查（test/client-freshness.ts），host 侧缺这道检查时真实漏过一次：
 // danger-guard/host.js 的生成时间早于 host.ts 的下一次改动——产物已过期，而没有任何检查会报出来。
 // settings.js 由同一份 builder 的另一条导出产出，同样没人核对，所以它进的是同一道检查。
 // mtime 断言在 git clone / touch 下不稳定，故用**指纹逐字节比对**：内存构建（build-host.mjs 的纯函数
@@ -89,13 +90,57 @@ function packageNameOf(pkgDir: string): string {
   );
 }
 
+/** 相对路径统一成 POSIX：Windows 的 `path.relative` 给反斜杠，清单键必须与构建器一致。 */
+function toPosix(file: string): string {
+  return file.split(path.sep).join("/");
+}
+
+/**
+ * host 拥有、但可能不在产物清单里的 .js：dist 根层与 `build/` 子树。
+ *
+ * 刻意不扫 `config/` 与 `types/`：前者归 build-config，后者归 tsc；把它们算进
+ * 「多余产物」会让这条检查在每个正常构建上误报。根层 `client.js` 归 build-client。
+ * 递归是必需的：`dist/build/*-<hash>.js` 换哈希后旧 chunk 会留在子目录里，只看一层
+ * 永远看不见它。
+ * @param pkgDir - 包根绝对路径
+ * @returns 相对 dist 的 POSIX 路径
+ */
+function hostOwnedJs(pkgDir: string): string[] {
+  const distDir = path.resolve(pkgDir, "dist");
+  const rows = readdirSync(distDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => entry.name);
+  const walk = (dir: string, prefix: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries) {
+      const rel = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), `${rel}/`);
+      } else if (entry.name.endsWith(".js")) {
+        rows.push(rel);
+      }
+    }
+  };
+  walk(path.join(distDir, "build"), "build/");
+  return rows;
+}
+
 /**
  * 多产物形态：把清单折成按路径排序的「相对路径 + 正文摘要」文本，两侧共用同一排序。
  * @param pkgDir - 包根绝对路径（相对化是为了清单不绑定装机位置）
  * @param files - 构建函数交回的「待写入的绝对路径 → 正文」
  * @param fromDisk - true 时逐个读盘算摘要（缺文件即摘要不同，行里已写明是哪个产物），
- *   并把磁盘 dist/ 一层里**不在产物清单内**的 .js 也算作一行（EXTRA-ON-DISK）——内容哈希
+ *   并把磁盘上 host 拥有、却不在产物清单里的 .js 也算作一行（EXTRA-ON-DISK）——内容哈希
  *   chunk 换哈希后旧文件会残留，只比产物清单键的那一侧看不见它，运行期体积预算会被越垫越高。
+ *   比对键按相对路径（不是 basename）：`dist/ast-walk.js` 与 `dist/build/ast-walk.js` 是两件产物。
  * @returns 可直接与另一侧逐字节相等的清单文本
  */
 function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolean): string {
@@ -115,18 +160,19 @@ function manifestOf(pkgDir: string, files: Map<string, string>, fromDisk: boolea
   }
   if (fromDisk) {
     const distDir = path.resolve(pkgDir, "dist");
-    const known = new Set(Array.from(files.keys(), (file) => path.basename(file)));
-    const extras = readdirSync(distDir)
+    const known = new Set(
+      Array.from(files.keys(), (file) => toPosix(path.relative(distDir, file))),
+    );
+    const extras = hostOwnedJs(pkgDir)
       .filter(
-        (name) =>
-          name.endsWith(".js") &&
-          !known.has(name) &&
+        (rel) =>
+          !known.has(rel) &&
           // client.js 归 build-client.mjs（另一条编排）管辖，不在这份清单的比对范围里。
-          name !== "client.js",
+          rel !== "client.js",
       )
       .toSorted();
-    for (const name of extras) {
-      rows.push(`${path.relative(pkgDir, path.join(distDir, name))}\tEXTRA-ON-DISK`);
+    for (const rel of extras) {
+      rows.push(`dist/${rel}\tEXTRA-ON-DISK`);
     }
   }
   return `${rows.join("\n")}\n`;

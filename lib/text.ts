@@ -4,12 +4,13 @@
 // 高代理在 UTF-8 编码时变 U+FFFD，或使后续 Messages 请求整体失败（上游同一缺陷即
 // 触发本模块的统一）。凡是"切完还会进会话日志"的自制截断点一律统一到这里。
 //
-// 消费方清单（谁在截断、为什么必须统一到这里；调用点变了要同步这里，核对的命令是
-// `grep -rn "shared/lib/text"`）：
-//   - ocr-review/host.ts —— `failureDetail` 的头尾两处截断、`runCollect` 的 output 一处、
-//     `echoRaw` 一处；
+// 消费方清单（谁在截断、为什么必须统一到这里；调用点变了要同步这里，核对命令是
+// `rg -n "truncate(Start|End|CodePoints)"`，在九个消费仓里各跑一次）：
+//   - ocr-review/lib/output-file.ts —— `failureDetail` 的头尾两处截断、`echoRaw` 一处；
+//   - ocr-review/host.ts —— `runCollect` 的 output 一处；
+//   - ocr-review/lib/parse.ts —— analysis Markdown 与 projectSummary 的头部截断；
 //   - zvec-grep/host.ts —— `failureDetail` 的头尾两处截断、`successNotes` 的 stderr 尾部截断
-//     （成功结果也入日志）；
+//     （成功结果也入日志）、MCP 错误详情与 stdout 尾部；
 //   - zvec-grep/lib/rebuild-remote.ts —— 作业状态投影的尾部截取（这一处不放在 host.ts：
 //     官方环按 UTF-8 字节裁，用裸 slice 会在截断位置留下孤立低代理，所以照样统一到这里）；
 //   - dir-prep-organize/src/templates.ts —— 目录名 emoji 字段的两处码点上限；
@@ -25,17 +26,21 @@
 //
 // 只处理两端的孤立半代理，不做字素簇/ZWJ 语义（那是显示层的事，本模块明确不做）。
 //
-// 零预算与 NaN 预算两端行为相同：都返回空串。truncateStart 必须自己判 `!(minChars > 0)`
-// —— 否则 `slice(-0)` 即 `slice(0)`，整串原样返回，正是本模块要拦住的超长输出；
-// 写成"取反的正判"而不是 `minChars <= 0`，是因为 NaN 与两者比较都是 false，
-// `<=` 那种写法会让 truncateStart(x, NaN) 返回整串而 truncateEnd(x, NaN) 给空串。truncateEnd
-// 一侧由 Math.max(0, ·) 与官方件合力达成：官方把负预算交给 slice(0, 负数) 解释成
-// "从尾部倒数"，把负数按 0 处理之后与本地旧实现行为相同；NaN 经 Math.max 仍是 NaN，官方拿它走
-// slice(0, NaN) 得空串。本模块不写 `if (cut.length === 0) return cut;` 这类截断结果为空时的早返回：
-// 返回：truncateStart 一侧它被上面的早返回挡成不可达分支（本包 vitest 四项阈值 100%
-// 容不下测不到的分支），truncateEnd 一侧改用官方件后连 `cut` 都不再有，写它没有位置可放。
+// 零预算与 NaN 预算两端行为相同：都返回空串。truncateStart 必须显式写
+// `Number.isNaN(minChars) || minChars < 1`：`slice(-0)` 与 `slice(-NaN)` 都会退成
+// `slice(0)` 而把整串原样返回，正是本模块要拦住的超长输出；负预算也不能只写
+// `minChars <= 0`，那会漏掉 NaN。truncateEnd 一侧由 Math.max(0, ·) 与官方件合力达成：
+// 官方把负预算交给 slice(0, 负数) 解释成"从尾部倒数"，把负数按 0 处理之后与本地旧实现
+// 行为相同；NaN 经 Math.max 仍是 NaN，官方拿它走 slice(0, NaN) 得空串。本模块不写
+// `if (cut.length === 0) return cut;` 这类截断结果为空时的早返回：truncateStart 一侧它
+// 被上面的预算判断挡成不可达分支（本包 vitest 的 100% 阈值容不下测不到的分支），
+// truncateEnd 一侧改用官方件后连 `cut` 都不存在，没有位置可放。
 
 import { truncateWithoutSplittingSurrogatePair } from "@deepseek-ai/dsh-output-retention";
+
+// 码点截断零依赖，住在独立模块：`./tool` 的浏览器条件只取它，不把本文件的
+// `dsh-output-retention` peer 拖进客户端 bundle。
+export { truncateCodePoints } from "./code-points.ts";
 
 // 两个边界即 UTF-16 低代理区下界 0xDC00 与上界 0xDFFF；高代理区那一半的判定已随
 // 前切一起交给官方件。写成十进制而不是十六进制字面量：oxfmt 会把 hex 数字小写，
@@ -50,36 +55,6 @@ const LOW_SURROGATE_END = 57_343;
 export function truncateEnd(text: string, maxChars: number): string {
   // 把负数按 0 处理不是单纯防御：官方把负预算交给 slice(0, 负数) 会解释成"从尾部倒数"，详见文件头。
   return truncateWithoutSplittingSurrogatePair(text, Math.max(0, maxChars));
-}
-
-/**
- * 保留前 `maxChars` 个**码点**（不是码元）；`maxChars <= 0` 与 NaN ⇒ 空串。
- *
- * 与 `truncateEnd` 的分工：那个按 UTF-16 码元切、只保证不劈开代理对（预算单位是存储口径的
- * 字符数）；这个按码点数预算——emoji 与组合字符各算一个，适合「给模板留 N 个字」这类语义。
- * 三处消费方此前各写一遍同一段计数循环，收在这里之后只有一份。
- * @param text - 待截断的文本。
- * @param maxChars - 保留的码点数上限（非正数与 NaN 一律得空串）。
- * @returns 截断后的文本。
- */
-export function truncateCodePoints(text: string, maxChars: number): string {
-  // NaN 单独判：它与任何数比较都是 false，只剩 `maxChars < 1` 会让它一路走到
-  // `counted >= NaN`（恒 false）而交回整串 —— 与「预算算错时不外泄」的约定相反。
-  if (maxChars < 1 || Number.isNaN(maxChars)) {
-    return "";
-  }
-  let end = 0;
-  let counted = 0;
-  // for..of 按码点迭代（每格 1–2 码元），与 `[...text].slice(…).join("")` 等价，
-  // 但不触发 no-misused-spread / prefer-spread 两条互相打架的规则。
-  for (const char of text) {
-    if (counted >= maxChars) {
-      break;
-    }
-    end += char.length;
-    counted += 1;
-  }
-  return text.slice(0, end);
 }
 
 /**

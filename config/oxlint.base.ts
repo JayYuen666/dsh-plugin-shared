@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "oxlint";
 import type { ExternalPluginEntry, OxlintConfig, OxlintOverride } from "oxlint";
 
@@ -35,8 +36,8 @@ export interface OffJustification {
 const NOTE_UNSAFE_SAME_AS_MEMBER_ACCESS = "同 no-unsafe-member-access";
 
 /**
- * 实测方法：临时把基线里每条 `off`（rules 与 override 层都算）翻成 `error` 再跑 15 个成员、
- * 与基线取差数 `::error` 行，按路径分成 prod / test / scripts 三类。`--deny=<rule>` 盖不住
+ * 实测方法：临时把基线里每条 `off`（rules 与 override 层都算）翻成 `error` 再跑当期工作区的全部
+ * 成员（那一轮是 15 个成员）、与基线取差数 `::error` 行，按路径分成 prod / test / scripts 三类。`--deny=<rule>` 盖不住
  * `off`，最早一轮用它在 13 个包目录上量出的数因此全偏小（`vitest/no-hooks` 用 `-D` 量出来是
  * 0，实际是 181），整批作废重测。
  *
@@ -80,12 +81,12 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "vitest/require-test-timeout": {
     kind: "上游不推荐",
     measured: 2892,
-    note: "要求每条用例显式 timeout；本仓用泵式假时钟，超时由 13 份 vitest 配置统一给出",
+    note: "要求每条用例显式 timeout；本仓用泵式假时钟，超时由各仓 vitest 配置统一给出",
   },
   "vitest/prefer-importing-vitest-globals": {
     kind: "实测有害",
     measured: 0,
-    note: "autofix 方向是删掉显式 import 改回裸全局；13 份 vitest 配置都没开 globals:true，应用后立即出现 3605 处 TS2593、测试全部失效",
+    note: "autofix 方向是删掉显式 import 改回裸全局；本工作区各仓的 vitest 配置都没开 globals:true，应用后立即出现 3605 处 TS2593、测试全部失效",
   },
   "vitest/no-importing-vitest-globals": {
     kind: "实测有害",
@@ -124,7 +125,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   },
 
   // ===== 仅限特定文件：JS plugin 的按文件收窄 =====
-  // 实测方法同本表头：把该规则临时翻成 error 再跑九包，按 lib/src/host 与 test/scripts 分开数。
+  // 实测方法同本表头：把该规则临时翻成 error 再跑九个消费仓，按 lib/src/host 与 test/scripts 分开数。
   "regexp/no-super-linear-backtracking": {
     kind: "仅限特定文件",
     measured: 23,
@@ -150,7 +151,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
   "import/no-named-export": {
     kind: "与官方形态冲突",
     measured: 895,
-    note: "13 个包与上游 deepseek-harness 一样以具名导出 + 子路径说明符对外提供接口",
+    note: "各消费仓与上游 deepseek-harness 一样以具名导出 + 子路径说明符对外提供接口",
   },
   "import/prefer-default-export": {
     kind: "与官方形态冲突",
@@ -173,9 +174,9 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     note: "官方 cordis 入口是匿名对象 default export（registry.ts 的 RegistryService.plugin() 读 name/Config，isApplicable() 判 apply），改成具名等于改官方形态",
   },
   "eslint/no-duplicate-imports": {
-    kind: "实测有害",
+    kind: "与已启用规则互斥",
     measured: 166,
-    note: "ESLint 官方已废弃（不区分 import type），由 import/no-duplicates 取代",
+    note: "ESLint 官方已标记 deprecated（不区分 import type），由 import/no-duplicates 取代；两条同开实测 2 errors / 1 defect",
   },
 
   // ===== 上游不推荐：纯风格偏好，开启只带来语义无关的重写 =====
@@ -285,7 +286,7 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     note: "官方 async 契约的同步实现与测试替身撑不住这条；prod 侧的条数按代码修，不进豁免",
   },
   "eslint/require-await": {
-    kind: "与官方形态冲突",
+    kind: "与已启用规则互斥",
     measured: 481,
     note:
       "它与 typescript/require-await 是同一条判断的两份实现，不是两条：实测核对（一段无 await 的 " +
@@ -305,11 +306,6 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
     kind: "仅限特定文件",
     measured: 54,
     note: "单个用例文件的长度不作为缺陷信号",
-  },
-  "node/no-sync": {
-    kind: "仅限特定文件",
-    measured: 299,
-    note: "构建脚本与门禁脚本按设计同步读；写侧豁免按文件生效（syncIoScopes），不在这一层的豁免里",
   },
   "node/no-top-level-await": {
     kind: "仅限特定文件",
@@ -420,13 +416,11 @@ export const OFF_JUSTIFICATIONS: Record<string, OffJustification> = {
 };
 
 /**
- * 基线里**不设豁免**的规则清单：这些规则必须保持开启，谁要关掉就得先给出依据。
+ * 已退役的 off 豁免清单：这些规则原先被关成 off，豁免撤销后必须保持开启。
  *
- * 方法是「按文件种类分别核对命中数」。`oxlint --deny=<rule>` 量的是整体，而 `--deny` 盖不住
- * override 层的 off（这个测量方法见本文件头），所以一条规则可以同时是「TS 侧零命中、保持开启」
- * 与「`scripts/` 的无类型 .mjs 里有命中、按文体收窄」——`eslint/no-continue` 正是这一类，
- * 它的收窄在 SCRIPTS_OVERRIDES 里，不在这里。`eslint/no-await-in-loop` 则两侧都开着
- * （实测探测对 .mjs 照样报），两边都按代码写到位，没有收窄层。
+ * `definePluginConfig` 出口处会扫最终 rules 与每一条 override，任何一层把它们重新写成 off 都抛；
+ * `offReasons` 也不能恢复这条豁免。这里的“退役”指的是 off 条目被撤销，不是规则本身被移出规则表
+ * —— {@link BASE_RULES} 仍然挂着它们，所以任何 off 都是复辟。
  */
 export const RETIRED_OFFS: string[] = ["typescript/no-empty-object-type"];
 
@@ -449,7 +443,7 @@ const BASE_PLUGINS: NonNullable<OxlintConfig["plugins"]> = [
   "vitest",
   "import",
   // react（捆 react / react-hooks / react-refresh / React Compiler 四组规则）+ jsx-a11y：
-  // 11 个带客户端部分的包的卡片界面是 React（createElement 形态），这两组规则是 owner 决定要启用的。
+  // 带客户端部分的消费仓的卡片界面是 React（createElement 形态），这两组规则是 owner 决定要启用的。
   // 存量按本仓的规则处置：能修的修，确属形态冲突的进 OFF_JUSTIFICATIONS（kind+measured+note）。
   "react",
   "jsx-a11y",
@@ -511,12 +505,109 @@ const BUNDLED_JS_PLUGINS: BundledJsPlugin[] = [
 ];
 
 /**
- * 入口是否指向某个插件。`jsPlugins` 的条目可以是字符串，也可以是带别名的对象形态
- * （`{ name, specifier }`）——两形的信号都在路径/别名文本里，按子串判。
+ * 入口是否由调用方显式供给某个插件。
+ *
+ * - 对象形态 `{ name, specifier }`：`name` 就是 oxlint 注册的命名空间，**只有等于
+ *   `plugin.label` 才算**。路径不参与命名空间判断——`{ name: "regexp-ext", specifier: <regexp 路径> }`
+ *   注册出来的是 `regexp-ext/*`，补不上 `regexp/*` 的缺，也会让本包那份 regexp 被错误跳过。
+ * - 字符串形态：按包名/包路径段判断。`file://` 先转成本地路径；`eslint-plugin-regexp-fork.js`
+ *   这类同名前缀不匹配，`/tmp/sonar-copy/plugin.js` 这种裸拷贝路径也识别不出来——后者要用对象形态
+ *   显式给出命名空间（这也正是对象形态存在的理由）。
  */
-function pointsAtPlugin(entry: ExternalPluginEntry, plugin: BundledJsPlugin): boolean {
-  const text = typeof entry === "string" ? entry : `${entry.name} ${entry.specifier}`;
-  return text.includes(plugin.packageName);
+function suppliesPlugin(entry: ExternalPluginEntry, plugin: BundledJsPlugin): boolean {
+  if (typeof entry !== "string") {
+    return entry.name === plugin.label;
+  }
+  let text = entry;
+  if (text.startsWith("file:")) {
+    try {
+      text = fileURLToPath(text);
+    } catch {
+      return false;
+    }
+  }
+  const normalized = text.replaceAll("\\", "/");
+  const packageName = plugin.packageName.replaceAll("\\", "/");
+  return (
+    normalized === packageName ||
+    normalized.startsWith(`${packageName}/`) ||
+    normalized === `node_modules/${packageName}` ||
+    normalized.startsWith(`node_modules/${packageName}/`) ||
+    normalized.includes(`/node_modules/${packageName}/`) ||
+    normalized.endsWith(`/node_modules/${packageName}`) ||
+    normalized.includes(`/${packageName}/`) ||
+    normalized.endsWith(`/${packageName}`)
+  );
+}
+
+function entryText(entry: ExternalPluginEntry): string {
+  return typeof entry === "string" ? entry : `${entry.name} -> ${entry.specifier}`;
+}
+
+interface ModuleResolution {
+  readonly requireResolve: (specifier: string) => string;
+  readonly importResolve: (specifier: string) => string;
+}
+
+const RESOLUTION_ERROR_CODES = new Set([
+  "MODULE_NOT_FOUND",
+  "ERR_MODULE_NOT_FOUND",
+  "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  "ERR_UNSUPPORTED_DIR_IMPORT",
+  "ERR_INVALID_MODULE_SPECIFIER",
+  "ERR_UNSUPPORTED_ESM_URL_SCHEME",
+]);
+
+function isResolutionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    RESOLUTION_ERROR_CODES.has(error.code)
+  );
+}
+
+/**
+ * 先 `require.resolve`、再 `import.meta.resolve`。
+ *
+ * `require.resolve` 只走 `require` 条件：ESM-only 包的 `exports` 没有 `require` 分支时会抛
+ * `ERR_PACKAGE_PATH_NOT_EXPORTED`，原先的 `catch {}` 会把它翻译成误导性的“解析不到”。这里只吞
+ * 解析类错误码，未知错误原样抛；`import.meta.resolve` 返回 `file://` URL，交给 oxlint 前转成路径。
+ * 导出这个纯函数是为了让回退在单测里注桩走到，不用真造一个 ESM-only 包。
+ * 解析不到返回 `null`（不是 undefined）：`typescript/consistent-return` 在
+ * `treatUndefinedAsUnspecified: true` 下会把显式 undefined 当成“没返回值”，
+ * 与成功路径的 string 冲突；`null` 是明确的“查无此项”。
+ */
+function attemptResolution(resolve: () => string): string | undefined {
+  let resolved: string | undefined;
+  try {
+    resolved = resolve();
+  } catch (error) {
+    if (!isResolutionError(error)) {
+      throw error;
+    }
+  }
+  return resolved;
+}
+
+export function resolveModuleEntry(specifier: string, resolution: ModuleResolution): string | null {
+  const required = attemptResolution(() => resolution.requireResolve(specifier));
+  if (required !== undefined) {
+    return required;
+  }
+  const imported = attemptResolution(() => resolution.importResolve(specifier));
+  if (imported === undefined) {
+    return null;
+  }
+  return imported.startsWith("file:") ? fileURLToPath(imported) : imported;
+}
+
+function defaultModuleResolution(): ModuleResolution {
+  const fromModule = createRequire(import.meta.url);
+  return {
+    requireResolve: (specifier) => fromModule.resolve(specifier),
+    importResolve: (specifier) => import.meta.resolve(specifier),
+  };
 }
 
 /**
@@ -525,37 +616,47 @@ function pointsAtPlugin(entry: ExternalPluginEntry, plugin: BundledJsPlugin): bo
  * @throws 候选路径都解析不到时，写明该装什么、以及自备入口时的替代接法
  */
 function resolvePluginEntry(plugin: BundledJsPlugin): string {
-  const fromModule = createRequire(import.meta.url);
+  const resolution = defaultModuleResolution();
   const tried: string[] = [];
   for (const candidate of [plugin.packageName, ...(plugin.extraCandidates ?? [])]) {
-    try {
-      return fromModule.resolve(candidate);
-    } catch {
-      tried.push(candidate);
+    const resolved = resolveModuleEntry(candidate, resolution);
+    if (resolved !== null) {
+      return resolved;
     }
+    tried.push(candidate);
   }
   throw new Error(
     `oxlint 基线要挂 ${plugin.packageName}，但从本包解析不到它（试过 ${tried.join("、")}）。` +
       `要么在本包 devDependencies 里装 ${plugin.packageName}，` +
       `要么把你自己解析到的 ${plugin.label} 入口经 definePluginConfig({ jsPlugins: [...] }) 传进来` +
-      `（入口路径须指向 ${plugin.packageName}，换成别家的插件无法满足这条规则表）。`,
+      `（字符串入口须指向 ${plugin.packageName}；自带副本时用 { name: "${plugin.label}", specifier: ... }）。`,
   );
 }
 
+function assertSingleSupplied(
+  plugin: BundledJsPlugin,
+  supplied: readonly ExternalPluginEntry[],
+): void {
+  if (supplied.length > 1) {
+    throw new Error(
+      `jsPlugins 里有多条入口都指向 ${plugin.label}（${supplied.map((entry) => entryText(entry)).join("、")}）；` +
+        `只允许一条，否则 oxlint 会把同一个插件注册两次` +
+        `（实测报 Plugin name '${plugin.label}' is already registered）。`,
+    );
+  }
+}
+
 /**
- * 组装 sonarjs 的入口：本包解析到的入口在前，调用方自带的在后并去重。
+ * 组装 sonarjs 的入口：调用方显式供给 sonarjs 时只用它，否则解析本包那一份。
  *
  * 为什么要有这一层而不是直接 `[resolvePluginEntry(SONARJS_PLUGIN), ...(jsPlugins ?? [])]`：
  * 那写法无条件先求值，于是「调用方自带入口」这条官方预留的退路在缺 sonarjs 时**用不了**——
  * 抛错发生在调用方的入口被用上之前，报错信息给的补救办法照做必然再报同一条。
  * 分支规则：
- *  - 调用方带了**指向 sonarjs 的**入口 → 解析失败就跳过（它自备的就是 sonarjs），
- *    成功则去重后前置；
+ *  - 调用方带了指向 sonarjs 的入口 → 不再解析本包（`resolve` 一次都不调用）；
  *  - 调用方只带了别家插件、或没带 → 解析失败照旧抛那条可操作的信息。SONARJS_RULES
  *    无条件引用 sonarjs，只带别家插件满足不了它：那种失败会推迟到 oxlint 装载配置那一刻
  *    （`Plugin 'sonarjs' not found`），可操作的成因必须在这里先抛出来，而不是留到后面被掩盖。
- *    「指向 sonarjs」按入口路径含 `sonarjs` 判定——调用方传的是自己解析到的插件路径，
- *    这是能落进字符串判断的全部信号。
  *
  * 导出且把解析器做成入参，是为了「解析失败」那一支在**本仓**可测：本仓 devDependencies
  * 装着 sonarjs，真实的解析路径永远成功，那两个分支就只能靠注入 stub 走到（与 `LauncherLocator`、
@@ -571,26 +672,25 @@ export function resolveJsPlugins(
   resolve: () => string = () => resolvePluginEntry(SONARJS_PLUGIN),
 ): NonNullable<OxlintConfig["jsPlugins"]> {
   const caller = callerPlugins ?? [];
-  let bundled: string | null = null;
-  try {
-    bundled = resolve();
-  } catch (error) {
-    if (!caller.some((entry) => pointsAtPlugin(entry, SONARJS_PLUGIN))) {
-      throw error;
-    }
-  }
-  return bundled === null ? [...caller] : [bundled, ...caller.filter((entry) => entry !== bundled)];
+  const supplied = caller.filter((entry) => suppliesPlugin(entry, SONARJS_PLUGIN));
+  assertSingleSupplied(SONARJS_PLUGIN, supplied);
+  return supplied.length === 1 ? [...caller] : [resolve(), ...caller];
 }
 
 /**
- * 组装全部常挂插件的 `jsPlugins`：sonarjs 走 {@link resolveJsPlugins} 的退路语义，
- * 其余三条在调用方没有自带入口时从本包解析并前置。
+ * 组装全部常挂插件的 `jsPlugins`：四个插件都按同一条策略处理——调用方显式供给对应命名空间
+ * 时只使用该份，否则从本包解析并前置；未匹配任何 bundled 插件的调用方入口原样追加。
  *
- * 调用方自带入口的判定按路径/别名子串（`pointsAtPlugin`）：这是能落进字符串判断的全部信号。
- * 自带入口时**不再解析**本包那一份，避免同一个插件被挂两遍（两份插件对象会让同一条规则报两次）。
+ * 两个细节是这次修复的核心：
+ *  - 每个插件最多一条调用方入口，多条直接抛；原先只按 `entry !== bundled` 去重，同一个路径的
+ *    字符串与对象会生成两条数组条目（oxlint 1.94 恰好容忍），不同安装路径则直接
+ *    `Plugin name '...' is already registered`。
+ *  - 对象入口的 `name` 必须等于插件 label，字符串入口按包路径段判断；不再把
+ *    `name + specifier` 拼成一个字符串做子串匹配（那会误认同名前缀包，也会让别名的 regexp
+ *    顶掉本包那份、最终报 `Plugin 'regexp' not found`）。
  *
- * 导出并把解析器做成可注入，是为了缺包分支在本仓可测：本仓 devDependencies 装着这四个包，
- * 真实解析永远成功，失败支只能靠 stub 走到。
+ * 导出并把解析器做成可注入，是为了缺包与 ESM-only 分支在本仓可测：本仓 devDependencies
+ * 装着这四个包，真实解析永远成功，失败支只能靠 stub 走到。
  *
  * @param callerPlugins - 调用方经 `jsPlugins` 传入的入口
  * @param resolvers - 按插件 label 注入的入口解析器（生产用默认实现，测试注桩）
@@ -600,13 +700,27 @@ export function resolveBundledJsPlugins(
   callerPlugins: NonNullable<OxlintConfig["jsPlugins"]> | undefined,
   resolvers: Record<string, () => string> = {},
 ): NonNullable<OxlintConfig["jsPlugins"]> {
-  let entries = resolveJsPlugins(callerPlugins);
-  for (const plugin of BUNDLED_JS_PLUGINS.filter((item) => item !== SONARJS_PLUGIN)) {
-    const suppliedByCaller = (callerPlugins ?? []).some((entry) => pointsAtPlugin(entry, plugin));
-    if (!suppliedByCaller) {
+  const caller = callerPlugins ?? [];
+  const entries: ExternalPluginEntry[] = [];
+  const supplied = new Set<ExternalPluginEntry>();
+  for (const plugin of BUNDLED_JS_PLUGINS) {
+    const matches = caller.filter((entry) => suppliesPlugin(entry, plugin));
+    assertSingleSupplied(plugin, matches);
+    const match = matches.at(0);
+    if (match === undefined) {
       const resolve = resolvers[plugin.label] ?? (() => resolvePluginEntry(plugin));
-      const entry = resolve();
-      entries = [entry, ...entries.filter((existing) => existing !== entry)];
+      entries.push(resolve());
+    } else {
+      entries.push(match);
+      supplied.add(match);
+    }
+  }
+  for (const entry of caller) {
+    if (!supplied.has(entry)) {
+      const matched = BUNDLED_JS_PLUGINS.some((plugin) => suppliesPlugin(entry, plugin));
+      if (!matched) {
+        entries.push(entry);
+      }
     }
   }
   return entries;
@@ -619,7 +733,7 @@ export function resolveBundledJsPlugins(
  * 不靠关规则过关）：`no-duplicate-string` 全仓 291 条、`cognitive-complexity` 22 条按代码修完，
  * 两条都用**默认阈值**，不调 option（调阈值就是把标准改成能通过的样子）。
  */
-const SONARJS_RULES: RuleTable = {
+export const SONARJS_RULES: RuleTable = {
   "sonarjs/no-identical-functions": "error",
   "sonarjs/no-duplicated-branches": "error",
   "sonarjs/no-all-duplicated-branches": "error",
@@ -640,11 +754,12 @@ const SONARJS_RULES: RuleTable = {
 };
 
 /**
- * `eslint-plugin-regexp` recommended 里带 `regexp/` 前缀的全部规则（63 条）。
+ * `eslint-plugin-regexp` recommended 里带 `regexp/` 前缀的全部规则（60 条）。
  *
- * 不带它同 preset 的 4 条不带插件前缀的 eslint 规则（no-control-regex / no-misleading-character-class /
- * no-regex-spaces / prefer-regex-literals）：oxlint 的内建 eslint 插件已有同名规则，重复挂只会
- * 把同一个缺陷报两遍。
+ * 同 preset 另有 7 条不带插件前缀的 eslint 规则：no-control-regex / no-misleading-character-class /
+ * no-regex-spaces / prefer-regex-literals / no-invalid-regexp / no-useless-backreference /
+ * no-empty-character-class。oxlint 的内建 eslint 插件已有同名规则，重复挂只会把同一个缺陷报两遍；
+ * recommended 的完整面是 60 + 7 = 67 条，不要把不带前缀的 7 条误记成 4 条。
  *
  * 实测（oxlint 1.90、9 包，含既有代码）：95 条命中，prod 34 / test 56 / 其余 5；其中 56 条所属
  * 规则带 fixer（实测 oxlint 会执行 JS plugin 的 fixer，用 prefer-w 验过）。剩余非 fixer 的
@@ -717,7 +832,7 @@ export const REGEXP_RULES: RuleTable = {
 };
 
 /**
- * `eslint-plugin-zod` recommended 的 23 条里去掉 `consistent-schema-var-name` 后的 22 条
+ * `eslint-plugin-zod` recommended 的 24 条里去掉 `consistent-schema-var-name` 后的 23 条
  * （针对 zod 4）。
  *
  * 实测（oxlint 1.90、9 包）：
@@ -737,6 +852,7 @@ export const ZOD_RULES: RuleTable = {
   "zod/no-coerce-boolean": "error",
   "zod/no-conflicting-checks": "error",
   "zod/no-duplicate-schema-methods": "error",
+  "zod/no-duplicate-union-members": "error",
   "zod/no-empty-custom-schema": "error",
   "zod/no-native-enum": "error",
   "zod/no-number-schema-with-finite": "error",
@@ -825,7 +941,7 @@ const BASE_OPTIONS: NonNullable<OxlintConfig["options"]> = {
  * 原则是"**人写的源码一律在 lint 范围内**"：配置文件与 bundler 脚本（`*.config.ts`、
  * `*.config.mjs`、`build-*.mjs`）都属人写的，排掉就等于开盲区——实测把这类文件排掉后，
  * 会积累出指向根本不会被 lint 的规则名的失效 `oxlint-disable` 注释（删除后没有任何检查报出）。
- * `*.mjs` 由 SCRIPTS_OVERRIDES 按文体收窄（类型信息类规则对无类型 .mjs 无从计算），
+ * `*.mjs` 由 UNTYPED_SCRIPT_OVERRIDES 按文体收窄（类型信息类规则对无类型 .mjs 无从计算），
  * 而不是整片豁免。
  */
 const BASE_IGNORE_PATTERNS: string[] = [
@@ -1072,7 +1188,7 @@ export const BASE_RULES: RuleTable = {
   "react/refs": "off",
   "react/todo": "off",
   // JS plugin 的规则表与 sonarjs 同一条纪律：逐条写死，上游改名/删除会让整份配置加载失败
-  // （快照测试兜住；见 test/config-oxlint.test.ts）。
+  // （快照测试拦下；见 test/config-oxlint.test.ts）。
   ...REGEXP_RULES,
   ...ZOD_RULES,
   ...E18E_RULES,
@@ -1128,6 +1244,10 @@ export const TEST_OVERRIDES: OxlintOverride = {
  */
 export const PROD_OVERRIDES: OxlintOverride = {
   files: ["lib/**", "src/**", "host.ts", "cli-main.ts"],
+  // 用例文件不能落在生产规则里：`src/foo.test.ts` 与 `src/foo.ts` 都命中 files，而 override
+  // 是整条替换，后者的 error 会把前者在 BASE_RULES 里关掉的 e18e/prefer-static-regex 重新打开
+  //（实测 TEST 空规则 + PROD 在后时测试文件报该规则；只把 PROD 前移也无效，必须靠 excludeFiles）。
+  excludeFiles: [...CASE_FILE_PATTERNS, ...SPEC_FILE_PATTERNS],
   rules: {
     "e18e/prefer-static-regex": "error",
   },
@@ -1238,17 +1358,29 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
     ],
     "unicorn/no-process-exit": "off",
     "unicorn/no-useless-undefined": "off",
-    "typescript/no-non-null-assertion": "off",
-    "node/no-sync": "off",
     "node/no-top-level-await": "off",
     // 唯一命中是 ocr-review 脚本对 js-yaml mark.snippet 的依赖（依据见 OFF_JUSTIFICATIONS）。
     "e18e/ban-dependencies": "off",
-    // 这一族是**类型信息**规则：它们判的是「这个值的类型是不是 any/unknown」。
-    // `scripts/*.mjs` 是 node 直接跑的检查脚本，仓内没开 `checkJs`，也没有 TS 类型标注
-    // ⇒ 每个值都落进隐式 any，实测 1658 条里 1428 条是这一族（不是 1428 个缺陷，
-    // 而是这些规则在这里无从计算）。真正能判的仍全量保留：no-undef、no-unused-vars、
-    // import/first、unicorn 的 correctness 类、eslint 的规模与可读性类。
-    // 若日后把这些脚本迁成带类型的 .ts，这一族要跟着收回来。
+    // 刻意不在这里关 `node/no-sync`：基线只读白名单照常生效，写侧必须由调用方的
+    // syncIoScopes 按文件点名（root、dir-prep、rtk 都各有 scope）。整族 off 会让脚本里的
+    // `writeFileSync` 也静默通过，等于把「只读同步」的闸门一起拆了。
+    // 同理，类型规则也不在这里：`.mts`/`.ts` 是有类型的脚本，不能继承无类型 `.mjs` 的豁免；
+    // 见 UNTYPED_SCRIPT_OVERRIDES。
+  },
+};
+
+/**
+ * 无类型 `.mjs` 的类型信息规则豁免：这些规则判「值的类型是不是 any/unknown」，而 node 直接跑的
+ * `.mjs` 没有 `checkJs`/类型标注，每个值都落进隐式 any，实测 1658 条里 1428 条是这一族
+ * （不是 1428 个缺陷，而是这些规则在这里无从计算）。
+ *
+ * `*.mjs` 在 oxlint 的 glob 语义里会跨 `/` 匹配任意深度（实测 `test/*.mjs`、`deep/helper.mjs`
+ * 都命中），这里保留这个覆盖面；`.mts`/`.ts` 不进来——那是这次从 `SCRIPTS_OVERRIDES` 拆出来的
+ * 原因：它们能被类型检查真正判，不该跟着 `.mjs` 一起静默。
+ */
+export const UNTYPED_SCRIPT_OVERRIDES: OxlintOverride = {
+  files: ["**/*.mjs"],
+  rules: {
     "typescript/no-unsafe-member-access": "off",
     "typescript/no-unsafe-call": "off",
     "typescript/no-unsafe-assignment": "off",
@@ -1257,58 +1389,102 @@ export const SCRIPTS_OVERRIDES: OxlintOverride = {
     "typescript/strict-boolean-expressions": "off",
     "typescript/no-implied-eval": "off",
     "typescript/require-array-sort-compare": "off",
+    "typescript/no-non-null-assertion": "off",
   },
 };
 
 /**
- * 造一个"只读依据视图"：基线的 OFF_JUSTIFICATIONS 加上本次调用带进来的包级例外。
- * **刻意不往导出的那张表里写**（早先的实现是 `OFF_JUSTIFICATIONS[rule] = justification`）：
+ * 造一个"只读依据视图"：调用方传进来的包级例外，或基线的 OFF_JUSTIFICATIONS。
+ * **刻意不把两者合并、也不往导出的那张表里写**（早先的实现是 `OFF_JUSTIFICATIONS[rule] = justification`）：
  * 配置模块在同一个 Node 进程里只求值一次，写过的那张表会让 A 包的例外为 B 包的无依据 off 提供依据
- * ——正是这道检查要拦的情形，而且单测里已经复现过一次串扰（上一条用例的例外让下一条负例变成正例）。
+ * ——正是这道检查要拦的情形；合并视图则会让基线里一条"仅限特定文件"的理由替调用方的全局 off 背书。
  */
 function makeJustificationView(
-  offReasons: Record<string, OffJustification>,
+  reasons: Record<string, OffJustification>,
 ): (rule: string) => OffJustification | undefined {
-  const merged: Record<string, OffJustification | undefined> = {
-    ...OFF_JUSTIFICATIONS,
-    ...offReasons,
-  };
   return (rule: string): OffJustification | undefined => {
-    const direct = merged[rule];
+    const direct = reasons[rule];
     if (direct !== undefined) {
       return direct;
     }
     const slash = rule.indexOf("/");
-    return slash === -1 ? undefined : merged[`${rule.slice(0, slash)}/*`];
+    return slash === -1 ? undefined : reasons[`${rule.slice(0, slash)}/*`];
   };
 }
 
+type OffSource = "baseline" | "caller";
+type OffScope = "global" | "override";
+
 /**
- * 每一条 `"off"` 都必须在 OFF_JUSTIFICATIONS 里有依据。抛错而不是「记一行日志」：
- * 配置加载失败会让 oxlint 立即报错，把规则关掉这件事不可能静默穿过这道检查
- * （实测过的同类失效形态：一条不存在的规则名让整份配置解析失败，13 个包全部静默 lint 0 条却 exit 0）。
+ * 每一条 `"off"` 都必须在对应来源的依据表里有依据，且调用方的**全局** off 不能用
+ * `kind: "仅限特定文件"` 的理由来背书。
+ *
+ * - 基线（{@link BASE_RULES} / {@link SONARJS_RULES} 与五个内建 override）查 OFF_JUSTIFICATIONS；
+ * - 调用方（`extraRules` / `extraOverrides` / `offReasons`）只查本次 `offReasons`；
+ * - `scope` 是这条 off 的生效范围：`extraRules` 是 global，override 是 override。调用方把一条
+ *   "仅限特定文件"的理由用在 `extraRules` 上时直接抛——那条理由只该为某个文件或 override 背书。
+ *
+ * 抛错而不是「记一行日志」：配置加载失败会让 oxlint 立即报错，把规则关掉这件事不可能静默穿过
+ * 这道检查（实测过的同类失效形态：一条不存在的规则名让整份配置解析失败，所有仓全部静默
+ * lint 0 条却 exit 0）。
  */
 function assertOffsDocumented(
   where: string,
   rules: RuleTable | undefined,
   lookup: (rule: string) => OffJustification | undefined,
+  source: OffSource,
+  scope: OffScope,
 ): void {
   if (rules === undefined) {
     return;
   }
   const undocumented: string[] = [];
+  const wrongScope: string[] = [];
   for (const [rule, setting] of Object.entries(rules)) {
     const severity = Array.isArray(setting) ? setting[0] : setting;
     if (severity === "off") {
       const found = lookup(rule);
       if (found === undefined || found.note.trim().length === 0) {
         undocumented.push(rule);
+      } else if (source === "caller" && scope === "global" && found.kind === "仅限特定文件") {
+        wrongScope.push(rule);
       }
     }
   }
   if (undocumented.length > 0) {
     throw new Error(
-      `${where} 里这些规则被关成 off 但没有依据（OFF_JUSTIFICATIONS 查不到，或 note 为空）：${undocumented.join(", ")}。要么在代码里修，要么给它补一条 kind + measured + note。`,
+      `${where} 里这些规则被关成 off 但没有依据（${source === "caller" ? "调用方 offReasons" : "OFF_JUSTIFICATIONS"} 查不到，或 note 为空）：${undocumented.join(", ")}。要么在代码里修，要么给它补一条 kind + measured + note。`,
+    );
+  }
+  if (wrongScope.length > 0) {
+    throw new Error(
+      `${where} 里这些规则是全局 off，但依据 kind 是"仅限特定文件"：${wrongScope.join(", ")}。` +
+        `"仅限特定文件"只能给 override 用；extraRules 的全局 off 要换一条适用于全局的 kind，或把豁免移进 extraOverrides。`,
+    );
+  }
+}
+
+/**
+ * 已退役的 off 豁免不能再被任何一层恢复。`RETIRED_OFFS` 不是"有依据可关"的清单：它的语义是
+ * "这条规则原先的 off 条目已经撤销，规则必须保持开启，别为了兼容旧配置把它重新挂回 off"。
+ *
+ * 早先只有一个导出常量，`definePluginConfig` 从不读它；现在在工厂出口处扫最终 rules 与每一条 override，
+ * 任何一层把它写成 off 都抛。`offReasons` 不能给这条兜底开后门。
+ */
+function assertRetiredOffs(where: string, rules: RuleTable | undefined): void {
+  if (rules === undefined) {
+    return;
+  }
+  const hit = Object.entries(rules)
+    .filter(([rule, setting]) => {
+      const severity = Array.isArray(setting) ? setting[0] : setting;
+      return severity === "off" && RETIRED_OFFS.includes(rule);
+    })
+    .map(([rule]) => rule);
+  if (hit.length > 0) {
+    throw new Error(
+      `${where} 里这些规则的 off 豁免已退役，不能再被关成 off：${hit.join(", ")}。` +
+        `RETIRED_OFFS 是"已撤销的豁免"清单，不能借 offReasons 或任何 override 恢复。`,
     );
   }
 }
@@ -1366,7 +1542,8 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     titlePrefixes = [],
   } = options;
 
-  const lookup = makeJustificationView(offReasons);
+  const baselineLookup = makeJustificationView(OFF_JUSTIFICATIONS);
+  const callerLookup = makeJustificationView(offReasons);
 
   const rules: RuleTable = {
     ...BASE_RULES,
@@ -1392,18 +1569,50 @@ export function definePluginConfig(options: PluginLintOptions = {}): OxlintConfi
     };
   });
 
-  const overrides = [
+  // 顺序是基线自己的 override 在前，调用方的 extraOverrides 在后。`PROD_OVERRIDES` 尽管排在
+  // 测试 override 之后，也必须靠 excludeFiles 把用例文件挡在外面（见 PROD_OVERRIDES 的注释）。
+  const builtInOverrides = [
     TEST_OVERRIDES,
     makeTestFileOverrides({ assertionHelpers, titlePrefixes }),
     SCRIPTS_OVERRIDES,
+    UNTYPED_SCRIPT_OVERRIDES,
     PROD_OVERRIDES,
     ...scopeOverrides,
-    ...extraOverrides,
   ];
+  const callerOverrides = [...extraOverrides];
+  const overrides = [...builtInOverrides, ...callerOverrides];
 
-  assertOffsDocumented("rules", rules, lookup);
+  // 基线只查基线的依据表；`extraRules` 单独查调用方的 `offReasons`。把两者合并会让
+  // OFF_JUSTIFICATIONS 里一条"仅限特定文件"的理由替调用方的全局 off 背书（这次修复的正是这一条）。
+  assertOffsDocumented(
+    "rules",
+    { ...BASE_RULES, ...SONARJS_RULES },
+    baselineLookup,
+    "baseline",
+    "global",
+  );
+  assertOffsDocumented("rules", extraRules, callerLookup, "caller", "global");
+  for (const [index, override] of builtInOverrides.entries()) {
+    assertOffsDocumented(
+      `overrides[${index}]`,
+      override.rules,
+      baselineLookup,
+      "baseline",
+      "override",
+    );
+  }
+  for (const [index, override] of callerOverrides.entries()) {
+    assertOffsDocumented(
+      `overrides[${builtInOverrides.length + index}]`,
+      override.rules,
+      callerLookup,
+      "caller",
+      "override",
+    );
+  }
+  assertRetiredOffs("rules", rules);
   for (const [index, override] of overrides.entries()) {
-    assertOffsDocumented(`overrides[${index}]`, override.rules, lookup);
+    assertRetiredOffs(`overrides[${index}]`, override.rules);
   }
 
   return defineConfig({

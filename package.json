@@ -1,7 +1,7 @@
 {
   "name": "@jayyuen66/dsh-plugin-shared",
-  "version": "0.2.13",
-  "description": "dsh 自研插件的共享工具库：tool 事件流记账扫描 + 卡片 apply/差异骨架 + 统一设置卡 UI 组件 + 官方作业结局映射 + 项目键派生 + 代理对安全截断。宿主半由各插件 import；客户端半以 ./client 共享行由插件 patch 启用，该供应行必须保持开启——停用后各插件设置卡会失去组件供应",
+  "version": "0.3.0",
+  "description": "dsh 自研插件的共享工具库：tool 事件流记账、卡片草稿/差异/UI 组件、项目键与 locale、作业结局、路径/数值/CLI 安全与代理对安全截断等跨仓公共件。宿主半由各插件 import；客户端半以 ./client 共享行由插件 patch 启用，该供应行必须保持开启——停用后各插件设置卡会失去组件供应",
   "keywords": [
     "cordis",
     "dsh",
@@ -28,10 +28,10 @@
   "type": "module",
   "sideEffects": false,
   "main": "./dist/plugin.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/types/plugin.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/types/plugin.d.ts",
       "default": "./dist/plugin.js"
     },
     "./client": {
@@ -40,85 +40,14 @@
       "import": "./dist/client-entry.js",
       "default": "./dist/client.js"
     },
-    "./client-node": {
-      "types": "./dist/types/client-entry.d.ts",
-      "default": "./dist/client-entry.js"
+    "./tool": {
+      "types": "./dist/types/tool.d.ts",
+      "browser": "./dist/tool-browser.js",
+      "default": "./dist/tool.js"
     },
-    "./lib/tool-events": {
-      "types": "./dist/types/tool-events.d.ts",
-      "default": "./dist/tool-events.js"
-    },
-    "./lib/card-apply": {
-      "types": "./dist/types/card-apply.d.ts",
-      "default": "./dist/card-apply.js"
-    },
-    "./lib/card-diff": {
-      "types": "./dist/types/card-diff.d.ts",
-      "default": "./dist/card-diff.js"
-    },
-    "./lib/card-ui": {
-      "types": "./dist/types/card-ui.d.ts",
-      "default": "./dist/card-ui.js"
-    },
-    "./lib/project-key": {
-      "types": "./dist/types/project-key.d.ts",
-      "default": "./dist/project-key.js"
-    },
-    "./lib/locale": {
-      "types": "./dist/types/locale.d.ts",
-      "default": "./dist/locale.js"
-    },
-    "./lib/lesson-bus": {
-      "types": "./dist/types/lesson-bus.d.ts",
-      "default": "./dist/lesson-bus.js"
-    },
-    "./lib/text": {
-      "types": "./dist/types/text.d.ts",
-      "default": "./dist/text.js"
-    },
-    "./lib/record": {
-      "types": "./dist/types/record.d.ts",
-      "default": "./dist/record.js"
-    },
-    "./lib/errors": {
-      "types": "./dist/types/errors.d.ts",
-      "default": "./dist/errors.js"
-    },
-    "./lib/jsonl": {
-      "types": "./dist/types/jsonl.d.ts",
-      "default": "./dist/jsonl.js"
-    },
-    "./lib/job-outcome": {
-      "types": "./dist/types/job-outcome.d.ts",
-      "default": "./dist/job-outcome.js"
-    },
-    "./lib/remote-marker": {
-      "types": "./dist/types/remote-marker.d.ts",
-      "default": "./dist/remote-marker.js"
-    },
-    "./lib/instance-lock": {
-      "types": "./dist/types/instance-lock.d.ts",
-      "default": "./dist/instance-lock.js"
-    },
-    "./lib/skill": {
-      "types": "./dist/types/skill.d.ts",
-      "default": "./dist/skill.js"
-    },
-    "./lib/placeholder": {
-      "types": "./dist/types/placeholder.d.ts",
-      "default": "./dist/placeholder.js"
-    },
-    "./lib/typert-client": {
-      "types": "./dist/types/typert-client.d.ts",
-      "default": "./dist/typert-client.js"
-    },
-    "./lib/session-projection": {
-      "types": "./dist/types/session-projection.d.ts",
-      "default": "./dist/session-projection.js"
-    },
-    "./lib/with-timeout": {
-      "types": "./dist/types/with-timeout.d.ts",
-      "default": "./dist/with-timeout.js"
+    "./internal/tool/*": {
+      "types": "./dist/types/*.d.ts",
+      "default": "./dist/*.js"
     },
     "./lib/canonicalize-region-paths": {
       "types": "./dist/types/canonicalize-region-paths.d.ts",
@@ -139,6 +68,10 @@
     "./lib/build-types": {
       "types": "./dist/types/build-types.d.ts",
       "default": "./dist/build/build-types.js"
+    },
+    "./lib/build-tool-imports": {
+      "types": "./dist/types/build-tool-imports.d.ts",
+      "default": "./dist/build/build-tool-imports.js"
     },
     "./lib/decorator-lowering": {
       "types": "./dist/types/decorator-lowering.d.ts",
@@ -161,8 +94,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "prebuild": "node build-clean.mjs",
-    "build": "node build-host.mjs && node build-config.mjs && tsc -p tsconfig.build.json && tsc -p tsconfig.build.config.json && node build-types-check.mjs && node build-client.mjs",
+    "build": "node build-clean.mjs && node build-host.mjs && node build-config.mjs && tsc -p tsconfig.build.json && tsc -p tsconfig.build.config.json && node build-types-check.mjs && node build-client.mjs",
     "build:client": "node build-client.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint .",
@@ -198,7 +130,7 @@
     "eslint-plugin-regexp": "catalog:",
     "eslint-plugin-sonarjs": "catalog:",
     "eslint-plugin-zod": "catalog:",
-    "fast-check": "4.10.3",
+    "fast-check": "4.11.0",
     "happy-dom": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -218,6 +150,7 @@
     "@deepseek-ai/dsh-output-retention": "^0.2.3-alpha.2",
     "@deepseek-ai/dsh-session": "^0.2.3-alpha.2",
     "@deepseek-ai/dsh-shell": "^0.2.3-alpha.2",
+    "@deepseek-ai/dsh-tool-executor-ptc": "^0.2.3-alpha.2",
     "@deepseek-ai/dsh-tools": "^0.2.3-alpha.2",
     "@deepseek-ai/dsh-typert-protocol": "^0.2.3-alpha.2",
     "react": "^18.2.0 || ^19.0.0"
@@ -242,6 +175,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-shell": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tool-executor-ptc": {
       "optional": true
     },
     "@deepseek-ai/dsh-tools": {

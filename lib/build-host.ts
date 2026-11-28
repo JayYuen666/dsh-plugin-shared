@@ -12,11 +12,12 @@
 // devDependency，本包不为构建工具声明运行期依赖。
 import path from "node:path";
 import type { CommentsOptions, RolldownPluginOption } from "rolldown";
-import { canonicalizeRegionPaths } from "./canonicalize-region-paths.ts";
 import {
   asRecord,
   closeQuietly,
+  escapeRegExp,
   isRecord,
+  packageNameOf,
   packagePatternOf,
   readManifest,
   singleEntryChunk,
@@ -30,6 +31,18 @@ import type { RolldownFactory } from "./build-artifacts.ts";
  * annotation 与 jsdoc 仍取缺省 true，产物会多出若干 `@__PURE__` 标注字节。
  */
 const LEGAL_COMMENTS: CommentsOptions = { legal: true, annotation: false, jsdoc: false };
+
+/**
+ * shared 的工具面在消费方产物里是 external：`/tool` 已被构建期拆成 `internal/tool/<module>`，
+ * 但 rolldown 不会去读被 external 包的 `sideEffects: false`。一个具名导入在 tree shaking 后
+ * 只剩副作用时，产物会留下 `import "…/internal/tool/x"`——这段导入没有绑定，却在运行期
+ * 让 Node 真正加载并求值那个模块。shared 的 package.json 已声明 `sideEffects: false`，
+ * 这里把同一事实显式交给 rolldown 的 `treeshake.moduleSideEffects`，让它把这类空导入整条删掉。
+ *
+ * 只匹配工具面（`/tool` 与 `/internal/tool/*`），不碰 `/client`：后者是宿主模块表里的单例，
+ * 语义上不该由这条构建期规则替它决定副作用。
+ */
+const SHARED_TOOL_SIDE_EFFECTS = /^@jayyuen66\/dsh-plugin-shared\/(?:tool|internal\/tool\/)/u;
 
 /**
  * 注释键的三态分派：显式 false 抹掉、未给定且压缩时降到 legal-only、其余省略键。
@@ -71,7 +84,7 @@ export interface HostBuildOptions {
   readonly entries: readonly HostEntry[];
   /** 压缩产物。缺省不压；装载器只 `import()` 文本，注释与空白是真实装载成本。 */
   readonly minify?: boolean;
-  /** 保留注释。缺省跟随 minify（压缩则移除，不压缩则保留）。 */
+  /** 保留注释。缺省跟随 minify（压缩则只保留 legal comments，不压缩则全保留）。 */
   readonly comments?: boolean;
   /** rolldown 插件（如装饰器预转换）。缺省无。类型借 rolldown 自己的插件形状（仅类型导入）。 */
   readonly plugins?: RolldownPluginOption;
@@ -82,6 +95,17 @@ export interface HostBuildOptions {
    * 运行期 require 决定，内联会把可选实现固定进产物、抹掉「可选」这层语义。
    * 个别包刻意反向（可选依赖内联成「缺包时功能照旧」），传 false。 */
   readonly externalizeOptional?: boolean;
+  /**
+   * 要**内联**的说明符（裸包名或子路径），从依赖段的外部化集合里精确摘出来。
+   *
+   * 典型用法是 shared 的纯工具面：`@jayyuen66/dsh-plugin-shared/tool`。只摘这一条子路径，
+   * 同包的 `/client` 仍保持 external（它是宿主模块表里的单例行）。不能直接删整个包名：
+   * 那样会把同包其它子路径一起内联，模块级状态会被复制。
+   *
+   * 说明符必须属于 dependencies / peerDependencies（及按选项计入的 optionalDependencies），
+   * 否则立即抛错——打错一个字不应退化成「整包仍 external」的静默成功。
+   */
+  readonly inline?: readonly string[];
 }
 
 /** 一个 host 产物的构建结果。`inlinedModules` 是结构性外部化检查的判断依据。 */
@@ -150,6 +174,34 @@ function externalNamesOf(
 }
 
 /**
+ * 外部化正则：整包 external，但把 `inline` 里点名的子路径精确放行给打包器。
+ *
+ * 为什么不用「把包名从 external 集合删掉」：那会连同一包的 `/client` 等兄弟子路径一起内联。
+ * 这里给每个包生成 `^pkg(?:/(?!排除项$).*)?$`：包根与其它子路径仍命中，只有登记的那一条
+ * 不命中，交给 rolldown 解析并 tree-shake。
+ * @param names - 依赖段合出的包名集合
+ * @param inline - 要内联的说明符集合
+ * @returns 用于 rolldown `external` 的正则数组
+ */
+function externalPatternsOf(names: ReadonlySet<string>, inline: ReadonlySet<string>): RegExp[] {
+  const patterns: RegExp[] = [];
+  for (const name of names) {
+    if (!inline.has(name)) {
+      const suffixes = [...inline]
+        .filter((specifier) => specifier.startsWith(`${name}/`))
+        .map((specifier) => specifier.slice(name.length + 1));
+      if (suffixes.length === 0) {
+        patterns.push(packagePatternOf(name));
+      } else {
+        const excluded = suffixes.map((suffix) => escapeRegExp(suffix)).join("|");
+        patterns.push(new RegExp(`^${escapeRegExp(name)}(?:/(?!${excluded}$).*)?$`, "u"));
+      }
+    }
+  }
+  return patterns;
+}
+
+/**
  * `moduleIds` 必须是**非空的字符串数组**。
  *
  * 只判「是数组」会让两种坏形状通过检查：空清单（下游「依赖一个都没被内联」这条结构性判断
@@ -168,8 +220,8 @@ function isModuleIdList(raw: unknown): raw is readonly string[] {
 /**
  * 构建全部 host 入口。
  *
- * 各入口单独一次 rolldown 并发跑（它们互不依赖，串行只是在等第二次构建）；产物正文
- * 先按 `process.cwd()` 无关的 canonical 形态规范化，再交给调用方写入磁盘。
+ * 各入口单独一次 rolldown 并发跑（它们互不依赖，串行只是在等第二次构建）；模块横幅的
+ * 路径基准由 rolldown 的 `cwd` 选项固定成包根，产物正文不再做文本后处理。
  * @param options - 见 {@link HostBuildOptions}
  * @returns 与入口表同序的产物清单
  */
@@ -186,7 +238,18 @@ export async function buildHostEntries(options: HostBuildOptions): Promise<HostA
   // 外置规则用正则数组而不是判定函数：rolldown 官方文档写明函数形态每个模块回调一次 JS，
   // 开销显著；正则数组在 Rust 侧一次遍历即可，且 `^pkg(/|$)` 保持「按包名段命中子路径」的
   // 语义（字符串项是全等匹配，写 "pkg" 不命中 pkg/sub）。产物字节与函数形态逐字节相同。
-  const externalPatterns = Array.from(externalNames, (name) => packagePatternOf(name));
+  const inline = new Set(options.inline);
+  for (const specifier of inline) {
+    const name = packageNameOf(specifier);
+    if (!externalNames.has(name)) {
+      throw new Error(
+        `inline 说明符 ${specifier} 不属于依赖段（dependencies / peerDependencies` +
+          `${(options.externalizeOptional ?? true) ? " / optionalDependencies" : ""}）——` +
+          "拼错或包名过期时立即失败，避免退化成整包仍 external。",
+      );
+    }
+  }
+  const externalPatterns = externalPatternsOf(externalNames, inline);
   const resolveExtensions = options.resolveExtensions ?? [".ts", ".mjs", ".js"];
   const minify = options.minify ?? false;
   // 省略键在缺省态是承重的：rolldown 对「显式缺省值」与「省略键」不承诺逐字节同形，而消费方的
@@ -207,7 +270,12 @@ export async function buildHostEntries(options: HostBuildOptions): Promise<HostA
       input: path.join(options.root, entry.source),
       external: externalPatterns,
       platform: "node",
-      // 固定 rolldown 的 cwd：`//#region` 行按 process.cwd() 算路径，不固定它同一份源码在
+      // 被 external 的 shared 工具面按 package.json 的 sideEffects:false 交给 tree shaking：
+      // 见 SHARED_TOOL_SIDE_EFFECTS 的说明。只对这一个包的工具子路径生效。
+      treeshake: {
+        moduleSideEffects: [{ test: SHARED_TOOL_SIDE_EFFECTS, external: true, sideEffects: false }],
+      },
+      // 固定 rolldown 的 cwd：`// <path>` 行按这个 cwd 算相对路径，不固定它同一份源码在
       // 包根与子目录下会产出两种字节（跨 cwd 构建不可复现）。
       cwd: options.root,
       resolve: { extensions: [...resolveExtensions] },
@@ -222,10 +290,10 @@ export async function buildHostEntries(options: HostBuildOptions): Promise<HostA
           `rolldown 为 ${entry.source} 产出的 entry chunk 的 moduleIds 不是"非空字符串数组"`,
         );
       }
-      // `//#region` 行的路径由 rolldown 按 process.cwd() 算出 ⇒ 同一份源码有两种字节。改写成
-      // canonical 必须落在**返回值之前**：调用方的新鲜度检查拿内存构建与磁盘产物逐字节比，
-      // 只在一侧改就永远失败。
-      const code = canonicalizeRegionPaths(chunk.code.trimEnd(), options.root, process.cwd());
+      // 模块横幅的路径基准是 rolldown 的 `cwd`（上面已固定成包根），不是 process.cwd()。
+      // 因此这里不再做文本后处理：同一份源码在任意调用方 cwd 下都产出同一串字节，内存构建
+      // 与磁盘产物直接逐字节可比；文本改写反而会把字符串字面量里同形的行改掉。
+      const code = chunk.code.trimEnd();
       artifact = {
         source: entry.source,
         output: entry.output,

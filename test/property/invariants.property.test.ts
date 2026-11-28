@@ -23,17 +23,19 @@ const ledgerTextArb = fc
     lines.map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry))).join("\n"),
   );
 
-describe("shrinkJsonlTail 的配额契约", () => {
-  it("行数 >2 时：结果字节数 ≤ 配额或只有 ≤2 行（二选一必成立）", () => {
+describe("shrinkJsonlTail 的裁剪契约", () => {
+  it("非空输入不被裁空、结果是原文后缀，且已是不动点", () => {
     fc.assert(
-      fc.property(ledgerTextArb, fc.integer({ min: 1, max: 200 }), (text, maxBytes) => {
-        const shrunk = shrinkJsonlTail(`${text}\n`, maxBytes);
-        const withinQuota = Buffer.byteLength(shrunk, "utf8") <= maxBytes;
-        const lineCount = shrunk.split("\n").length;
+      fc.property(ledgerTextArb, fc.integer({ min: -5, max: 200 }), (text, maxBytes) => {
+        const input = `${text}\n`;
+        const shrunk = shrinkJsonlTail(input, maxBytes);
+        assert.notEqual(shrunk, "", "非空输入不得被裁成空串");
+        assert.ok(input.endsWith(shrunk), "结果必须是原文的后缀");
         assert.ok(
-          withinQuota || lineCount <= 2,
-          `两头都不满足：${JSON.stringify({ shrunk: shrunk.length, lineCount, maxBytes })}`,
+          Buffer.byteLength(shrunk, "utf8") <= Buffer.byteLength(input, "utf8"),
+          "结果不得比原文更长",
         );
+        assert.equal(shrinkJsonlTail(shrunk, maxBytes), shrunk, "不得还能再裁");
       }),
     );
   });
@@ -55,7 +57,7 @@ describe("shrinkJsonlTail 的配额契约", () => {
     );
   });
 
-  it("坏配额：NaN/+Infinity 恒等返回，-Infinity 收到 ≤2 行（已文档化的两向表现）", () => {
+  it("坏配额：NaN/+Infinity 恒等返回，-Infinity 收到 ≤2 段（已文档化的两向表现）", () => {
     const text = "a\nb\nc\n";
     assert.equal(shrinkJsonlTail(text, Number.NaN), text);
     assert.equal(shrinkJsonlTail(text, Number.POSITIVE_INFINITY), text);

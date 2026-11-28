@@ -7,9 +7,11 @@
 // 从此为官方实现的行为负责。两个坏方向都不报错、只在消费侧发作，故与兄弟包同批固定。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildHost, facets } from "../build-host.mjs";
+import { buildHost, facets, materialize } from "../build-host.mjs";
 import { hostFreshnessEvidence } from "./host-freshness.ts";
 
 /** 把所有 chunk 的代码并成一段文本好做说明符判定。 */
@@ -33,6 +35,55 @@ describe("shared buildHost()", () => {
         ? "fresh"
         : `[${pkgName}] dist 产物已过期：lib/*.ts（或其依赖）变更后未重建。请运行：cd ${pkgDir} && node build-host.mjs`,
     );
+  });
+
+  it("materialize 只清 host 拥有的旧产物：旧根入口、旧 chunk 删，client/config/types 留", async () => {
+    // 这条用例固定清理的**归属边界**：按相对路径判定，而不是 basename。
+    // 三种真实残留都要在这里变红过：旧根入口（dist/index.js）、与 build/ 同名的旧根文件、
+    // 换哈希后留在 dist/build/ 的 chunk。
+    const built = await buildHost();
+    const dir = await mkdtemp(path.join(tmpdir(), "dsh-host-materialize-"));
+    // 旧 chunk 的正文：两处种下同一个文件内容时只写一次字面量。
+    const staleCode = "// stale\n";
+    // 期望被清掉的相对路径（断言与循环共用一份，避免字符串散落）。
+    const removed = [
+      "ast-walk.js",
+      "build/stale-OLDHASH.js",
+      "build/sub/nested-old.js",
+      "foreign-artifact.js",
+      "index.d.ts",
+      "index.js",
+    ].toSorted();
+    try {
+      await mkdir(path.join(dir, "build", "sub"), { recursive: true });
+      await mkdir(path.join(dir, "config"), { recursive: true });
+      await mkdir(path.join(dir, "types"), { recursive: true });
+      await writeFile(path.join(dir, "client.js"), "// client\n", "utf8");
+      await writeFile(path.join(dir, "index.js"), "// old barrel\n", "utf8");
+      await writeFile(path.join(dir, "index.d.ts"), "export type Old = 1;\n", "utf8");
+      await writeFile(path.join(dir, "ast-walk.js"), "// old root copy\n", "utf8");
+      await writeFile(path.join(dir, "foreign-artifact.js"), "// foreign\n", "utf8");
+      await writeFile(path.join(dir, "build", "stale-OLDHASH.js"), staleCode, "utf8");
+      await writeFile(path.join(dir, "build", "sub", "nested-old.js"), staleCode, "utf8");
+      await writeFile(path.join(dir, "config", "keep-me.js"), "// config\n", "utf8");
+      await writeFile(path.join(dir, "types", "keep.d.ts"), "export type T = 1;\n", "utf8");
+
+      const { artifacts, pruned } = await materialize(built, dir);
+
+      assert.equal(artifacts, built.size);
+      assert.deepEqual(pruned, removed);
+      for (const rel of removed) {
+        assert.ok(!existsSync(path.join(dir, rel)), `${rel} 应被清掉`);
+      }
+      for (const rel of ["tool.js", "tool-map.json", "plugin.js", "build/ast-walk.js"]) {
+        assert.ok(existsSync(path.join(dir, rel)), `${rel} 应被写出`);
+      }
+      for (const rel of ["client.js", "config/keep-me.js", "types/keep.d.ts"]) {
+        assert.ok(existsSync(path.join(dir, rel)), `${rel} 不属于 host 编排，不能被删`);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("产物：@deepseek-ai/dsh-output-retention 保持裸说明符（未内联）", async () => {
@@ -80,9 +131,9 @@ describe("shared buildHost()", () => {
   });
 
   it("facets 与 lib/ 下的切面一一对应（barrel 类型的同源清单不许漂移）", async () => {
-    // 新增模块只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，dist/index.d.ts 会
-    // 静默缺成员而其余检查全部通过——index.test.ts 管 barrel↔lib、publish-manifest 管
-    // exports↔lib，只有这份清单两边都搭不上。
+    // 新增模块只改 lib/ 与 barrel、漏掉 build-host.mjs 的 facets 时，`./internal/tool/<module>`
+    // 的 dist/<module>.js 不会产出，而其余检查全部通过——index.test.ts 管 barrel↔lib、
+    // publish-manifest 管 exports↔lib，只有这份清单两边都搭不上。
     const listed = await readdir(path.join(import.meta.dirname, "..", "lib"));
     const onDisk = listed
       .filter((name) => name.endsWith(".ts"))
@@ -97,7 +148,10 @@ describe("shared buildHost()", () => {
       "build-host",
       "build-client",
       "build-types",
+      "build-tool-imports",
       "decorator-lowering",
+      "require-calls",
+      "ast-walk",
       // 只走子路径，不进根 barrel：值导入 typert（见 build-host.mjs 的 entries 注释）。
       "remote-marker",
       // 单实例锁只给宿主侧 apply 用，同样只走子路径。
@@ -106,18 +160,24 @@ describe("shared buildHost()", () => {
       "skill",
       // 占位符插值同样只走子路径：消费方是各包自己的 messages 表。
       "placeholder",
-      // 三个新骨架模块同样只走子路径：typert-client 类型面引用 typert-protocol（不装
+      // 三个新骨架模块同样不进根 barrel：typert-client 类型面引用 typert-protocol（不装
       // typert 的消费方不该被 barrel 逼着解析它）；session-projection 消费方只有两个；
-      // with-timeout 客户端内联 / 宿主外置两种取法都走子路径。
+      // with-timeout 客户端内联 / 宿主外置两种取法都走 ./tool 或 ./client。
       "typert-client",
       "session-projection",
       "with-timeout",
-      // 客户端专用子模块：只走 ./lib/card-ui 子路径，不进根 barrel（react 只属于卡片消费方）。
+      // 客户端专用子模块：只经 ./client 导出，不进根 barrel（react 只属于卡片消费方）。
       "card-ui",
       "index",
       // 宿主入口与客户端行：前者只补 apply，后者由 build-client.mjs 单独打包。
       "plugin",
       "client-entry",
+      // 工具侧单一入口：`./tool` 指向 dist/tool.js，不进根 barrel。
+      "tool",
+      // `./tool` 的浏览器条件实现：package.json 的 browser 条件取它。
+      "tool-browser",
+      // 码点截断的零依赖实现：被 text.ts / tool-browser.ts 内联，不单独作为子路径。
+      "code-points",
     ].toSorted();
     assert.deepEqual(onDisk, expected);
   });

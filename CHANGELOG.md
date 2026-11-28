@@ -2,6 +2,42 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The deviations below are deliberate: version headings carry no release date (publish times are recorded by the registry — `npm view <package> time`), and a release may add sections beyond the standard six, such as `Notes`, `Tests`, `How this release was verified` and `Not changed, deliberately`.
 
+## 0.3.0
+
+### Changed
+
+- **`build-host.mjs` 的产物清理改为按相对路径判定归属。** 根层 `*.js`（`client.js` 除外）与 `build/` 整棵子树由 host 编排独占，单独重跑会删掉换哈希的旧 chunk、旧根入口与陌生文件；`config/`、`types/` 与 `client.js` 不再被 basename 比对误伤。此前只看 `dist/` 一层且把两组产物压成 basename，`dist/ast-walk.js` 会因与 `dist/build/ast-walk.js` 同名而留下，`dist/build/*-<hash>.js` 换哈希后也会永久积累。
+- **根入口类型与运行期产物对齐。** `tsconfig.build.json` 不再排除 `lib/index.ts` / `lib/plugin.ts`，由 `tsc` 产出 `dist/types/index.d.ts` 与 `dist/types/plugin.d.ts`；`package.json` 的 `types` 与 `exports["."].types` 指向 `dist/types/plugin.d.ts`，与运行期 `dist/plugin.js`（含 `name` / `apply`）同一个 barrel。`build-host.mjs` 不再手写根 `.d.ts`，也不再产出无 `exports` 指向的 `dist/index.js`；`scripts/verify-link.mjs` 把 `lib/index.ts` 的新鲜度映射到实际承载它的 `dist/plugin.js`，并把 `build-clean.mjs` 纳入构建输入。
+- **`tool-map.json` 增加读方视角的完整性与可用性校验。** 生成时用 rolldown 的 `chunk.exports` 与文本面双向对账，并逐条验证目标入口真的导出该名字；本地声明导出、default、外部说明符与哈希共享 chunk 未由入口再导出的情况都在构建期明确失败。此前 `export { isRecord as probeAlias } from "./record.ts"` 会写出 `probeAlias → record` 而 `dist/record.js` 不导出该名，消费方装载期才 `SyntaxError`。
+- **`bundle.generate()` 失败也会 `bundle.close()`**，非 chunk 资产与入口名重复/缺失在写盘前直接报错，不再静默过滤。
+
+- **运行期入口收敛为两条：工具侧 `./tool`，浏览器客户端侧 `./client`；`./client-node` 删除。** `./tool` 是 20 个工具模块的单一 barrel（`dist/tool.js`），`browser` 条件把同一说明符指向 `dist/tool-browser.js`（只含纯件），双用源在 client 构建里不会顺着 barrel 拖入 `node:fs` / `node:crypto`。旧的 20 条 `./tool/<module>`、`./lib/<module>` 运行期别名与 `./client-node` 已删除，不再保留 0.2.x 兼容；构建/检查辅助仍走 `./lib/build-*`、`./lib/decorator-lowering`、`./lib/canonicalize-region-paths` 与 `./config/*`。`remoteMounterOf` / `parseOrThrow` / `raceTimeout` / `clampInt` 及类型从 `./client` 取；`truncateCodePoints` 拆到零依赖 `code-points` 模块，供 `./tool` 的浏览器条件复用。九个消费仓已迁移到 `/tool` / `/client`，客户端 UI 源码不得反向 import `./tool`。任何消费方文件不得从 shared 取值或类型后再导出，根 `test/shared-import-surfaces.test.mjs` 钉住这两条。
+- **构建期内部面 `./internal/tool/*` 与 `dist/tool-map.json`（八仓落地，官方 transform）。** `/tool` 源码入口不变；`build-host.mjs` 每次构建从真实 `dist/tool.js` 的导入/导出关系生成「导出名 → 稳定模块名」映射，消费方构建器据此把 `import { x } from "/tool"` 拆成 `internal/tool/<module>` 的 external 裸说明符。这样 shared 只保留一份模块实例，修 shared 不必重发消费仓，同时避免整条 barrel 进宿主产物。拆分的官方实现是 `@rolldown/plugin-transform-imports@0.1.3`；它不认识的 type-only 收窄、入口形状与再导出守卫收在新增的 `./lib/build-tool-imports`（`toolImportTransform`），消费方只注入官方插件与自己的 `parseAst`。`./internal/tool/*` 是构建期内部面，不是公共 API，消费方源码不得直接 import；根 import surface 守卫已把这条写进禁止面。八仓 `host.js` 合计 1,820,289 → 1,795,553 B（-24,736 B，-1.36%），八插件同进程运行期合计 1,820,289 → 1,806,669 B（-13,620 B，-0.75%）；danger-guard 单仓 `host.js` 144,694 → 141,244 B、`settings.js` 5,003 B，产物无 `/tool` 残留。
+- **external 工具面的空导入交给 native `treeshake.moduleSideEffects`。** 被 external 的 shared 工具面在 tree shaking 后可能只剩 `import "…/internal/tool/x"`；消费方构建器现在按 `package.json` 的 `sideEffects: false` 显式登记这条规则，rolldown 会把这类没有绑定的导入整条删掉。danger-guard 的 `settings.js` 因此从 5,066 B 降到 5,003 B（少一次 `placeholder` 的空加载），`host.js` 的 141,244 B 不变。`/client` 不在规则内。
+- **tool-events 的证据参数改深快照；PTC 官方包改 optional peer。** `ToolCallRecord.arguments` 现在先用平台 `structuredClone` 与事件做完全隔离（循环、稀疏数组、Date / Map / Set / ArrayBuffer 视图都由平台算法处理），再对 JSON 对象/数组逐层 `Object.freeze`；记录不再别名事件里的任何一层，JSON 证据改不动。非 JSON 对象已克隆但内部槽不声称冻结；函数、Proxy 等不可结构化克隆的值按空参数处理，异常不进入证据链。`@deepseek-ai/dsh-tool-executor-ptc` 从仅 devDependency 改为 **optional peer**：不碰 PTC 载荷的 `./tool` 消费方不会被安装器要求装它，真正引用 PTC 类型或自建 PTC 事件的消费方（dsh-danger-guard、dsh-quality-gate）仍在各自 devDependencies 钉精确版本。
+
+### Added
+
+- **`./lib/build-tool-imports` 构建期切面**：`toolImportGuard` 把 `/tool` 的源码导入收窄成纯值具名导入（丢掉 type-only、拒绝 default / namespace / side-effect 与再导出），`toolImportTransform` 把官方 `@rolldown/plugin-transform-imports` 与本仓 `tool-map.json` 接成消费方只需传 `transformImports` / `parseAst` 的两条插件；八仓的 `build-host.mjs` 已统一走它。
+- **六个跨仓运行期模块（`./tool` 的 `path-scope`、`value`、`number`、`session-cwd`、`cli-safety` 五枚；`card-form` 随 `./client`）**：`isPathInside` / `isAncestorDirOf` 与严格的 `normalizeAbsolutePath` / `assertAbsoluteRoot`；`asText` / `asDisplayText` / `escapeRegExp`；`numberBoundsOf` / `withDraftField` / `effectiveField`；`WorkingDirectoryFace` / `WorkingDirectoryService` / `isWorkingDirectory` / `isWorkingDirectoryService` / `sessionWorkingDirectory` / `SessionCwdAgent`；`versionAtLeast` / `clampInt`；`shq`。六者都只收跨仓逐字/α-等价的机械件，领域判断留在各插件。
+- **客户端草稿骨架 `useCardDraft`（`./client`）**：单份 touched 层状态，`Object.hasOwn` 判自有键，可带逐字段 parser；七张设置卡原本各自手写的 `setField` / `eff` / `boundsOf` 三层改由它和 `./client` 承担。
+- **`./tool` 的 record 扩 `arrayOf` / `hasOptionalMethods`，`./tool` 的 errors 扩 `isErrnoCode` / `isEnoent`，`./client` 公开 `formValueEquals`，`./client` 扩 `SafeParse*` / `parseOrThrow` / `remoteMounterOf`**：全部是纯加法；`parseOrThrow` 的错误格式化器由调用方注入，因此本包仍不新增 zod 依赖面。
+- **`isWorkingDirectoryService`**：严格版工作目录服务判据（`get` 必须在场且是函数）。它和宽松的 `isWorkingDirectory` 分工明确：后者允许服务只装一半、由调用方用 `service.get?.()` 回落；dir-prep 的公开 `workingDirectoryOf` 契约要求服务已装全，改用严格版后删掉了本地重复守卫。
+- **`./lib/decorator-lowering` 扩 `tscFailureHeadOf`**：spawnSync 结果的 signal/status → 异常终止的头部短语，两条短语与 runTsc 原错误文本逐字一致。Windows 的 spawnSync 不回 signal，信号臂只有合成入参能到达——分支收进纯函数后两臂在全平台的覆盖率分母里，不再依赖真实信号。
+
+### Changed
+
+- **`lib/card-apply.ts` 的占位槽改成 descriptor-only 契约。** 读、写、清理都走 `Object.getOwnPropertyDescriptor` / `Object.defineProperty`：自有访问器、原型链访问器、非占位协议值（number / string / object 等）与不可配置的自有槽都明确抛错，不再用普通下标赋值而静默覆盖全局属性。claim 前没有自有键时，清理用 `Reflect.deleteProperty` 精确删键；有自有键时按原 descriptor 原样恢复（writable / enumerable 一并恢复）。`ctx.effect` 抛错时先释放占位；释放也失败时保留原始注册错误，把回滚错误挂到 `cause`。旧版外部写入的 `true` 仍被识别；旧 guard 不识别新 symbol，混合版本页不享受 token 保护（代码注释已写明）。
+- **产物预算按实测抬档**（`test/dist-size.test.ts` 继续逐轮记账）：运行期 70,000 → 82,500 B（中间档 76,000 / 78,000；当前实测 79,758 B，含六个新模块、`useCardDraft`、严格路径实现与两条 `/tool` barrel），客户端行 60,000 → 64,000 B（当前实测 63,569 B，含 `useCardDraft`、card-ui 导出面增长，以及统一从 `./client` 供给的读取骨架 / 超时 / 夹位件）。
+- **README / README.zh-CN 同步**：`card-apply` 的「进程级」改为「同一 `globalThis`（同一 realm）内共享」；槽必须是可配置数据属性、访问器与非协议值抛错；iframe / worker 各有自己的 `globalThis`，不共享这份标记。
+
+### Tests
+
+- `test/build-host.test.ts` 增加 `materialize()` 归属清理回归：旧根入口、与 `build/` 同名的旧根文件、嵌套旧 chunk 都删，`client.js` / `config/` / `types/` 保留；`test/tool-map.test.ts` 增加「每个映射目标实际导出该名字」与「映射键集合等于 `dist/tool.js` 导出面」两条解析式断言；`test/host-freshness.ts` 的 extras 扫描改为递归覆盖 `dist/build/` 并按相对路径比对；根 `test/verify-link.test.mjs` 同步 `dist/plugin.js` 映射与 `build-clean.mjs` 构建输入。
+- `test/card-apply.test.ts` 13 → 26 条：新增自有/原型链访问器（getter/setter 零调用）、number / string 碰撞、不可配置残留、既有 symbol、非默认 descriptor 精确恢复、写入失败与回滚失败（含已有 `cause`、冻结 Error 与非 Error）、真实 Cordis apply 失败 → 清理 → flag 缺席 → `update` 重试 → dispose 后缺席、已卸载 ctx `INACTIVE_EFFECT`。
+- 全量：55 个测试文件 / 921 条用例，覆盖率四项 100%；`lib/card-apply.ts` 单文件四项 100%。新增用例覆盖六个收编模块、`useCardDraft` 的 `Object.hasOwn` / 继承键、`isWorkingDirectoryService` 与 `path-scope` 的严格 `..` / win32 拒绝面。
+- Windows 格真跑暴露三条 POSIX 绑定并修复：产物解析错误消息的入口分隔符改平台无关判据（缺省入口经 `path.join` 构造，Windows 消息里是反斜杠）；`resolveModuleEntry` 的 `file://` 夹具与期望改按标准转换推导（win32 上 `/tmp/…` 转成 `\tmp\…`）；tsc 信号断言按平台分支（Windows 走退出码臂），信号臂提成 `tscFailureHeadOf` 并以合成用例覆盖。
+
 ## 0.2.13
 
 宿主开发基线切到 `dsh 0.2.3-alpha.2`（cordis `4.2.0-alpha.1`、schemastery `3.20.0-alpha.1`、cosmokit `1.10.0-alpha.1`，Node `^24.22.3 || >=26.13.1`）。设置卡视觉层升到 v3 基线：字段标签在上、帮助按钮/错误徽标、行式布尔项、统一保存条与 KPI/Insights 辅助样式；`JobOutcome` 补 `exitCode`，React optional peer 放宽到 `^18.2.0 || ^19.0.0`。
@@ -14,7 +50,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **保存条**：状态区收进 `.dsu-saveInfo`，撤销/保存改小号按钮（`dsu-btnSm`）；基础底色由 `bg-layer-2` 改 `card-fill`（宿主「设置」对话框里 `bg-layer-2` 会成一条比四周更暗的横带），`CARD_UI_CSS_VERSION` 3 → 3.1。
 - **控件 DOM id 改 `nextDomId`。** 进程内自增替代 React `useId`：插件测试用自带的渲染器展开组件树并把 `react` 换成轻量 hook，共享包从自己 node_modules 解析 React 时是另一份实例，`useId` 的 dispatcher 为 null。id 只服务 `label[for]` 与 `aria-*`，进程内唯一即可。
 - **`JobOutcome` 补 `exitCode`。** `jobOutcomeOf` 的 completed 结局同时带官方 `JobView.exitCode`，作业列表据此给非零退出码画警告点；`detail` 的 `exit code: N` 文案不变。
-- **`config/vitest.base` 的客户端别名改走发布产物。** `@jayyuen66/dsh-plugin-shared/client` → `client-node`（`files` 只带 `dist`，源码路径在 registry 安装态不存在），`react` / `react-dom` 显式指回消费仓根 `node_modules` 并 `dedupe`，shared 加进 `server.deps.inline`——node_modules 下的包默认被外部化，Node 加载器会绕过 alias 与 `vi.mock("react")`；内联后 dist 里的 `import "react"` 走 Vite 的同一套解析，mock 才作用在同一个模块实例上。
+- **`config/vitest.base` 的客户端测试别名改走包内产物。** `@jayyuen66/dsh-plugin-shared/client` → 包内 `dist/client-entry.js`（`files` 只带 `dist`，源码路径在 registry 安装态不存在），`react` / `react-dom` 交给 `resolve.dedupe`，shared 加进 `server.deps.inline`——node_modules 下的包默认被外部化，Node 加载器会绕过 alias 与 `vi.mock("react")`；内联后 dist 里的 `import "react"` 走 Vite 的同一套解析，mock 才作用在同一个模块实例上。 绝对路径比原来的裸子路径长约 70 B，配置面实测 33,584 B，预算 `CONFIG_BUDGET_BYTES` 33,500 → 34,000。
 - **React optional peer 放宽到 `^18.2.0 || ^19.0.0`。** 组件只用 React 18 就已存在的 API，宿主运行时是 18.3.1；devDependencies 仍钉 `19.3.0` / `19.3.1` 作编译期基线。
 - **CI 与发布机器**：`node-version` 从 `24.9` 抬到 `24.22.3`（gate 矩阵、install-matrix、publish 三处同源）。
 - **产物预算按实测抬档**（`test/dist-size.test.ts` 逐轮记账）：运行期预算 56,800 → 70,000 B（实测 69,921），客户端行预算 46,700 → 60,000 B（实测 59,881）。
@@ -24,8 +60,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **card-ui v3 表单件（`./lib/card-ui` 导出面纯加法）**：`SectionToggle`（节级开关，放 `Section` 的 `toggle` 位）、`ToggleGrid` / `ToggleCell`（成组布尔项的紧凑双列栅格）、`SecretField`（password 输入 + 框内 28×28 眼睛按钮，`revealToken` 让撤销后回到遮蔽）、`SelectField` 的 `bare` 变体（表格单元格与页头筛选不画 Field 外壳）、`NumberField` 的 `inputMode`（小数步长默认 `decimal`，其余 `numeric`）与越界错误态（`invalidText` 由标签行承担）。
 
+### Fixed
+
+- **Windows 扩展路径的根判定不再把一级子目录折进 `default`。** 0.1.7 的通用前缀剥离先把 `\\?\C:\repo` / `\\.\C:\repo` / `\\?\Volume{...}\repo` 折成两段再按 UNC 共享根判断，项目于是共用 `default` 桶；`\\?\C:\` 又因 `path.win32.resolve` 吃掉尾分隔符而造出 `C:-...` 假键。现在根判定按盘符、UNC、卷 GUID 分开识别，`\\?\C:\` / `\\.\C:\` / `\\?\Volume{...}` 回到 `default`，一级子目录不再落 `default`；`realpath` 保留前缀时回到 0.1.6 的带前缀字面键（恒等注入下 `\\?\C:\repo` → `repo-e8b99b5c`），若宿主把前缀剥掉则得到普通路径的键。非根路径的哈希输入保持原拼写，POSIX 键逐字节不变。
+- **`realpath` 返回非字符串时不再向上抛。** 只接受字符串结果；其余情况保留 `path.resolve` 的结果，与 `realpath` 抛错时的回退一致。
+
 ### Tests
 
+- `test/project-key.test.ts` 17 条：新增扩展盘符/设备/卷 GUID 的根与一级子目录、正斜杠扩展拼写、`realpath` 返回非字符串；长 UNC 子目录与 POSIX 反斜杠改精确字面量。
 - `test/card-ui.test.ts` 新增 v3 三组（`SectionToggle`、`ToggleGrid`/`ToggleCell`、`SecretField`）与标签/错误浮层、控件 id 与 ARIA 关联、`NumberField` 聚焦守卫与 `inputMode` 的判据。
 - `test/card-ui-v2.test.ts` 补 `Badge` 的 `dot`/`data-field`、`StatusDot` 的 `label`、`DataTable` 的 `caption`、`EmptyState` 的 `plain`。
 - `test/vitest-base.test.ts` 新增别名与内联形状断言：客户端别名必须是发布产物说明符（源码路径在 tarball 里不存在），`react` 族指向 `process.cwd()` 下的副本，内联规则必须是能匹配包路径的正则。

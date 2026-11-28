@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 // lib/card-ui/invalid.ts 的 `useInvalidFields()` 单元测试：越界状态机的四条判据。
 //
-// 为什么要在这一层钉：这套状态（越界集 + 重置信号 + 清空）原先在六个消费仓各写一遍，
+// 为什么要在这一层钉：这套状态（越界集 + 重置信号 + 清空）原先在多个消费仓各写一遍，
 // 现在收进 shared。它的两个出口都只在**行为**上看得出来——`clear()` 漏掉的表现是保存后
 // 红框还在，`resetToken` 不推进的表现是撤销后非法值仍留在框里，两者都不是类型能拦的。
 // 本文件用一枚最小探针组件驱动它，判据全部写成「先做什么、再读到什么」，不从实现推导。
 //
 // 受影响的公共面：`lib/card-ui/invalid.ts` 的 `useInvalidFields` / `InvalidFields`（经
-// `lib/card-ui.ts` 与 `lib/client-entry.ts` 两个 barrel 导出）；同步面：`test/index.test.ts`
+// `lib/card-ui.ts` 汇总、由 `lib/client-entry.ts` 从 `./client` 导出）；同步面：`test/index.test.ts`
 // 与 `test/publish-manifest.test.ts` 已覆盖这两个 barrel 的导出面，本文件补的是行为判据。
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";

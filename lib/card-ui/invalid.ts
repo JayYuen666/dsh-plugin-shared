@@ -65,7 +65,8 @@ export interface InvalidFields {
  * @returns 状态与两个出口；返回值在一轮渲染内稳定（除清空外不改引用）
  */
 export function useInvalidFields(): InvalidFields {
-  const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(() => new Set());
+  // 与 draft 的 `touched` 同理：直接传初值，兼容各包卡片测试里「初始值即渲染值」的 useState 桩。
+  const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set());
   const [resetToken, setResetToken] = useState(0);
   // 两个出口都定住引用：它们会被透传到每个 `NumberField` 的 `onInvalidChange`，引用每轮都变
   // 会让那个转发 `useEffect` 在每次重渲时白跑一遍（行为不变，但整张卡打字时白白重排）。

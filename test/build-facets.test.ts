@@ -11,17 +11,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildHostEntries } from "../lib/build-host.ts";
 import {
-  buildClientArtifacts,
-  buildClientBundle,
+  buildClientArtifacts as buildClientArtifactsRaw,
+  buildClientBundle as buildClientBundleRaw,
   clientExternalPatterns,
   clientExternalPredicate,
   clientReactGuard,
   collapseStorePaths,
   REACT_RUNTIME_MODULES,
 } from "../lib/build-client.ts";
+import { parseAst } from "rolldown/parseAst";
 import type { HostEntry } from "../lib/build-host.ts";
-import type { ClientNameContext } from "../lib/build-client.ts";
+import type {
+  ClientArtifact,
+  ClientBuildOptions,
+  ClientChunkSpec,
+  ClientNameContext,
+} from "../lib/build-client.ts";
 import type { CommentsOptions } from "rolldown";
+import type { ParseSourceAst } from "../lib/decorator-lowering.ts";
 import type { OutputItem, RolldownBundle, RolldownFactory } from "../lib/build-artifacts.ts";
 
 /** 复用的高频字面量（sonarjs/no-duplicate-string 的去重范围）。 */
@@ -35,12 +42,37 @@ const CLOSE_BOOM = "close boom";
 const ENTRY_BODY = "module.exports = 1;";
 const CHUNK_BODY = "module.exports = 2;";
 /** 测试里反复出现的常量（sonarjs/no-duplicate-string 的去重范围）。 */
-const SHARED_CLIENT = "@jayyuen66/dsh-plugin-shared/client";
+const SHARED = "@jayyuen66/dsh-plugin-shared";
+const SHARED_CLIENT = `${SHARED}/client`;
+const SHARED_TOOL = `${SHARED}/tool`;
 const REACT_DOM_SUBDIR = "react-dom/client";
 const REACT_DOM_SERVER = "react-dom/server";
 const CLIENT_EXTRA = [SHARED_CLIENT, "zod"] as const;
 /** 压缩产物的注释档位（与实现同源的三档）。 */
 const LEGAL_COMMENTS = { legal: true, annotation: false, jsdoc: false } as const;
+
+/** 测试统一注入真解析器：require 闸门读 AST，不再是文本扫描。 */
+const parseClientBody: ParseSourceAst = (code, id) => parseAst(code, { lang: "js" }, id);
+
+/**
+ * 注入解析器的 buildClientBundle。缺解析器那条负例直接用 Raw 版本。
+ * @param options - 除解析器之外的构建配置
+ * @returns 产物正文
+ */
+async function buildClientBundle(options: Omit<ClientBuildOptions, "parseAst">): Promise<string> {
+  return buildClientBundleRaw({ ...options, parseAst: parseClientBody });
+}
+
+/**
+ * 注入解析器的 buildClientArtifacts。缺解析器那条负例直接用 Raw 版本。
+ * @param options - 除解析器之外的构建配置与 chunk 声明
+ * @returns 产物清单
+ */
+async function buildClientArtifacts(
+  options: Omit<ClientBuildOptions, "parseAst"> & { readonly chunks?: readonly ClientChunkSpec[] },
+): Promise<readonly ClientArtifact[]> {
+  return buildClientArtifactsRaw({ ...options, parseAst: parseClientBody });
+}
 
 /** stub 记录到的 rolldown 选项视图（只列断言要读的键；写死形状避免索引签名上的访问规则冲突）。 */
 interface RolldownOptionsView {
@@ -180,7 +212,7 @@ async function fixtureRoot(manifest: Record<string, unknown>): Promise<string> {
 /** 默认测试数据 manifest：一条普通依赖 + 一条可选依赖。 */
 const BASE_MANIFEST = {
   name: FIXTURE_NAME,
-  dependencies: { "@jayyuen66/dsh-plugin-shared": "0.1.7" },
+  dependencies: { [SHARED]: "0.1.7" },
   optionalDependencies: { "@jayyuen66/optional-pkg": "1.0.0" },
 };
 
@@ -200,9 +232,9 @@ async function cleanup(...roots: readonly string[]): Promise<void> {
 }
 
 describe("buildHostEntries", () => {
-  it("单入口：产物 = 头 + 规范化后的正文；选项按缺省值下发", async () => {
+  it("单入口：产物 = 头 + 原正文；选项按缺省值下发且不做文本后处理", async () => {
     const { factory, calls } = stubRolldown({
-      outputs: [[chunkOf("//#region ../lib/a.ts\nexport {};")]],
+      outputs: [[chunkOf("// ../lib/a.ts\nexport {};")]],
     });
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
@@ -212,7 +244,7 @@ describe("buildHostEntries", () => {
       if (artifact === undefined) {
         assert.fail("artifacts 为空");
       }
-      assert.equal(artifact.code, `${HOST_HEADER}//#region lib/a.ts\nexport {};\n`);
+      assert.equal(artifact.code, `${HOST_HEADER}// ../lib/a.ts\nexport {};\n`);
       assert.equal(artifact.file, path.join(root, "host.js"));
       assert.deepEqual(artifact.inlinedModules, MODULE_IDS);
 
@@ -238,13 +270,81 @@ describe("buildHostEntries", () => {
     try {
       await buildHostEntries({ root, rolldown: factory, entries: HOST_ENTRIES });
       const call = soleCall(calls);
-      assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-shared/lib/text"), true);
+      assert.equal(externalMatches(call, SHARED_TOOL), true);
+      assert.equal(externalMatches(call, SHARED_CLIENT), true);
       assert.equal(externalMatches(call, "@jayyuen66/optional-pkg"), true);
       assert.equal(externalMatches(call, "typescript"), false);
       assert.equal(externalMatches(call, "lodash/fp"), false);
       // 包名边界：前缀相同的另一个包不能被顺手外置成宿主模块表里不存在的键。
       assert.equal(externalMatches(call, "@jayyuen66/optional-pkg-extra"), false);
       assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-sharedx"), false);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("inline 子路径：只放行点名那一条，同包其余子路径与包根仍外置", async () => {
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await buildHostEntries({
+        root,
+        rolldown: factory,
+        entries: HOST_ENTRIES,
+        inline: [SHARED_TOOL],
+      });
+      const call = soleCall(calls);
+      assert.equal(externalMatches(call, SHARED_TOOL), false);
+      assert.equal(externalMatches(call, SHARED_CLIENT), true);
+      assert.equal(externalMatches(call, SHARED), true);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("inline 整包：包根与全部子路径一起交给打包器", async () => {
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await buildHostEntries({
+        root,
+        rolldown: factory,
+        entries: HOST_ENTRIES,
+        inline: [SHARED],
+      });
+      const call = soleCall(calls);
+      assert.equal(externalMatches(call, SHARED), false);
+      assert.equal(externalMatches(call, SHARED_CLIENT), false);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("inline 未声明：构建前立即拒绝，不退化成整包仍 external", async () => {
+    const { factory, calls } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildHostEntries({
+          root,
+          rolldown: factory,
+          entries: HOST_ENTRIES,
+          inline: ["@jayyuen66/not-a-dependency/tool"],
+        }),
+        /不属于依赖段/u,
+      );
+      // 另一档错误文案（不列 optionalDependencies）也要走到：两个分支都只用于解释拒绝原因。
+      await assert.rejects(
+        buildHostEntries({
+          root,
+          rolldown: factory,
+          entries: HOST_ENTRIES,
+          inline: ["@jayyuen66/not-a-dependency/tool"],
+          externalizeOptional: false,
+        }),
+        /不属于依赖段/u,
+      );
+      assert.equal(calls.length, 0);
     } finally {
       await cleanup(root);
     }
@@ -262,7 +362,7 @@ describe("buildHostEntries", () => {
       });
       const call = soleCall(calls);
       assert.equal(externalMatches(call, "@jayyuen66/optional-pkg"), false);
-      assert.equal(externalMatches(call, "@jayyuen66/dsh-plugin-shared"), true);
+      assert.equal(externalMatches(call, SHARED), true);
     } finally {
       await cleanup(root);
     }
@@ -370,7 +470,7 @@ describe("buildHostEntries", () => {
     const arrayTable = await fixtureRoot({ ...BASE_MANIFEST, dependencies: [] });
     const badValue = await fixtureRoot({
       ...BASE_MANIFEST,
-      dependencies: { "@jayyuen66/dsh-plugin-shared": { bad: "shape" } },
+      dependencies: { [SHARED]: { bad: "shape" } },
     });
     const stringTable = await fixtureRoot({ ...BASE_MANIFEST, dependencies: "not-an-object" });
     const empty = await fixtureRoot({ name: FIXTURE_NAME });
@@ -793,13 +893,15 @@ describe("clientExternalPredicate（各包构建脚本的自查视图）", () =>
   const REGISTERED = [...REACT_RUNTIME_MODULES, ...CLIENT_EXTRA];
   const isExternal = clientExternalPredicate(REGISTERED);
 
-  it("与构建同一份规则：裸包名泛化、子路径登记项精确匹配", () => {
+  it("与构建同一份接受度：只有逐字登记过的说明符放行", () => {
     assert.equal(isExternal("zod"), true);
-    assert.equal(isExternal("zod/v4"), true);
+    // `zod` 是裸包名登记，外置规则会命中 `zod/v4`；但宿主模块表没有这一条，产物闸门会让
+    // 构建失败。自查视图必须与接受度一致，而不是与「会被外置」一致。
+    assert.throws(() => isExternal("zod/v4"), /没有逐字登记/u);
     assert.equal(isExternal(SHARED_CLIENT), true);
-    // 子路径登记项不泛化成整个包：宿主模块表按说明符全等查键，`/lib/record` 没有登记就
+    // 子路径登记项不泛化成整个包：宿主模块表按说明符全等查键，`/tool` 没有登记就
     // 不该外置（外置出去就是一条加载期必然 miss 的 require）。
-    assert.equal(isExternal("@jayyuen66/dsh-plugin-shared/lib/record"), false);
+    assert.equal(isExternal(SHARED_TOOL), false);
     assert.equal(isExternal("lodash"), false);
     assert.equal(isExternal("./local.ts"), false);
   });
@@ -1049,7 +1151,7 @@ describe("buildClientArtifacts", () => {
           header: HEADER,
           chunks: [{ source: CHUNK_SOURCE, fileName: CHUNK_FILE }],
         }),
-        /出现跨 chunk 的同步 require/u,
+        /包内相对同步 require/u,
       );
     } finally {
       await cleanup(root);
@@ -1148,7 +1250,7 @@ describe("buildClientArtifacts", () => {
   it("包名登记了但子路径没登记：同样失败（按包名边界外置的配套闸门）", async () => {
     // 这正是三个仓泄漏的形态：外置规则按包名命中，产物里留下一条宿主模块表里没有的
     // require。宿主按说明符全等查键，所以「包名在清单里」不等于「这一条能加载」。
-    const leaked = 'const x = require("@jayyuen66/dsh-plugin-shared/lib/record");';
+    const leaked = `const x = require("${SHARED_TOOL}");`;
     const { factory } = stubRolldown({ outputs: [[chunkOf(leaked)]] });
     const root = await fixtureRoot(BASE_MANIFEST);
     try {
@@ -1159,19 +1261,158 @@ describe("buildClientArtifacts", () => {
           header: HEADER,
           externals: [...REACT_RUNTIME_MODULES, SHARED_CLIENT],
         }),
-        /dsh-plugin-shared\/lib\/record/u,
+        /dsh-plugin-shared\/tool/u,
       );
     } finally {
       await cleanup(root);
     }
   });
 
-  it("登记过的外置 require 与包内相对 require 都放行", async () => {
+  it("裸包名登记、子路径没登记：产物闸门判红（自查视图与构建同一口径）", async () => {
+    // 外置规则对裸包名按边界泛化，`zod` 会把 `zod/v4` 也外置；宿主模块表没有 `zod/v4`，
+    // 所以构建必须失败。这条同时是 clientExternalPredicate 对该输入抛错的实物对照。
+    const leaked = 'const x = require("zod/v4");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(leaked)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          externals: [...REACT_RUNTIME_MODULES, "zod"],
+        }),
+        /未登记的外置 require："zod\/v4"/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("缺 parseAst：构建直接失败，不退化成少检查一项", async () => {
+    const { factory } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundleRaw({ root, rolldown: factory, header: HEADER }),
+        /缺少 parseAst/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("产物解析失败：抛出带产物名的错误，不退化成少检查一项", async () => {
+    const { factory } = stubRolldown({ outputs: [[chunkOf()]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundleRaw({
+          root,
+          rolldown: factory,
+          header: HEADER,
+          parseAst: () => {
+            throw new Error("parse boom");
+          },
+        }),
+        // 缺省入口经 path.join 构造，错误消息里的分隔符随平台：字符类同时放行 / 与 \。
+        /解析 src[/\\]client-entry\.ts 的 client 产物失败（require 判据）：.*parse boom/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("正则字面量里的 require 片段不算外置调用（判据读 AST）", async () => {
+    // 文本扫描会把 /require("lodash")/ 当成真实调用；AST 里它只是一个 RegExpLiteral。
+    const body = String.raw`const re = /require("lodash")/; module.exports = re;`;
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      const out = await buildClientBundle({ root, rolldown: factory, header: HEADER });
+      assert.ok(out.includes(String.raw`/require("lodash")/`));
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("非字面 require：构建期失败（说明符在运行期才算出来）", async () => {
+    const body = 'const name = "lodash"; module.exports = require(name);';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /非字面 require\(\.\.\.\)/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("非字面 require.async：构建期失败（指向的产物无法核对）", async () => {
+    const body = "const name = `./client.charts.js`; module.exports = () => require.async(name);";
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /非字面 require\.async\(\.\.\.\)/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("引用未声明的 chunk：构建期失败（宿主不会提供没构建的文件）", async () => {
+    const body = 'module.exports = () => require.async("./client.ghost.js");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /未声明的 chunk 引用/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("非相对 require.async：同样按未声明判红（裸名不是宿主动态加载的文件）", async () => {
+    // 读取端只接受 `./` 开头的相对说明符；`require.async("client.charts.js")`
+    // 即使目录里真有这个文件，也不在宿主提供的模块表里。
+    const body = 'module.exports = () => require.async("client.charts.js");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /未声明的 chunk 引用/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("包内相对静态 require：构建期失败（宿主模块表没有相对路径这条边）", async () => {
+    const body = 'module.exports = require("./helper.js");';
+    const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
+    const root = await fixtureRoot(BASE_MANIFEST);
+    try {
+      await assert.rejects(
+        buildClientBundle({ root, rolldown: factory, header: HEADER }),
+        /包内相对同步 require/u,
+      );
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it("登记过的外置 require 放行", async () => {
     const body = [
       'const r = require("react");',
       'const z = require("zod");',
-      'const helper = require("./helper.js");',
-      ENTRY_ASKS_CHUNK,
+      "module.exports = { r, z };",
     ].join("\n");
     const { factory } = stubRolldown({ outputs: [[chunkOf(body)]] });
     const root = await fixtureRoot(BASE_MANIFEST);

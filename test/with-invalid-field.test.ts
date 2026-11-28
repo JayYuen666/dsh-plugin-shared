@@ -5,7 +5,7 @@
 // 一样），只能在这一层用 `===` 判。
 //
 // 受影响的公共面：本文件只钉 `lib/card-ui/invalid.ts` 的 `withInvalidField`（经
-// `lib/card-ui.ts` 与 `lib/client-entry.ts` 两个 barrel 导出给消费方的卡片）；
+// `lib/card-ui.ts` 汇总、由 `lib/client-entry.ts` 从 `./client` 导出给消费方的卡片）；
 // 同步面：`test/index.test.ts`（barrel 与 lib 的对齐）、`test/publish-manifest.test.ts`
 // （exports 与 lib 双向）、`CHANGELOG.md` 的 0.2.9 段都已覆盖这一枚导出，本文件补的是
 // 行为判据。`onInvalidChange` / `resetToken` 是 `NumberField` 的两位配套接口，本模块是它们

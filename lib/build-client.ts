@@ -7,16 +7,17 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { CommentsOptions, Plugin } from "rolldown";
-import { canonicalizeRegionPaths } from "./canonicalize-region-paths.ts";
 import {
   asRecord,
   closeQuietly,
-  escapeRegExp,
   externalPatternOf,
   packageNameOf,
   readManifest,
   singleEntryChunk,
 } from "./build-artifacts.ts";
+import { collectRequireCalls } from "./require-calls.ts";
+import type { RequireCallFacts } from "./require-calls.ts";
+import type { ParseSourceAst } from "./decorator-lowering.ts";
 import type { RolldownFactory } from "./build-artifacts.ts";
 
 /**
@@ -48,11 +49,11 @@ const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]
  * 带着依赖版本与本机 store 哈希。带着它发布，同一份源码在不同机器上产出不同字节（跨机器
  * 不可复现），还把安装布局公开进公共 tarball。
  *
- * 两种注释形态都要改写：workspace 软链安装下共享库模块标成 `//#region` 行；从 registry 安装时
- * （消费仓 CI 的 frozen 安装正是这个形状）同一批模块标成 `// node_modules/…` 横幅，路径里带
- * `.pnpm/<名>@<版>_<peer 后缀>` 那一层。只改前者时，后者的 store 段原样留在产物里，下面的
- * 兜底检查把整次构建判定失败——0.1.8 就是在这个形状上失败的，而工作区软链安装碰不到 `.pnpm`，
- * 所以本地检查与发布前的全部检查都看不见它。
+ * 两种横幅形态都接受：`//#region`（HMR 载荷/旧产物）与 `//`（当前生产构建）。从 registry
+ * 安装时（消费仓 CI 的 frozen 安装正是这个形状）同一批模块的横幅路径里带
+ * `.pnpm/<名>@<版>_<peer 后缀>` 那一层；只认一种形态时，另一种的 store 段会原样留在产物里，
+ * 下面的兜底检查把整次构建判定失败——0.1.8 就是在这个形状上失败的，而工作区软链安装碰不到
+ * `.pnpm`，所以本地检查与发布前的全部检查都看不见它。
  *
  * 改写必须覆盖整段而不是只换中段：store 段之上还可能带着 `../` 前缀（依赖落在工作区根
  * 一侧时就是这样），只换中段会留下 `../../node_modules/<包名>/…`，产物字节仍然随检出
@@ -104,6 +105,13 @@ export interface ClientBuildOptions {
   readonly root: string;
   /** 调用方注入的 rolldown。 */
   readonly rolldown: RolldownFactory;
+  /**
+   * 调用方注入的解析器（rolldown 的 `parseAst`）。**构建时必须提供**：产物里的
+   * `require(...)` / `require.async(...)` 判据读 AST，不再扫文本。类型上暂为可选，
+   * 只是为了让消费者在 shared 发布前仍能通过编译；运行时缺失会直接失败，
+   * 不会退化成「少检查一项」的静默放行。
+   */
+  readonly parseAst?: ParseSourceAst;
   /** 客户端入口（相对包根）。缺省 `src/client-entry.ts`。 */
   readonly entry?: string;
   /** 产物首行的 GENERATED 头（不含换行）。它是产物字节的一部分，逐字由调用方给定。 */
@@ -159,18 +167,6 @@ export interface ClientArtifact {
 const CLIENT_ENTRY_FILE = "client.js";
 /** 宿主对包内 chunk 文件名的规则（与 client-modules 的 CLIENT_CHUNK 同形）。 */
 const CLIENT_CHUNK_FILE = /^client\.[\da-z][\w.-]*\.js$/iu;
-/** 字面串的三种引号：产物是压缩代码，rolldown 用反引号包字符串。 */
-const QUOTES: readonly string[] = ['"', "'", "`"];
-/**
- * 三种引号合成的正则字符类。
- *
- * 不手写 `["'`]` 这类字面量：反引号在模板串里必须转义，而 String.raw 又会把那个转义
- * 原样留在正则源码里——`u` 旗标下 `\`` 是非法转义，整条判据在运行期抛 SyntaxError。
- * join 出来的字符类没有这一层歧义。
- */
-const QUOTE_CHARS = QUOTES.join("");
-/** 引号字符类（正则源码）。 */
-const QUOTE_CLASS = `[${QUOTE_CHARS}]`;
 /** react 家族说明符的正则形状：两个包名 + 任意子路径。 */
 const REACT_FAMILY = /^react(?:-dom)?(?:\/|$)/u;
 /**
@@ -211,6 +207,30 @@ function clientBundleId(manifest: Record<string, unknown>): string {
  */
 function isReactFamily(name: string): boolean {
   return name === "react" || name === "react-dom";
+}
+
+/**
+ * 登记清单里的 react 家族说明符集合。`clientReactGuard` 与 `clientExternalPredicate`
+ * 共用同一份登记口径，避免两处各写一遍 filter。
+ * @param externals - 外置说明符全量清单
+ * @returns react 家族中逐字登记的说明符
+ */
+function reactFamilyOf(externals: readonly string[]): Set<string> {
+  return new Set(externals.filter((specifier) => isReactFamily(packageNameOf(specifier))));
+}
+
+/**
+ * 未登记的 react 家族说明符的统一报错。构建守卫与自查视图必须给出同一句话：
+ * 外置会得到宿主模块表里没有的键，内联会得到第二份 React。
+ * @param id - 未登记的说明符
+ * @returns 可直接抛出的错误
+ */
+function reactNotRegisteredError(id: string): Error {
+  return new Error(
+    `${id} 是 react 家族说明符但不在外置清单里。` +
+      "外置会得到宿主模块表里没有的键（加载期报错），内联会得到第二份 React（hooks 静默失效）；" +
+      "真要引入子路径，先把它加进外置清单并确认宿主模块表里有同名项。",
+  );
 }
 
 /**
@@ -258,9 +278,7 @@ export function clientExternalPatterns(externals: readonly string[]): RegExp[] {
  * @returns rolldown 插件
  */
 export function clientReactGuard(externals: readonly string[]): Plugin {
-  const registered = new Set(
-    externals.filter((specifier) => isReactFamily(packageNameOf(specifier))),
-  );
+  const registered = reactFamilyOf(externals);
   return {
     name: "dsh-react-family-guard",
     resolveId: {
@@ -269,46 +287,55 @@ export function clientReactGuard(externals: readonly string[]): Plugin {
         if (registered.has(id)) {
           return { id, external: true };
         }
-        throw new Error(
-          `${id} 是 react 家族说明符但不在外置清单里。` +
-            "外置会得到宿主模块表里没有的键（加载期报错），内联会得到第二份 React（hooks 静默失效）；" +
-            "真要引入子路径，先把它加进外置清单并确认宿主模块表里有同名项。",
-        );
+        throw reactNotRegisteredError(id);
       },
     },
   };
 }
 
 /**
- * 判定视图：问「这条说明符会被外置吗」。
+ * 判定视图：问「这条说明符能被构建接受为外置吗」。
  *
  * 构建自身**不再**用它（rolldown 收到的是正则数组 + resolveId 守卫，见
  * {@link clientExternalPatterns} 与 {@link clientReactGuard}）：函数形态每个模块回调一次 JS，
  * 官方文档点名开销显著。它保留给各包的构建脚本与测试做自查——「我登记的清单是不是恰好等于
- * 宿主模块表」这类断言需要逐条问同一份规则，而不是复述一份。
+ * 宿主模块表」这类断言需要逐条问同一份接受度，而不是复述一份。
  *
- * 语义与构建严格一致：非 react 说明符按包名边界命中即外置；react 家族里没登记的**抛错**
- * （静默返回 false 会让调用方以为它会被内联，而构建实际会失败）。
+ * 语义与**接受度**严格一致，而不是与「外置规则」一致：外置规则按裸包名边界泛化，
+ * `zod` 在清单里就会把 `zod/v4` 也外置；但宿主模块表按说明符全等查键，产物闸门
+ * （assertRequireCalls）随后会让这条 require 的构建失败。自查视图若对这种
+ * 子路径返回 true，调用方会以为它能用，实际构建红在另一个位置。所以这里只在**逐字登记**
+ * 时返回 true；包名登记了、子路径没登记的情形与构建一样抛错。
+ * react 家族同理：没登记就抛，不静默返回 false。
  * @param externals - 外置说明符全量清单
  * @returns 判定函数
  */
 export function clientExternalPredicate(externals: readonly string[]): (id: string) => boolean {
-  const patterns = clientExternalPatterns(externals);
-  const registeredReact = new Set(
-    externals.filter((specifier) => isReactFamily(packageNameOf(specifier))),
+  const registered = new Set(externals);
+  const barePackages = new Set(
+    externals.filter((specifier) => packageNameOf(specifier) === specifier),
   );
+  const registeredReact = reactFamilyOf(externals);
   return (id: string) => {
     if (isReactFamily(packageNameOf(id))) {
       if (registeredReact.has(id)) {
         return true;
       }
+      throw reactNotRegisteredError(id);
+    }
+    if (registered.has(id)) {
+      return true;
+    }
+    const packageName = packageNameOf(id);
+    if (packageName !== id && barePackages.has(packageName)) {
       throw new Error(
-        `${id} 是 react 家族说明符但不在外置清单里。` +
-          "外置会得到宿主模块表里没有的键（加载期报错），内联会得到第二份 React（hooks 静默失效）；" +
-          "真要引入子路径，先把它加进外置清单并确认宿主模块表里有同名项。",
+        `${id} 的包名 ${packageName} 在清单里，但这条子路径没有逐字登记。` +
+          "构建会按包名边界把它外置，而宿主模块表按说明符全等查键，这一条在加载期必然 miss，" +
+          "产物闸门因此会让构建失败。改法二选一：把这条子路径逐字加进清单并确认宿主模块表" +
+          "有同名项，或改从登记过的入口说明符取值。",
       );
     }
-    return patterns.some((pattern) => pattern.test(id));
+    return false;
   };
 }
 
@@ -380,26 +407,45 @@ function wrapClientArtifact(pkgName: string, body: string, chunkFile: string | u
   return ["window.__ModuleLoader__.load({", ...registration, "});", ""].join("\n");
 }
 
+/** 编译后的正文与它里面的 require 调用（判据读 AST，不再扫文本）。 */
+interface CompiledClientBody {
+  readonly body: string;
+  readonly requireCalls: RequireCallFacts;
+}
+
+/** 一份已编译的产物：外壳文本 + 判据要读的 require 调用。 */
+interface BuiltClientArtifact {
+  readonly artifact: ClientArtifact;
+  readonly requireCalls: RequireCallFacts;
+}
+
 /**
  * 编译一份源文件为改写后的 chunk 正文（未包外壳）。
  * @param options - 构建配置
  * @param source - 相对包根的源文件
  * @param generateOptions - 下发给 rolldown 的 generate 选项
- * @returns 摊平路径后的正文
+ * @returns 摊平路径后的正文与 require 调用
  */
 async function compileClientBody(
   options: ClientBuildOptions,
   source: string,
   generateOptions: ClientGenerateOptions,
-): Promise<string> {
+): Promise<CompiledClientBody> {
+  const { parseAst } = options;
+  if (parseAst === undefined) {
+    throw new Error(
+      `构建配置缺少 parseAst：${source} 的 require 调用与 require.async 引用无从核对` +
+        "（构建未发生，不要当成成功）。调用方必须注入 rolldown/parseAst。",
+    );
+  }
   const externals = options.externals ?? REACT_RUNTIME_MODULES;
   const bundle = await options.rolldown({
     input: path.join(options.root, source),
     // 外置规则见 clientExternalPatterns 的三条约束；react 家族的守卫单独一个插件。
     external: clientExternalPatterns(externals),
     platform: "browser",
-    // `//#region` 行的相对路径由 rolldown 按 cwd 算出。cwd 缺省是 process.cwd()，于是
-    // 同一份源码在包根/工作区别处构建出不同字节。固定成包根后产物与调用者的 cwd 无关。
+    // 模块横幅（`// <path>`）的相对路径由 rolldown 按 cwd 算出。cwd 缺省是 process.cwd()，
+    // 于是同一份源码在包根/工作区别处构建出不同字节。固定成包根后产物与调用者的 cwd 无关。
     cwd: options.root,
     // 显式 extensions 是**替换**默认值而不是追加：默认含 .tsx/.jsx（实测），只列
     // .ts/.js/.json 会让导入 .tsx 组件的构建直接 UNRESOLVED_IMPORT。
@@ -413,11 +459,9 @@ async function compileClientBody(
     const { output } = await bundle.generate(generateOptions);
     // 一份源文件必须产出恰好一个 entry chunk：多出来的 chunk 不会被写盘，运行时表现为缺模块。
     const chunk = singleEntryChunk(output, source);
-    // 改写 canonical 必须落在返回值之前：调用方的新鲜度检查逐字节比内存构建与磁盘产物，
-    // 不能只在写盘这一步做。
-    body = collapseStorePaths(
-      canonicalizeRegionPaths(chunk.code.trimEnd(), options.root, process.cwd()),
-    );
+    // 模块横幅按 rolldown 的 `cwd`（已固定成包根）算路径，与 process.cwd() 无关；不再做
+    // 文本后处理。这里只折叠 pnpm store 段——那是安装布局差异，与路径基准是两件事。
+    body = collapseStorePaths(chunk.code.trimEnd());
   } catch (error) {
     // bundle 持有原生资源，异常路径同样要释放；closeQuietly 保证释放失败不盖掉这里的错因。
     await closeQuietly(bundle);
@@ -425,77 +469,113 @@ async function compileClientBody(
   }
   // 成功路径不用 closeQuietly：那里 close 失败仍应判定失败，资源没释放是构建器的问题。
   await bundle.close();
-  return body;
+  let requireCalls: RequireCallFacts;
+  try {
+    requireCalls = collectRequireCalls(parseAst(body, source));
+  } catch (error) {
+    throw new Error(`解析 ${source} 的 client 产物失败（require 判据）：${String(error)}`, {
+      cause: error,
+    });
+  }
+  return { body, requireCalls };
 }
 
 /**
- * 产物里 `require("<spec>")` 形态的字面说明符（不匹配 `require.async(...)`）。
- * @param code - 产物正文
- * @returns 说明符清单（按出现顺序，可能重复）
+ * 非字面调用必须拒绝：说明符在运行时才算出来，构建期无法核对宿主模块表的键。
+ * @param fileName - 产物文件名
+ * @param facts - 该产物里的 require 调用
  */
-function literalRequireSpecs(code: string): string[] {
-  const pattern = new RegExp(
-    String.raw`\brequire\(\s*${QUOTE_CLASS}([^${QUOTE_CHARS}]+)${QUOTE_CLASS}\s*\)`,
-    "gu",
-  );
-  // 取捕获组用 String(match[1]) 而不是 `match[1] ?? ""`：这个组在正则里不是可选的，没有匹配
-  // 却只缺这一组的输入，那个 `??` 分支永远走不到，留着只会让覆盖率门收一条假分支。
-  return Array.from(code.matchAll(pattern), (match) => String(match[1]));
+function assertNoDynamicRequire(fileName: string, facts: RequireCallFacts): void {
+  if (facts.dynamicStaticCalls > 0) {
+    throw new Error(
+      `产物 ${fileName} 里有 ${facts.dynamicStaticCalls} 处非字面 require(...)：说明符要到运行时才能算出来，` +
+        "构建期无法核对宿主模块表的键，命中不了时加载期不会给任何提示。改成字面说明符：" +
+        '外置依赖写 require("<登记过的说明符>")，包内 chunk 写 require.async("./client.<name>.js")。',
+    );
+  }
+  if (facts.dynamicAsyncCalls > 0) {
+    throw new Error(
+      `产物 ${fileName} 里有 ${facts.dynamicAsyncCalls} 处非字面 require.async(...)：构建期无法核对它指向的产物。` +
+        '改成字面写法 require.async("./client.<name>.js")，并确认该产物已在 chunks 里声明。',
+    );
+  }
 }
 
 /**
- * 断言产物里的每一条外置 require 都是**逐字登记过**的说明符。
- *
- * 这是「按包名边界外置」那条规则的配套闸门，缺了它外置会静默变宽：`^pkg(/|$)` 命中
- * `pkg/lib/util` 之后产物里就留下一条 `require("pkg/lib/util")`，而宿主模块表按**说明符全等**
- * 查键——加载期 not in the module table，整张卡片不渲染，构建、类型、打包三步全绿。
- *
- * 两类命中都要拦：说明符不在清单里（清单外的包被顺手外置了），以及包名在清单里但子路径没登记
- * （正是上面那条静默变宽）。相对说明符不在这里判——包内边由 assertNoStaticChunkRequire 负责。
- * @param artifacts - 已构建产物
+ * 静态 require 的说明符必须落在外置登记表里；包内相对/绝对路径一律拒绝。
+ * @param fileName - 产物文件名
+ * @param facts - 该产物里的 require 调用
  * @param registered - 外置说明符全量清单（逐字）
  */
-function assertRegisteredExternals(
-  artifacts: readonly ClientArtifact[],
+function assertStaticRequires(
+  fileName: string,
+  facts: RequireCallFacts,
   registered: readonly string[],
 ): void {
+  for (const specifier of facts.staticSpecifiers) {
+    if (specifier.startsWith(".") || specifier.startsWith("/")) {
+      throw new Error(
+        `产物 ${fileName} 里出现包内相对同步 require：${JSON.stringify(specifier)}。` +
+          "宿主模块表只有包名键与经 require.async 加载的 chunk 键，没有相对路径这条边，" +
+          '运行时一定 miss；包内 chunk 必须改用 require.async("./client.<name>.js")。',
+      );
+    }
+  }
   const allowed = new Set(registered);
-  for (const artifact of artifacts) {
-    for (const specifier of literalRequireSpecs(artifact.text)) {
-      const isLocal = specifier.startsWith(".") || specifier.startsWith("/");
-      if (!isLocal && !allowed.has(specifier)) {
-        throw new Error(
-          `产物 ${artifact.fileName} 里有未登记的外置 require：${JSON.stringify(specifier)}。` +
-            `宿主模块表只按说明符全等查键（本包登记了 ${allowed.size} 条），这一条在加载期必然 miss，` +
-            "而构建、类型检查与打包三步都不会报错。改法二选一：把这条依赖改成从登记过的入口说明符取" +
-            "（客户端侧通常就是本包的 `/client` 子路径），或把它逐字加进外置清单并确认宿主模块表里有同名项。",
-        );
-      }
+  for (const specifier of facts.staticSpecifiers) {
+    if (!allowed.has(specifier)) {
+      throw new Error(
+        `产物 ${fileName} 里有未登记的外置 require：${JSON.stringify(specifier)}。` +
+          `宿主模块表只按说明符全等查键（本包登记了 ${allowed.size} 条），这一条在加载期必然 miss，` +
+          "而构建、类型检查与打包三步都不会报错。改法二选一：把这条依赖改成从登记过的入口说明符取" +
+          "（客户端侧通常就是本包的 `/client` 子路径），或把它逐字加进外置清单并确认宿主模块表里有同名项。",
+      );
     }
   }
 }
 
 /**
- * 断言声明的每个 chunk 都真的被某份产物按 `require.async("./<fileName>")` 引用过。
+ * 单份产物里的 chunk 引用必须指向声明过并会构建的文件；引用了没构建的文件会在加载期 404。
+ *
+ * 「声明了没人引用」是跨产物的判断：入口可以只引用一部分 chunk，另一部分由别的 chunk 引用，
+ * 所以那一半放在 {@link assertEveryChunkReferenced} 里按全集判。
+ * @param fileName - 产物文件名
+ * @param facts - 该产物里的 require 调用
+ * @param chunkFiles - 本包声明的 chunk 产物名
+ */
+function assertChunkReferences(
+  fileName: string,
+  facts: RequireCallFacts,
+  chunkFiles: ReadonlySet<string>,
+): void {
+  for (const specifier of new Set(facts.asyncSpecifiers)) {
+    const expected = specifier.startsWith("./") ? specifier.slice(2) : "";
+    if (!chunkFiles.has(expected)) {
+      throw new Error(
+        `产物 ${fileName} 里出现未声明的 chunk 引用：${JSON.stringify(specifier)}。` +
+          "宿主只会提供声明过并真的构建出来的 chunk 产物；引用一个不存在的文件时加载期一定 miss，" +
+          "而构建、类型检查与打包三步都不会报错。",
+      );
+    }
+  }
+}
+
+/**
+ * 每个声明的 chunk 都必须被某一产物按 `require.async("./<fileName>")` 引用过。
  *
  * 不查这一条的后果是「产物落盘但没人加载」：包体积白涨、用户看不到图表，而构建、类型、
  * 打包三步全绿——它们都不关心产物之间的引用关系。
- * @param artifacts - 已构建产物
- * @param specs - 声明的 chunk
+ * @param referenced - 全部产物里出现过的 chunk 引用
+ * @param chunkFiles - 本包声明的 chunk 产物名
  */
-function assertChunksReferenced(
-  artifacts: readonly ClientArtifact[],
-  specs: ReadonlyMap<string, ClientChunkSpec>,
+function assertEveryChunkReferenced(
+  referenced: ReadonlySet<string>,
+  chunkFiles: ReadonlySet<string>,
 ): void {
-  for (const fileName of specs.keys()) {
-    // String.raw 让正则源码逐字可读：这里的反斜杠不是转义，是正则自己的语法。
-    const spec = new RegExp(
-      String.raw`require\.async\(\s*${QUOTE_CLASS}\./${escapeRegExp(fileName)}${QUOTE_CLASS}\s*\)`,
-      "u",
-    );
-    if (!artifacts.some((artifact) => spec.test(artifact.text))) {
+  for (const chunkFile of chunkFiles) {
+    if (!referenced.has(`./${chunkFile}`)) {
       throw new Error(
-        `chunk ${JSON.stringify(fileName)} 已声明但没有任何产物用 require.async("./${fileName}") 引用它。` +
+        `chunk ${JSON.stringify(chunkFile)} 已声明但没有任何产物用 require.async("./${chunkFile}") 引用它。` +
           "声明与引用必须一致：漏了引用等于把代码打进包里却永远不加载。",
       );
     }
@@ -503,27 +583,26 @@ function assertChunksReferenced(
 }
 
 /**
- * 断言产物里没有跨 chunk 的**同步** require。
+ * 产物里的 require 调用必须全部可核对。
  *
- * 宿主模块表里只有「包本身」与「经 require.async 加载的 chunk」两类键，没有
- * `require("./client.x.js")` 这种包内相对同步边；它会在运行期 miss，而产物语法合法，
- * 构建与打包都察觉不到。
- * @param artifacts - 已构建产物
+ * 四类命中都在构建期失败，因为它们在运行期都不给提示：非字面调用、包内相对同步边、
+ * 未登记的外置说明符、chunk 引用与声明对不上。判据读 AST 而不是产物文本：正则字面量、
+ * 注释与模板里也能出现 `require("x")` 的字符片段，按文本匹配会把它们当成真实调用
+ * （误判）或漏掉变量形态（漏判）。
+ * @param fileName - 产物文件名（报错点名用）
+ * @param facts - 该产物里的 require 调用
+ * @param registered - 外置说明符全量清单（逐字）
+ * @param chunkFiles - 本包声明的 chunk 产物名
  */
-function assertNoStaticChunkRequire(artifacts: readonly ClientArtifact[]): void {
-  const staticChunkRequire = new RegExp(
-    String.raw`require\(\s*${QUOTE_CLASS}\./client\.[^${QUOTE_CHARS}]*\.js${QUOTE_CLASS}\s*\)`,
-    "u",
-  );
-  for (const artifact of artifacts) {
-    const hit = staticChunkRequire.exec(artifact.text);
-    if (hit !== null) {
-      throw new Error(
-        `产物 ${artifact.fileName} 里出现跨 chunk 的同步 require：${JSON.stringify(hit[0])}。` +
-          "宿主模块表没有这条边，运行时一定 miss；请改用 require.async。",
-      );
-    }
-  }
+function assertRequireCalls(
+  fileName: string,
+  facts: RequireCallFacts,
+  registered: readonly string[],
+  chunkFiles: ReadonlySet<string>,
+): void {
+  assertNoDynamicRequire(fileName, facts);
+  assertStaticRequires(fileName, facts, registered);
+  assertChunkReferences(fileName, facts, chunkFiles);
 }
 
 /**
@@ -533,7 +612,7 @@ function assertNoStaticChunkRequire(artifacts: readonly ClientArtifact[]): void 
  * @param fileName - 产物文件名
  * @param source - 相对包根的源文件
  * @param generateOptions - 下发给 rolldown 的 generate 选项
- * @returns 一份产物
+ * @returns 一份产物与它的 require 调用
  */
 async function buildArtifact(
   options: ClientBuildOptions,
@@ -541,19 +620,22 @@ async function buildArtifact(
   fileName: string,
   source: string,
   generateOptions: ClientGenerateOptions,
-): Promise<ClientArtifact> {
-  const body = await compileClientBody(options, source, generateOptions);
+): Promise<BuiltClientArtifact> {
+  const compiled = await compileClientBody(options, source, generateOptions);
   await options.verifyName?.({
     pkgName,
-    body,
+    body: compiled.body,
     readSource: (relative) => readSourceFile(path.join(options.root, relative)),
   });
   const shell = wrapClientArtifact(
     pkgName,
-    body,
+    compiled.body,
     fileName === CLIENT_ENTRY_FILE ? undefined : fileName,
   );
-  return { fileName, text: [options.header, shell].join("\n") };
+  return {
+    artifact: { fileName, text: [options.header, shell].join("\n") },
+    requireCalls: compiled.requireCalls,
+  };
 }
 
 /**
@@ -570,7 +652,7 @@ function entrySource(options: ClientBuildOptions): string {
  *
  * 三处显式取值都不是「省略就没事」，各有成因：
  * 1. **`codeSplitting: false`**：缺省下动态 import 会被拆成额外 chunk，入口用**同步** `require`
- *    引用它——宿主模块表没有那条边，运行期必 miss（见 assertNoStaticChunkRequire）。本包的
+ *    引用它——宿主模块表没有那条边，运行期必 miss（见 assertRequireCalls）。本包的
  *    chunk 通道是 `require.async` + 每份产物独立构建，不需要打包器再拆。
  * 2. **`dynamicImportInCjs: false`**：外部动态 import 在 CJS 里会留成 `import(...)`，而外壳只给
  *    `require`。
@@ -612,7 +694,7 @@ function generateOptionsOf(options: ClientBuildOptions): ClientGenerateOptions {
  *
  * 入口与每个 chunk 各自一趟**独立**构建，而不是一趟多入口：多入口构建下 rolldown 会把共享
  * 模块拆成公共 chunk 并用同步 require 引用它，而宿主模块表没有那条边（见
- * assertNoStaticChunkRequire）。独立构建的代价是公共依赖在每个 chunk 里各留一份——对
+ * {@link assertRequireCalls}）。独立构建的代价是公共依赖在每个 chunk 里各留一份——对
  * 「按需加载的大库」这个用途可以接受，换成运行时 miss 则不行。
  *
  * 调用方的源码用 `require.async("./client.<name>.js")` 引用 chunk：这个串是宿主
@@ -635,33 +717,48 @@ export async function buildClientArtifacts(
   ];
   // 每份产物互相独立（各自一趟构建），并发即可；Promise.all 保序，返回值仍是
   // 「入口在首位，其后按声明顺序」。串行 await 在这里没有理由。
-  const artifacts = await Promise.all(
+  const built = await Promise.all(
     sources.map(([fileName, source]) =>
       buildArtifact(options, pkgName, fileName, source, generateOptions),
     ),
   );
-  // 先判同步 require：它比「漏了引用」更根本——产物之间有静态边时，即使入口也写了
-  // require.async，运行时仍会先在这条边 miss。
-  assertNoStaticChunkRequire(artifacts);
-  assertChunksReferenced(artifacts, specs);
-  assertRegisteredExternals(artifacts, options.externals ?? REACT_RUNTIME_MODULES);
-  return artifacts;
+  const registered = options.externals ?? REACT_RUNTIME_MODULES;
+  const chunkFiles = new Set(specs.keys());
+  const referenced = new Set<string>();
+  // 每份产物都按同一份 chunk 全集判：单份里的引用必须指向声明过的产物。
+  for (const { artifact, requireCalls } of built) {
+    for (const specifier of requireCalls.asyncSpecifiers) {
+      referenced.add(specifier);
+    }
+    assertRequireCalls(artifact.fileName, requireCalls, registered, chunkFiles);
+  }
+  // 「声明了没人引用」跨产物判：入口不必自己引用每个 chunk，别的 chunk 也可以引用它。
+  assertEveryChunkReferenced(referenced, chunkFiles);
+  return built.map(({ artifact }) => artifact);
 }
 
 /**
  * 构建单文件客户端产物的完整文本（含 ModuleLoader 外壳）。等价于只构建入口。
+ *
+ * 没有声明 chunk：入口里任何 `require.async("./client.*.js")` 都会按「未声明」判红，
+ * 因为这条构建路径不会产出那个文件。
  * @param options - 见 {@link ClientBuildOptions}
  * @returns 产物正文
  */
 export async function buildClientBundle(options: ClientBuildOptions): Promise<string> {
   const pkgName = clientBundleId(asRecord(await readManifest(options.root)));
-  const artifact = await buildArtifact(
+  const built = await buildArtifact(
     options,
     pkgName,
     CLIENT_ENTRY_FILE,
     entrySource(options),
     generateOptionsOf(options),
   );
-  assertRegisteredExternals([artifact], options.externals ?? REACT_RUNTIME_MODULES);
-  return artifact.text;
+  assertRequireCalls(
+    built.artifact.fileName,
+    built.requireCalls,
+    options.externals ?? REACT_RUNTIME_MODULES,
+    new Set<string>(),
+  );
+  return built.artifact.text;
 }

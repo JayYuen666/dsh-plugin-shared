@@ -220,7 +220,7 @@ describe("dataTable", () => {
 
     // 悬停浮层：原生 title 在宿主 webview 不渲染，全文由自绘浮层承担（portal 到 body——
     // 冻结列是 sticky 定位元素，格内 fixed 会被它劫持成包含块）。
-    // 定位分支按真实布局量：把格子按到视口右缘与底缘，三条收口路径各走一遍。
+    // 定位分支按真实布局量：把格子按到视口右缘与底缘，三条钳位路径各走一遍。
     const view = await mount(
       createElement(DataTable, { columns: ellipsisColumns, rows: ellipsisRows }),
     );

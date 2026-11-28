@@ -15,7 +15,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { rolldown } from "rolldown";
-import { canonicalizeRegionPaths } from "./lib/canonicalize-region-paths.ts";
 import { createIsExternal, isMainModule } from "./build-shared.mjs";
 
 const root = import.meta.dirname;
@@ -54,6 +53,8 @@ export async function buildConfig() {
     input: configFacets.map((facet) => path.join(root, "config", `${facet}.ts`)),
     platform: "node",
     external: isExternal,
+    // 与 build-host.mjs 同源：横幅路径按 rolldown 的 `cwd` 算，固定包根才与调用方 cwd 无关。
+    cwd: root,
     resolve: { extensions: [".ts", ".mjs", ".js"] },
   });
   const { output } = await bundle.generate({
@@ -80,12 +81,7 @@ export async function buildConfig() {
       throw new Error(`rolldown 没为 facet ${facet} 产出入口 chunk`);
     }
   }
-  return new Map(
-    chunks.map((chunk) => [
-      path.join(outDir, chunk.fileName),
-      canonicalizeRegionPaths(chunk.code, root, process.cwd()),
-    ]),
-  );
+  return new Map(chunks.map((chunk) => [path.join(outDir, chunk.fileName), chunk.code]));
 }
 
 async function main() {
@@ -95,7 +91,7 @@ async function main() {
   console.info("config built:", artifacts.length, "files -> dist/config/");
 }
 
-if (isMainModule(import.meta.filename)) {
+if (isMainModule(import.meta)) {
   try {
     await main();
   } catch (error) {

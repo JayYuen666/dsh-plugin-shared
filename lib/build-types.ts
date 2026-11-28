@@ -59,12 +59,12 @@ const AUGMENTED_MODULE_SPECIFIER =
 /** 源码后缀 → 声明里该写的产物后缀（`.mts`/`.cts` 各自对侧，其余走 `.js`）。 */
 const OUTPUT_EXTENSIONS = { cts: "cjs", mts: "mjs", ts: "js" } as const;
 
-/**说明符尾部（源码后缀 + 收尾引号）。 */
+/** 说明符尾部（源码后缀 + 收尾引号）。 */
 const SOURCE_SUFFIX = /\.(?<extension>mts|cts|ts)(?=["']$)/u;
 
 /**
  * 把一处说明符里的源码后缀换成对侧产物后缀，引号与其内其余字符原样保留。
- * @param说明符- 带引号的说明符原文
+ * @param specifier - 带引号的说明符原文
  * @returns 改写后的说明符
  */
 function withOutputSuffix(specifier: string): string {
@@ -81,6 +81,8 @@ function withOutputSuffix(specifier: string): string {
  * 三处正则都会在**注释与字符串内部**命中，所以替换前先用 {@link maskNonCode} 取一份
  * 等长的正文遮蔽文本，只有“说明符起始引号在正文位置上”的命中才改写：JSDoc 示例里的
  * `from "./x.ts"` 与字面量类型 `type P = 'from "./x.ts"'` 因此原样保留。
+ * 遮蔽器只对**声明文本**承诺（声明里没有正则字面量）；它不能反过来用于判断源码里
+ * 有没有某段语法——那个判断走解析器（见 decorator-lowering 的门槛）。
  * @param text - 声明文件正文
  * @returns 改写后的正文
  */

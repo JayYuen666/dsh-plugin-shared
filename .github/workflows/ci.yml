@@ -29,7 +29,7 @@ permissions:
 # env 里写这枚字面值；唯一例外是 dsh-lesson-loop，它的 package.json 自带 packageManager，由
 # pnpm/action-setup 自己读，再写 env 就成了两份唯一来源。
 env:
-  PNPM_VERSION: 12.11.2
+  PNPM_VERSION: 12.23.0
 jobs:
   gate:
     name: gate (${{ matrix.os }}, node ${{ matrix.node }})
@@ -203,18 +203,18 @@ jobs:
           npm install -D "rolldown@${rolldown_range}" --no-audit --no-fund
           # binding 取不到就在这一步报，别让它伪装成下一刀的入口缺陷。
           node -e "import('rolldown').then(function(){console.log('rolldown binding 可用')},function(e){console.error(e);process.exit(1)})"
-          # `./lib/card-ui` 是客户端子路径，产物的顶层静态 import `react`；react 是 optional peer，
+          # `./client` 是客户端子路径，产物的顶层静态 import `react`；react 是 optional peer，
           # npm 不会自动装。探针按消费者实际提供的宿主运行时装上它，否则这一条子路径会以
           # ERR_MODULE_NOT_FOUND 误报，看起来像发布产物缺入口。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           npm install -D "react@${react_range}" --no-audit --no-fund
-          # `./lib/card-ui` 的省略格浮层经 `createPortal` 静态 import `react-dom`。它只在
+          # `./client` 的省略格浮层经 `createPortal` 静态 import `react-dom`。它只在
           # devDependencies（宿主平台模块在运行期与 react 同一位供应，产物保持裸说明符），
           # npm 与 pnpm 都不会自动装；探针按装进来的那份 manifest 的 devDependencies 范围
           # 装上它，否则 card-ui 子路径在装载期 ERR_MODULE_NOT_FOUND，看起来像发布产物缺入口。
           reactdom_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').devDependencies['react-dom']")
           npm install -D "react-dom@${reactdom_range}" --no-audit --no-fund
-          # `./lib/remote-marker` 同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
+          # `./tool`（经 remote-marker）同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
           # npm 不装 optional peer，漏装时这一条子路径会在装载期 ERR_MODULE_NOT_FOUND。
           # 范围读自发布 manifest，不在 workflow 里抄版本。
           typert_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies['@deepseek-ai/dsh-typert-protocol']")
@@ -249,8 +249,9 @@ jobs:
             if (doc === null || typeof doc !== "object") throw new Error(`${s} 不是 JSON 对象`);
           }
           const root = await import(NAME);
-          // 根入口与其它子路径同级断言：dist/index.d.ts 由 build-host.mjs 依据自己的 facets
-          // 数组生成，facets 与 package.json 的 exports 漂一处，只有这条断言能报出来。
+          // 根入口与其它子路径同级断言：dist/types/plugin.d.ts 由 tsc 按 lib/plugin.ts 产出，
+          // 与运行期 dist/plugin.js 指向同一个 barrel；facets、lib/index.ts 与 package.json
+          // 的 exports 漂一处，只有这条断言能报出来。
           if (Object.keys(root).length === 0) throw new Error("根入口没有任何导出");
           console.log(
             "入口分档：", jsSubs.length, "条 .js +", jsonSubs.length, "条 .json；根入口导出数:",
@@ -261,11 +262,11 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/probe
-          npm install -D typescript@7.0.2 @types/node@26.6.3 --no-audit --no-fund
-          # `./lib/card-ui` 的 .d.ts 引 `react` 类型；react 包不自带 .d.ts，类型声明要另装
+          npm install -D typescript@7.0.2 @types/node@26.6.11 --no-audit --no-fund
+          # `./client` 的 .d.ts 引 `react` 类型；react 包不自带 .d.ts，类型声明要另装
           # @types/react，否则 surface.ts 会对这份声明报 TS2307。
           npm install -D @types/react@19.3.0 --no-audit --no-fund
-          # 只承载类型的 peer 必须按当场读到的清单装齐再判：本包把 5 个这样的 @deepseek-ai/* 声明为
+          # 只承载类型的 peer 必须按当场读到的清单装齐再判：本包把八个这样的 @deepseek-ai/* 声明为
           # optional peer，npm 于是不装它们，而 dist/**/*.d.ts 直接引它们的类型 ⇒ 裸装下 ① 收到
           # 7 条指向**本包自己** .d.ts 的 TS2307（"dsh-plugin-shared"这三个词命中的是文件路径，
           # 不是外部包名）、② 因类型退化成 any 收不到 TS2322。实测：装齐这几个 peer 后两支都转绿。
@@ -324,15 +325,13 @@ jobs:
           console.log("① 的类型面扫描切面数：", facets.length);
           '
           cat > consumer.ts <<'TS'
-          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
-          import type { JobOutcome, SettledProcess } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
-          import type { SessionEvent, ToolCallRecord } from "@jayyuen66/dsh-plugin-shared/lib/tool-events";
-          import type { Locale } from "@jayyuen66/dsh-plugin-shared/lib/locale";
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/tool";
+          import type { JobOutcome, SettledProcess, SessionEvent, ToolCallRecord, Locale } from "@jayyuen66/dsh-plugin-shared/tool";
           export const ok: JobOutcome = jobOutcomeOf({ status: "completed", exitCode: 0, signal: null });
           export type Probe = [SessionEvent, ToolCallRecord, SettledProcess, Locale];
           TS
           cat > degrade.ts <<'TS'
-          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/tool";
           // 这条必须报错：类型一旦因为未声明的依赖退化成 any，编译器就拦不住非法入参。
           const wrong: string = jobOutcomeOf({ status: "not-a-status", exitCode: {}, signal: undefined });
           console.log(wrong);
@@ -376,12 +375,12 @@ jobs:
           # 客户端子路径静态 import `react`；optional peer 在 pnpm 下同样不会自动装。
           react_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies.react")
           pnpm add -D "react@${react_range}"
-          # `./lib/remote-marker` 同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
+          # `./tool`（经 remote-marker）同样静态 import optional peer `@deepseek-ai/dsh-typert-protocol`；
           # pnpm 不装 optional peer，漏装时这一条子路径会在装载期 ERR_MODULE_NOT_FOUND。
           # 范围读自发布 manifest，不在 workflow 里抄版本。
           typert_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').peerDependencies['@deepseek-ai/dsh-typert-protocol']")
           pnpm add -D "@deepseek-ai/dsh-typert-protocol@${typert_range}"
-          # `./lib/card-ui` 同样静态 import `react-dom`（省略格浮层的 createPortal）；范围读自
+          # `./client` 同样静态 import `react-dom`（省略格浮层的 createPortal）；范围读自
           # 发布 manifest 的 devDependencies，不在 workflow 里抄版本。
           reactdom_range=$(node -p "require('./node_modules/@jayyuen66/dsh-plugin-shared/package.json').devDependencies['react-dom']")
           pnpm add -D "react-dom@${reactdom_range}"
@@ -404,10 +403,10 @@ jobs:
           # 实测在 pnpm 布局的项目里跑 `npm install -D` 会以
           # "Cannot read properties of null (reading 'matches')" 崩掉——那是 npm 读不懂
           # pnpm 留下的 node_modules 树，与本包无关，但足以让这一档误报。
-          pnpm add -D typescript@7.0.2 @types/node@26.6.3
+          pnpm add -D typescript@7.0.2 @types/node@26.6.11
           cat > probe.ts <<'TS'
-          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
-          import type { JobOutcome } from "@jayyuen66/dsh-plugin-shared/lib/job-outcome";
+          import { jobOutcomeOf } from "@jayyuen66/dsh-plugin-shared/tool";
+          import type { JobOutcome } from "@jayyuen66/dsh-plugin-shared/tool";
           export const ok: JobOutcome = jobOutcomeOf({ status: "completed", exitCode: 0, signal: null });
           TS
           ./node_modules/.bin/tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext \
@@ -456,7 +455,7 @@ jobs:
           # 后续步骤会跑仓库自己的 install/构建/测试脚本，也就跑得到依赖里的脚本。
           persist-credentials: false
       - name: 依赖审查
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           # 高危即拦；低危只记录，否则一次上游披露会把所有仓的门都堵上。
           fail-on-severity: high

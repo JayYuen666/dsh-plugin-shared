@@ -1,7 +1,7 @@
 import { definePluginConfig } from "./config/oxlint.base.ts";
 
 export default definePluginConfig({
-  // 包内例外只有一个：`execFileSync`，三个调用点 —— 规则快照检查（test/config-oxlint.test.ts）
+  // 包内例外分两组。第一组是 `execFileSync` 的三个调用点 —— 规则快照检查（test/config-oxlint.test.ts）
   // 要启动 `oxlint --rules` 子进程取 vitest 规则全集的实际输出；lib/build-types.ts 用它跑 tsc
   // 的声明产出；test/build-types-facet.test.ts 的替身要把未被打桩的那一路直通回原函数。
   // 为什么用同步：这三处都没有并发需求，而 async 三种写法恰好都被基线三条 promise
@@ -17,15 +17,15 @@ export default definePluginConfig({
       apis: ["execFileSync"],
     },
     {
-      // 装饰器预转换三件套：跑一次 `tsc` 子进程（execFileSync）、在系统临时目录里开一个
-      // scratch 目录（mkdtempSync）、收尾时删掉它（rmSync）。三个调用都在 lib/decorator-lowering.ts
-      // 里，且都在两条流水线的**同步**钩子上（rolldown/vite 的 transform 只吃同步返回），
-      // 换成 async 会与钩子的签名直接冲突。
+      // 装饰器预转换四件套：跑一次 `tsc` 子进程（spawnSync）、在系统临时目录里开一个
+      // scratch 目录（mkdtempSync）、写临时源文件（writeFileSync / mkdirSync）、收尾时删掉它（rmSync）。
+      // 五个调用都在 lib/decorator-lowering.ts 里，且都在两条流水线的**同步**钩子上
+      // （rolldown/vite 的 transform 只吃同步返回），换成 async 会与钩子的签名直接冲突。
       files: ["lib/decorator-lowering.ts"],
-      apis: ["execFileSync", "mkdtempSync", "rmSync"],
+      apis: ["spawnSync", "mkdtempSync", "mkdirSync", "rmSync", "writeFileSync"],
     },
   ],
-  // 唯一一条包内例外，范围收到单个用例文件。
+  // `unicorn/no-thenable` 这一条按文件关闭，范围收到单个用例文件。
   // `unicorn/no-thenable` 禁的是「把 thenable 当公开 API 自造」。而 lesson-bus 的被测对象
   // 恰恰是 `isThenable` 对各种形状的判定，其中一支是**函数型** thenable：不造出这个形状，
   // 那条分支就测不到，而漏判的方向是不安全的——无人接住的 rejection 会变成进程级未处理拒绝。

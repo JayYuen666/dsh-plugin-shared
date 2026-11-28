@@ -4,8 +4,8 @@
 // 而四种失败里「服务缺席」与「形状不对」在调用方看来都是 false——若不在这里逐格验证，
 // 把 `ctx.get` 写成 `ctx.get("skill")`、或把收窄判成「非 null 即可」，都不会有任何用例变红。
 //
-// 受影响的公共面：本文件只钉 `lib/skill.ts` 的 `registerSkill`（经 `package.json` 的
-// `./lib/skill` 子路径导出，不进根 barrel）；同步面：`test/index.test.ts`（BARREL_EXEMPT）、
+// 受影响的公共面：本文件只钉 `lib/skill.ts` 的 `registerSkill`（经 `./tool` barrel 导出，
+// 构建期解析为 `./internal/tool/skill`，不进根 barrel）；同步面：`test/index.test.ts`（BARREL_EXEMPT）、
 // `test/build-host.test.ts`（entries ↔ lib/ 的一一对应）各登记了本模块，那两条管的是清单
 // 漂移，行为判据只在这里。
 import { describe, it } from "vitest";

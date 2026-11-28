@@ -3,6 +3,8 @@ export { CARD_UI_CSS } from "./card-ui/styles.ts";
 export { CARD_UI_STYLE_ID, ensureCardUiCss } from "./card-ui/style-tag.ts";
 export { splitHint } from "./card-ui/hint.ts";
 export { withInvalidField, useInvalidFields } from "./card-ui/invalid.ts";
+export { useCardDraft } from "./card-ui/draft.ts";
+export type { CardDraft, CardDraftOptions } from "./card-ui/draft.ts";
 export type { InvalidFields } from "./card-ui/invalid.ts";
 export { CardForm, FieldGrid, FieldTwoCol, Section, StatusBar } from "./card-ui/layout.ts";
 export { Field, FieldLabel, InfoTip } from "./card-ui/field.ts";

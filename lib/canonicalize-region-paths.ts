@@ -1,269 +1,218 @@
 // lib/canonicalize-region-paths.ts —— 构建期产物规范化：把 rolldown 写进产物的
-// `//#region <模块路径>` 标记改写成与 process.cwd() 无关的形态。
+// 模块路径横幅改写成与调用方 cwd 无关的形态。
 //
-// 为什么存在（实测的可复现性缺陷）：rolldown 给每个模块写的 `//#region` 标记，路径是
-// **相对 process.cwd()** 的。同一份源码于是有多种字节：
-//   cwd = 包根（`npm run build` / vitest 的形态）→ `//#region lib/failure-classify.ts`
-//   cwd = plugins/                              → `//#region <包名>/lib/failure-classify.ts`
-//   cwd = DSH_HOME（`node plugins/<包>/build-host.mjs`）→ `//#region plugins/<包名>/lib/…`
-//   跨包依赖同理：`//#region ../shared/lib/record.ts` / `//#region shared/lib/record.ts`
-//     / `//#region plugins/shared/lib/record.ts`
-// 各包 test/host-freshness.ts / test/client-freshness.ts 是「磁盘产物 vs 内存构建」的逐字节
-// 比对，形态一漂移，检查就会把没改过的产物判成过期。修法只能在 builder 侧：产出 canonical
-// 形态，比对两侧从此同形。
+// 为什么存在：rolldown 的模块横幅路径按**它的 `cwd` 选项**算（官方源码
+// `crates/rolldown_common/src/types/resolved_id.rs` 的 `debug_id`：relative to the cwd；
+// `crates/rolldown/src/module_loader/module_task.rs` 传入的是 `ctx.options.cwd`），
+// `cwd` 缺省又是 `process.cwd()`（`packages/rolldown/src/options/input-options.ts`）。
+// 同一份源码于是有多种字节：
+//   cwd = 包根（`npm run build` / vitest 的形态）→ `// lib/failure-classify.ts`
+//   cwd = plugins/                              → `// <包名>/lib/failure-classify.ts`
+//   cwd = DSH_HOME（`node plugins/<包>/build-host.mjs`）→ `// plugins/<包名>/lib/…`
+//   跨包依赖同理：`// ../shared/lib/record.ts` / `// shared/lib/record.ts`
+//     / `// plugins/shared/lib/record.ts`
 //
-// 改写方式按调用形态分两档：
-//   - 传入 cwd（builder 应传 process.cwd()）：先去掉行首的相对段（`./` 与 `../` 的任意串），
-//     再按两个**算出来的真前缀**依次整段去掉——`rel(cwd, 包根)`（自有模块）与
-//     `rel(cwd, 包根父目录)`（同级依赖）。前缀是精确路径不是段名猜测，因此「包内目录恰好与
-//     父目录或包名同名」不会再被误改，跨 cwd 同形与幂等对这类形态也成立。
-//     残余局限：包内目录与**包名**同名、且 cwd 恰为包根父目录时，自有模块的 canonical 文本
-//     （`<包名>/…`）与 raw 形态逐字相同，重入会多去掉一层——纯字符串无法区分两者，无损修法
-//     不存在，已记录在案。
-//   - 不传 cwd（旧签名，兼容既有调用方）：按两个锚点**段名**去——「包根的父目录名」与
-//     「包名」，只按整段匹配。整段匹配是必需的：`@jayyuen66/dsh-plugin-shared` 把 `shared`
-//     当子串，若按子串改，shared 自己的产物会把 node_modules 路径误改成 `lib/index.js`。
-//     这档按名猜测，不保证「包内目录与锚点同名」形态的正确性，新调用方一律传 cwd。
+// 真正的根治点在 bundler 一侧：共享构建编排（lib/build-host.ts / lib/build-client.ts）
+// 已把 rolldown 的 `cwd` 固定成包根，因此模块横幅本来就是包根相对、与
+// `process.cwd()` 无关。**内部构建不再调用本函数**——文本后处理对生成代码是额外风险
+// （字符串字面量里同形行会被改写），而固定基准已经消除了漂移的来源。
 //
-// 只在 builder 侧调用，且**刻意不进 barrel**：它是构建脚本用的纯字符串函数，不是插件运行时
-// API；进了 `lib/index.ts` 就会让每个运行期消费方都为它多一次导入。build-host.mjs 因此把它
+// 本函数保留为公开子路径，供无法控制 rolldown `cwd` 的外部构建脚本做一次性后处理。
+// 它按显式基准解析路径，不再按段名猜测：
+//   - `baseDir` 是**标记路径的基准**，应与 rolldown 的 `cwd` 同值（通常是包根或工作区根）；
+//   - 把 raw 路径解析成绝对段串，再按完整路径段判断归属：落在包根下 → 相对包根输出；
+//     落在包根父目录下 → 相对父目录输出（保留依赖包名）；
+//   - 两者都判不出的路径**原样保留**，不再靠剥前缀把包外路径折成包内路径。
+//
+// 路径解析直接用 `node:path` 的 `win32` / `posix` 两套实现：它们是纯函数，不读盘、
+// 不依赖调用方平台；POSIX / Windows / UNC 的 normalize、resolve、relative、dirname、
+// isAbsolute 语义不需要在本模块重写一遍。根的选择按路径形态决定，跨根（不同盘符、
+// 不同 UNC share、POSIX 与 Windows 混写）判不出归属时按原样保留。
+//
+// 生效范围与边界：
+//   - 支持两种真实横幅：生产构建的 `// <path>`（见
+//     `crates/rolldown/src/utils/render_ecma_module.rs`）与 HMR 载荷的
+//     `//#region <path>` / `//#endregion`（见 `crates/rolldown/src/hmr/hmr_stage.rs`）。
+//     `//#endregion` 不改写。
+//   - `pkgDir` 与 `baseDir` 必须是绝对路径；解析不出根时整份文本原样交回。
+//   - 本函数**只对 rolldown 的原始产物处理一次**，不承诺幂等：canonical 文本不携带参照系，
+//     `foo/a.ts` 在父目录基准下既可能指 `<包根>/foo/a.ts`，也可能指 `<父目录>/foo/a.ts`；
+//     纯字符串无法区分。重复调用需要调用方自己带元数据，或改回“基准由 bundler 固定”的路线。
+//   - 纯字符串分析无法区分注释与字符串内容：以 `// ` 或 `//#region ` 起行、且逐字符
+//     同形于“标记 + 路径”的模板字面量内容仍会被改写。内部构建不调用本函数，因此不承担
+//     这条风险；外部调用方应只对**生成代码**使用，不要对可能含用户数据的文本使用。
+//
+// 只在公开子路径里：它是构建脚本用的纯字符串函数，不是插件运行时 API；进了
+// `lib/index.ts` 就会让每个运行期消费方都为它多一次导入。build-host.mjs 因此把它
 // 单独列进 `entries`（不进 `facets` 数组——那数组是 barrel 的成员表），产出一个独立入口。
 //
-// ⚠ 它**确实在 `package.json` 的 `exports` 里**（`./lib/canonicalize-region-paths`），而且这条
-// 是关键路径：各兄弟包的 `build-*.mjs` 正是靠它按包子路径引本函数（quality-gate / ocr-review /
-// session-rescue / dir-prep-organize / zvec-grep / danger-guard / lesson-loop / scrapling，
-// 各一对 build-host 与 build-client）。只有本包自己的 builder 用相对说明符
-// `./lib/canonicalize-region-paths.ts`（它们在包内，不需要绕子路径）。
-// 删掉那条 exports = 一次性打断所有依赖它的包的构建，所以「不进出 exports」那句是
+// ⚠ 它**确实在 `package.json` 的 `exports` 里**（`./lib/canonicalize-region-paths`）。
+// 删掉那条 exports 会打断外部按子路径取用的构建脚本，所以「不进出 exports」那句是
 // 错的，照着它做会出事；test/publish-manifest.test.ts 固定着这条一致性。
-//
-// 纯字符串：不起子进程、不读盘、不 import node:path —— 包根与 cwd 由调用方（builder 里已有的
-// import.meta.dirname 与 process.cwd()）作为字符串交进来，本模块只做行内文本重写。因此可单测，
-// 也能在同一进程里对两侧（内存构建 / 磁盘产物）反复调用而不引入新的环境依赖。
 
-/** rolldown 模块标记的前缀。`//#endregion` 与代码里的任何其它行都不在本函数的处理范围内。 */
+import path from "node:path";
+
+/** 行首两种真实横幅；`//#endregion` 与代码里的其它行不在此列。 */
+const MARKER_LINE = /^(?:\/\/#region |\/\/ ).*$/gmu;
+
+/** 生产构建的模块横幅前缀。 */
+const MODULE_MARK = "// ";
+
+/** HMR 载荷的模块横幅前缀。 */
 const REGION_MARK = "//#region ";
 
-/**
- * 整份产物里所有 `//#region ` 行的匹配：`^` 加 `m` 把匹配锚在行首，只取标记本身到行尾。
- * 与逐行 `startsWith` + `slice` 等价，但一趟扫完，不为整份产物造中间数组。
- * 行首锚点只挡得住**单行**字符串字面量；跨行模板字面量里以标记起行的内容由
- * {@link REGION_PATH_SHAPE} 的形状判断再拦一层（残余局限见下）。
- */
-const REGION_LINE = /^\/\/#region .*$/gmu;
+/** 标记之后必须长得像一段模块路径：非空、无空白、无引号、无反引号。 */
+const MARKER_PATH_SHAPE = /^[^\s'"`]+$/u;
 
-/**
- * 标记之后必须长得像一段模块路径：非空、无空白、无引号、无反引号。rolldown 写的标记
- * 永远满足（模块路径不含这些字符）；模板字面量里以标记起行的自然语言内容带着空白，
- * 会被这一条排除、原样保留。残余局限：字面量内容若**逐字符**同形于「标记 + 路径」，纯字符串
- * 分析无从与真标记区分，仍会被改写——已固定在 test/canonicalize-region-paths.test.ts。
- */
-const REGION_PATH_SHAPE = /^[^\s'"`]+$/u;
+/** Windows 盘符绝对路径：盘符后必须跟分隔符；`C:foo` 是盘符相对，不按绝对路径算。 */
+const WINDOWS_DRIVE = /^[A-Za-z]:[/\\]/u;
 
-/**
- * 路径行首的相对段（`./` 与 `../` 的任意串），去掉后跨包依赖在两处 cwd 下才同形。
- * 相对段的**层级深度在此有意丢失**：`../x/y`（pkg cwd 的产物）与 `x/y`（父目录 cwd 的
- * 产物）必须改写成同一个标记，这是跨 cwd 字节相等的关键要求，因此不能把 `../` 的层数编码
- * 进标记去保留可区分性；两个不同深度、同末段路径的模块改写成同一标记，接受为已知局限。
- */
-const LEADING_RELATIVE_SEGMENTS = /^(?:\.\.?\/)+/u;
+/** UNC 共享根的两段形状（统一成分隔符后）：`//server/share`。 */
+const UNC_SHARE = /^\/\/[^/]+\/[^/]+/u;
 
-/** 分隔符两头认：产物里的模块路径由 rolldown 写成 `/`，而 `import.meta.dirname` 在 Windows 上是 `\`。 */
-const SEGMENT_SPLIT = /[/\\]+/u;
+/** `node:path` 的两套平台实现；二者 API 同形，只按路径根选一套。 */
+type PathFlavor = typeof path.posix;
 
-/** 行尾/目录尾的分隔符串：取末段与父目录前都要先去掉它。 */
-const TRAILING_SEPARATORS = /[/\\]+$/u;
-
-/** Windows 绝对路径：盘符后跟 `/` 或 `\`。 */
-const WINDOWS_ABSOLUTE_PREFIX = /^[A-Za-z]:[\\/]/u;
-
-/**
- * 取路径的末段。
- * @param dir - 目录路径
- * @returns 末段；只剩分隔符时为空串
- */
-function lastSegment(dir: string): string {
-  const trimmed = dir.replace(TRAILING_SEPARATORS, "");
-  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return index === -1 ? trimmed : trimmed.slice(index + 1);
+/** 一条已解析的绝对路径与它所属的平台语义。 */
+interface ResolvedPath {
+  /** 规范化后的绝对路径。 */
+  readonly value: string;
+  /** 该路径使用的平台语义。 */
+  readonly flavor: PathFlavor;
 }
 
 /**
- * 包根的父目录。先去掉尾随分隔符再取父，尾随分隔符才不会把父目录算错。
- * @param pkgDir - 包根路径
- * @returns 父目录；没有父目录（裸名、只剩分隔符）时原样或空串交回
+ * UNC 共享根的形状校验：`\\server\share`（统一成 `/` 后是 `//server/share`）。
+ * `\\server` 只有 server 没有 share，不是可解析的根。
+ * @param raw - 原始路径
+ * @returns 是否具备 server/share 两段
  */
-function parentDirOf(pkgDir: string): string {
-  const trimmed = pkgDir.replace(TRAILING_SEPARATORS, "");
-  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return index === -1 ? trimmed : trimmed.slice(0, index);
+function hasUncShare(raw: string): boolean {
+  return UNC_SHARE.test(raw.replaceAll("\\", "/"));
 }
 
 /**
- * 行首可被去掉的两个锚点段（旧签名的按名猜测档）：包根的父目录名与包名。
- * @param pkgDir - 包根路径（调用方的 import.meta.dirname）
- * @returns 按序待去掉的段名；空串（pkgDir 只剩分隔符、或压根没有父目录）已剔除
+ * 把绝对路径解析成「值 + 平台语义」。非绝对路径返回 null，由调用方原样交回。
+ * @param raw - 原始绝对路径
+ * @returns 解析结果；不是可识别的绝对路径时为 null
  */
-function leadingAnchors(pkgDir: string): string[] {
-  const pkgName = lastSegment(pkgDir);
-  const parent = parentDirOf(pkgDir);
-  return [lastSegment(parent), pkgName].filter((anchor) => anchor.length > 0);
-}
-
-/**
- * 依次去掉行首的锚点段（每个最多一次，且只在整段命中时去掉）。
- * @param path - 已去掉行首相对段的模块路径
- * @param anchors - 见 {@link leadingAnchors}
- * @returns 相对包根的形态；没有命中时段不变
- */
-function stripLeadingAnchor(path: string, anchors: string[]): string {
-  let rest = path;
-  for (const anchor of anchors) {
-    if (rest.startsWith(`${anchor}/`)) {
-      rest = rest.slice(anchor.length + 1);
-    }
+function resolveAbsolute(raw: string): ResolvedPath | null {
+  const unified = raw.replaceAll("\\", "/");
+  if (unified.startsWith("//")) {
+    return hasUncShare(raw) ? { value: path.win32.resolve(raw), flavor: path.win32 } : null;
   }
-  return rest;
+  if (WINDOWS_DRIVE.test(unified)) {
+    return { value: path.win32.resolve(raw), flavor: path.win32 };
+  }
+  if (unified.startsWith("/")) {
+    return { value: path.posix.resolve(raw), flavor: path.posix };
+  }
+  return null;
 }
 
 /**
- * 路径切段。POSIX 根的行首空段是「绝对」的记号，要保留；尾随分隔符产生的空段由
- * {@link trimTrailingEmptySegments} 去掉。
+ * 把横幅里的 raw 路径解析成绝对目标：绝对路径直接用，相对路径接到基准上。
+ * @param raw - 横幅里的原始路径
+ * @param base - 标记路径的基准
+ * @returns 绝对目标；无效 UNC 或其它无法解析的形态为 null
  */
-/** 路径切段。分隔符两头认：产物里的模块路径由 rolldown 写成 `/`，Windows 的绝对路径写 `\`。 */
-function splitSegments(path: string): string[] {
-  return path.split(SEGMENT_SPLIT);
-}
-
-function trimTrailingEmptySegments(segments: string[]): string[] {
-  const out = [...segments];
-  while (out.length > 1 && out.at(-1) === "") {
-    out.pop();
+function targetOf(raw: string, base: ResolvedPath): ResolvedPath | null {
+  const absolute = resolveAbsolute(raw);
+  if (absolute !== null) {
+    return absolute;
   }
-  return out;
-}
-
-/** 绝对路径判断落在原始字符串上：POSIX 根、Windows 盘符与 UNC 两种都认。 */
-function isAbsolutePath(path: string): boolean {
-  return path.startsWith("/") || path.startsWith("\\") || WINDOWS_ABSOLUTE_PREFIX.test(path);
-}
-
-/** 生成 count 个 `..` 段。 */
-function parentSegments(count: number): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < count; index += 1) {
-    out.push("..");
-  }
-  return out;
-}
-
-/**
- * POSIX 语义的 `rel(from, to)`，分隔符两种都认、输出一律 `/`。
- * 一侧绝对一侧相对、或 Windows 盘符不同（含大小写差异）时无从算起，交回 null；
- * 调用方对 null 的处理是「这一档不改」，方向是保守的。
- */
-function relativeSegments(from: string, to: string): string[] | null {
-  const absolute = isAbsolutePath(from);
-  if (absolute !== isAbsolutePath(to)) {
+  // 无效 UNC 也走这里：它不能被当成相对路径接在 base 上。
+  if (raw.replaceAll("\\", "/").startsWith("//")) {
     return null;
   }
-  const fromSegments = trimTrailingEmptySegments(splitSegments(from));
-  const toSegments = trimTrailingEmptySegments(splitSegments(to));
-  if (absolute && fromSegments[0] !== toSegments[0]) {
-    return null;
-  }
-  let shared = 0;
-  while (
-    shared < fromSegments.length &&
-    shared < toSegments.length &&
-    fromSegments[shared] === toSegments[shared]
-  ) {
-    shared += 1;
-  }
-  return [...parentSegments(fromSegments.length - shared), ...toSegments.slice(shared)];
+  const relative =
+    base.flavor === path.posix ? raw.replaceAll("\\", "/") : raw.replaceAll("/", "\\");
+  return { value: base.flavor.resolve(base.value, relative), flavor: base.flavor };
 }
 
 /**
- * 行首以 `/` 连接的可用前缀。`..` 开头的段串不整段丢弃：cwd 是包根的兄弟目录时前缀形如
- * `../plugins/foo`，行首相对段去掉后剩余部分恰好是它，所以只跳过行首的 `..` 段再取剩余；
- * 只剩 `..`（cwd 在包根之下）则无前缀可用，交回空串。
+ * `to` 相对 `from` 的路径；不在 `from` 之下（或不同平台根）时交回 null。
+ * 判据是 `path.relative` 的完整路径段结果，不是字符串前缀。
+ * @param from - 作为基准的绝对路径
+ * @param to - 目标绝对路径
+ * @returns 相对路径（`/` 分隔）；不隶属时为 null
  */
-function usablePrefix(segments: string[] | null): string {
-  if (segments === null || segments.length === 0) {
+function relativeWithin(from: ResolvedPath, to: ResolvedPath): string | null {
+  if (from.flavor !== to.flavor) {
+    return null;
+  }
+  const relative = from.flavor.relative(from.value, to.value);
+  if (relative === "") {
     return "";
   }
-  let start = 0;
-  while (start < segments.length && segments[start] === "..") {
-    start += 1;
+  if (from.flavor.isAbsolute(relative)) {
+    return null;
   }
-  return start === segments.length ? "" : segments.slice(start).join("/");
+  const parts = relative.split(from.flavor.sep);
+  if (parts[0] === "..") {
+    return null;
+  }
+  return parts.join("/");
 }
 
 /**
- * cwd 已知时按调用方布局算出的两个前缀：自有模块的 `rel(cwd, 包根)` 与同级依赖共用的
- * `rel(cwd, 包根父目录)`。取不到（相对形态、盘符不符、cwd 就在包根）时为空串。
+ * 把一段标记路径改写成 canonical 形态。
+ * @param rawPath - 标记里的原始路径
+ * @param pkg - 包根
+ * @param base - 标记路径的基准
+ * @returns canonical 路径；判不出归属时原样交回
  */
-function prefixesFor(cwd: string, pkgDir: string): { own: string; parent: string } {
-  return {
-    own: usablePrefix(relativeSegments(cwd, pkgDir)),
-    parent: usablePrefix(relativeSegments(cwd, parentDirOf(pkgDir))),
-  };
+function canonicalPathOf(rawPath: string, pkg: ResolvedPath, base: ResolvedPath): string {
+  const target = targetOf(rawPath, base);
+  if (target === null) {
+    return rawPath;
+  }
+  const own = relativeWithin(pkg, target);
+  if (own !== null) {
+    return own === "" ? rawPath : own;
+  }
+  const parentValue = pkg.flavor.dirname(pkg.value);
+  if (parentValue !== pkg.value) {
+    const sibling = relativeWithin({ value: parentValue, flavor: pkg.flavor }, target);
+    if (sibling !== null) {
+      return sibling === "" ? rawPath : sibling;
+    }
+  }
+  return rawPath;
 }
 
 /**
- * 按算好的前缀去掉行首：自有前缀优先（最具体），命中即去；否则去父目录前缀——剩下的首段
- * 是依赖包名，canonical 形态要保留它。都没有命中就原样交回。
- */
-function stripByPrefixes(path: string, prefixes: { own: string; parent: string }): string {
-  if (prefixes.own.length > 0 && path.startsWith(`${prefixes.own}/`)) {
-    return path.slice(prefixes.own.length + 1);
-  }
-  if (prefixes.parent.length > 0 && path.startsWith(`${prefixes.parent}/`)) {
-    return path.slice(prefixes.parent.length + 1);
-  }
-  return path;
-}
-
-/**
- * 改写单行。调用方已用 {@link REGION_LINE} 预筛出行首前缀，所以这里**只**动标记之后的那段
- * 路径文本，不再重复判断前缀——单行字符串里的同形内容由那条正则的行首锚点挡在处理范围外；
- * 跨行模板字面量里以标记起行的内容，只有不像模块路径（带空白/引号/反引号）的才会被
- * {@link REGION_PATH_SHAPE} 排除，与真标记逐字符同形的仍会被改写（残余局限，见该常量）。
- * @param line - 已确认以 `//#region ` 开头的一行
- * @param anchors - 见 {@link leadingAnchors}（cwd 未传时使用）
- * @param prefixes - 见 {@link prefixesFor}（cwd 已传时使用）
+ * 改写单行。调用方已用 {@link MARKER_LINE} 预筛出行首横幅。
+ * @param line - 以 `//#region ` 或 `// ` 开头的一行
+ * @param pkg - 包根
+ * @param base - 标记路径的基准
  * @returns canonical 形态的那一行
  */
-function canonicalizeLine(
-  line: string,
-  anchors: string[],
-  prefixes: { own: string; parent: string } | null,
-): string {
-  const path = line.slice(REGION_MARK.length);
-  if (!REGION_PATH_SHAPE.test(path)) {
+function canonicalizeLine(line: string, pkg: ResolvedPath, base: ResolvedPath): string {
+  const prefix = line.startsWith(MODULE_MARK) ? MODULE_MARK : REGION_MARK;
+  const rawPath = line.slice(prefix.length);
+  if (!MARKER_PATH_SHAPE.test(rawPath)) {
     return line;
   }
-  const folded = path.replace(LEADING_RELATIVE_SEGMENTS, "");
-  const stripped =
-    prefixes === null ? stripLeadingAnchor(folded, anchors) : stripByPrefixes(folded, prefixes);
-  return `${REGION_MARK}${stripped}`;
+  return `${prefix}${canonicalPathOf(rawPath, pkg, base)}`;
 }
 
 /**
- * 产物文本的 canonical 形态：所有 `//#region` 行改写成与 process.cwd() 无关的形态，其余字节原样保留。
+ * 产物文本的 canonical 形态：所有模块横幅行改写成与调用方 cwd 无关的形态，其余字节原样保留。
  * @param code - builder 拿到的产物文本
  * @param pkgDir - 包根绝对路径（builder 的 import.meta.dirname）
- * @param cwd - 构建时的 process.cwd()。传入即走精确前缀档；省略走旧签名兼容档
- * @returns 与 process.cwd() 无关的同一份文本；对 canonical 输入幂等（残余局限见文件头）
+ * @param baseDir - 标记路径的基准，应与 rolldown 的 `cwd` 同值；省略时按包根
+ * @returns 改写过模块横幅的同一份文本；无法解析根时原样交回
  */
-export function canonicalizeRegionPaths(code: string, pkgDir: string, cwd?: string): string {
-  const anchors = leadingAnchors(pkgDir);
-  if (cwd === undefined) {
-    if (anchors.length === 0) {
-      return code;
-    }
-    return code.replaceAll(REGION_LINE, (line) => canonicalizeLine(line, anchors, null));
+export function canonicalizeRegionPaths(
+  code: string,
+  pkgDir: string,
+  baseDir: string = pkgDir,
+): string {
+  const pkg = resolveAbsolute(pkgDir);
+  const base = resolveAbsolute(baseDir);
+  if (pkg === null || base === null) {
+    return code;
   }
-  const prefixes = prefixesFor(cwd, pkgDir);
-  return code.replaceAll(REGION_LINE, (line) => canonicalizeLine(line, anchors, prefixes));
+  return code.replaceAll(MARKER_LINE, (line) => canonicalizeLine(line, pkg, base));
 }

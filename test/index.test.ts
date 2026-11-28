@@ -1,6 +1,6 @@
 // test/index.test.ts —— 入口 barrel 冒烟检查：根导出是留给「一次引入全部模块」的调用方
-// （含外部插件作者）的，本仓消费方一律按 `@jayyuen66/dsh-plugin-shared/lib/<模块>` 子路径取；
-// 某条 re-export 断了要在装载期就暴露出来，而不是等运行时 "xxx is not a function"。
+// （含外部插件作者）的；宿主/工具侧消费方一律按 `@jayyuen66/dsh-plugin-shared/tool` barrel 取，
+// 浏览器侧按 `/client` 取。某条 re-export 断了要在装载期就暴露出来，而不是等运行时 "xxx is not a function"。
 
 import { readdir } from "node:fs/promises";
 import path from "node:path";
@@ -33,7 +33,7 @@ const BARREL_FILE = "index.ts";
 
 /**
  * 不进 barrel 的模块：构建期代码按设计只给子路径（`canonicalize-region-paths` 是产物规范化，
- * `build-*` 四个是各包 build-*.mjs 的统一编排）——运行期消费方不该为它们多一次导入。
+ * `build-*`（含 `build-tool-imports`）是各包 build-*.mjs 的统一编排）——运行期消费方不该为它们多一次导入。
  * 同一条限制由 `test/publish-manifest.test.ts` 固定着。
  */
 const BARREL_EXEMPT = new Set([
@@ -42,22 +42,34 @@ const BARREL_EXEMPT = new Set([
   "build-host.ts",
   "build-client.ts",
   "build-types.ts",
+  // 官方 transform 的共享编排：只被各包 build-host.mjs 取用，运行期消费方不需要它。
+  "build-tool-imports.ts",
   "decorator-lowering.ts",
-  // 只走 ./lib/remote-marker 子路径：值导入 typert，根 barrel 里还有不装 typert 的消费方。
+  // 构建期专用：产物 require 调用的 AST 判据只被 build-client 取用，运行期消费方不需要它。
+  "require-calls.ts",
+  // 两条构建期 AST 判据共用的结构遍历，同样不进运行期 barrel。
+  "ast-walk.ts",
+  // 只经 ./tool barrel 的 remote-marker 导出：值导入 typert，根 barrel 的消费方不都需要这枚值面。
   "remote-marker.ts",
   // 客户端专用子模块：只在插件客户端 bundle 里按子路径取用，根 barrel 不得把 react 带进来。
   "card-ui.ts",
   // 宿主入口在 barrel 之外再补 apply；客户端行是独立 bundle，不进根 barrel。
   "plugin.ts",
   "client-entry.ts",
+  // 工具侧单一入口：由 `./tool` 承载，不是根 barrel 的成员。
+  "tool.ts",
+  // `./tool` 的浏览器条件实现：只由 package.json 的 browser 条件取用。
+  "tool-browser.ts",
+  // 码点截断的零依赖实现：由 text.ts 与 tool-browser.ts 共同取用，不是独立 API。
+  "code-points.ts",
   // 单实例锁只给宿主侧 apply 用：进 barrel 会让每个消费方为它多一次导入。
   "instance-lock.ts",
   // 虚拟 skill 注册同理：技能名与正文都是各包自己的数据，根 barrel 没有通用消费方。
   "skill.ts",
   // 占位符插值：消费方是各包自己的 messages 表，根 barrel 没有通用消费方。
   "placeholder.ts",
-  // Typert 客户端读取器的公共骨架：类型面引用 typert-protocol，不装 typert 的消费方
-  // （dsh-quality-gate）不该被 barrel 逼着解析它。
+  // Typert 客户端读取器的公共骨架：类型面引用 typert-protocol，根 barrel 的消费方不都需要
+  // 这枚值面，不该被 barrel 逼着解析它。
   "typert-client.ts",
   // sessionProjections 注册协议判别件：消费方只有两个，进 barrel 只会多一次导入。
   "session-projection.ts",

@@ -108,3 +108,28 @@ export function isSettingsConflict(error: unknown): boolean {
     fieldOf(error, "name") === "SettingsConflictError"
   );
 }
+
+/**
+ * 错误对象的 `code` 是否等于给定值（大小写敏感，与 Node 的 errno 约定一致）。
+ *
+ * 经 `fieldOf` 读：恶意 getter / 撤销 Proxy 的抛错会折成「取不到」，判定只回答是/否。
+ * 跨 realm 的 Error 不是同一个构造函数，但 `code` 是字符串，仍然认得。
+ * @param error - 捕获到的值
+ * @param code - 目标 errno 码（如 `"ENOENT"`）
+ * @returns 该错误的 code 是否精确等于目标值
+ */
+export function isErrnoCode(error: unknown, code: string): boolean {
+  return fieldOf(error, "code") === code;
+}
+
+/**
+ * 是不是「文件确实不在」的 ENOENT。
+ *
+ * 这是 `isErrnoCode(error, "ENOENT")` 的薄包装，只为调用点读起来像自然语言；
+ * 需要别的 errno 时直接用 {@link isErrnoCode}。
+ * @param error - 捕获到的值
+ * @returns code 为 ENOENT 时为 true
+ */
+export function isEnoent(error: unknown): boolean {
+  return isErrnoCode(error, "ENOENT");
+}

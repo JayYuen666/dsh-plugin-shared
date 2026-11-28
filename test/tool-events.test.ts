@@ -47,10 +47,23 @@ function isErrorOf(event: SessionEvent): boolean | undefined {
   return toolEventRowsOf(event, 0).result?.isError;
 }
 
-/** 经公开的增量折叠入口读一次 arguments 归一结果（`badArguments` 只标记"字符串 JSON 语法非法"）。 */
-function argsOf(
+/** 经公开的增量折叠入口读一次 tool/call 的 arguments（只有原始 JSON 文本会走 JSON.parse）。 */
+function callArgsOf(
   raw: unknown,
-): { arguments: Record<string, unknown>; badArguments: boolean } | undefined {
+): { arguments: Readonly<Record<string, unknown>>; badArguments: boolean } | undefined {
+  const row = toolEventRowsOf(
+    badEvent({ type: CALL_TYPE, data: { turn: 1, step: 1, name: "edit", arguments: raw } }),
+    0,
+  ).call;
+  return row === undefined
+    ? undefined
+    : { arguments: row.arguments, badArguments: row.badArguments };
+}
+
+/** 经公开的增量折叠入口读一次 PTC 的 arguments（官方已归一化，不再 JSON.parse）。 */
+function ptcArgsOf(
+  raw: unknown,
+): { arguments: Readonly<Record<string, unknown>>; badArguments: boolean } | undefined {
   const row = toolEventRowsOf(ptcCall("sub-args", "edit", raw), 0).call;
   return row === undefined
     ? undefined
@@ -58,18 +71,134 @@ function argsOf(
 }
 
 describe("arguments 归一（经 toolEventRowsOf 这条公开接口）", () => {
-  it("string JSON 解析；非法字符串回空对象并标记为无效参数", () => {
-    expect(argsOf('{"a":1}')).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
-    expect(argsOf("{bad")).toStrictEqual({ arguments: {}, badArguments: true });
-    expect(argsOf("42")).toStrictEqual({ arguments: {}, badArguments: false });
+  it("tool/call 的 string JSON 解析；非法字符串回空对象并标记为无效参数", () => {
+    expect(callArgsOf('{"a":1}')).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
+    expect(callArgsOf("{bad")).toStrictEqual({ arguments: {}, badArguments: true });
+    expect(callArgsOf("42")).toStrictEqual({ arguments: {}, badArguments: false });
   });
 
-  it("对象直用；null/undefined/数组/数字回空对象但不标无效参数", () => {
-    expect(argsOf({ a: 1 })).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
-    expect(argsOf(null)).toStrictEqual({ arguments: {}, badArguments: false });
-    expect(argsOf(undefined)).toStrictEqual({ arguments: {}, badArguments: false });
-    expect(argsOf([1, 2])).toStrictEqual({ arguments: {}, badArguments: false });
-    expect(argsOf(7)).toStrictEqual({ arguments: {}, badArguments: false });
+  it("tool/call 的对象做深快照并逐层冻结；null/undefined/数组/数字回空对象但不标无效参数", () => {
+    const raw = { nested: { a: 1 }, list: [1, 2], nil: null };
+    const view = callArgsOf(raw);
+    expect(view).toStrictEqual({
+      arguments: { nested: { a: 1 }, list: [1, 2], nil: null },
+      badArguments: false,
+    });
+    // 深快照：记录不别名事件里的原对象，任何一层都改不动。
+    expect(view?.arguments).not.toBe(raw);
+    expect(view?.arguments["nested"]).not.toBe(raw.nested);
+    expect(view?.arguments["list"]).not.toBe(raw.list);
+    expect(Object.isFrozen(view?.arguments)).toBe(true);
+    expect(Object.isFrozen(view?.arguments["nested"])).toBe(true);
+    expect(Object.isFrozen(view?.arguments["list"])).toBe(true);
+    raw.nested.a = 2;
+    raw.list.push(3);
+    expect(view?.arguments).toStrictEqual({ nested: { a: 1 }, list: [1, 2], nil: null });
+    expect(callArgsOf(null)).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(callArgsOf(undefined)).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(callArgsOf([1, 2])).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(callArgsOf(7)).toStrictEqual({ arguments: {}, badArguments: false });
+    // 根是 Date 而非参数映射：与对象/数组/数字一样回空，不把 Date 当 key-value 容器。
+    expect(callArgsOf(new Date(0))).toStrictEqual({ arguments: {}, badArguments: false });
+  });
+
+  it("深快照保留自有 __proto__ 键，不污染快照原型", () => {
+    const raw = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const view = callArgsOf(raw);
+    const descriptor = Object.getOwnPropertyDescriptor(view?.arguments ?? {}, "__proto__");
+    expect(descriptor?.value).toStrictEqual({ polluted: true });
+    expect(Object.getPrototypeOf(view?.arguments)).toBe(Object.prototype);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it("无原型对象按普通参数快照，结果仍是普通对象", () => {
+    const raw = Object.create(null) as Record<string, unknown>;
+    raw["a"] = 1;
+    const view = callArgsOf(raw);
+    expect(view).toStrictEqual({ arguments: { a: 1 }, badArguments: false });
+    expect(Object.getPrototypeOf(view?.arguments)).toBe(Object.prototype);
+  });
+
+  it("原型读取抛错的参数按空对象处理，不把异常带进证据链", () => {
+    const raw = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("prototype trap");
+        },
+      },
+    );
+    expect(callArgsOf(raw)).toStrictEqual({ arguments: {}, badArguments: false });
+  });
+
+  it("非 JSON 值 Date / Map 由 structuredClone 隔离；冻结只覆盖 JSON 对象/数组", () => {
+    const date = new Date(0);
+    const map = new Map<string, { value: number }>([["a", { value: 1 }]]);
+    const view = callArgsOf({ date, map });
+    const clonedDate = view?.arguments["date"];
+    const clonedMap = view?.arguments["map"];
+    expect(clonedDate).toBeInstanceOf(Date);
+    expect(clonedDate).not.toBe(date);
+    expect((clonedDate as Date).getTime()).toBe(0);
+    expect(clonedMap).toBeInstanceOf(Map);
+    expect(clonedMap).not.toBe(map);
+    const entry = (clonedMap as Map<string, { value: number }>).get("a");
+    expect(entry).toStrictEqual({ value: 1 });
+    expect(entry).not.toBe(map.get("a"));
+    expect(Object.isFrozen(view?.arguments)).toBe(true);
+  });
+
+  it("稀疏数组的空洞在深快照里保持空洞，不填成 undefined", () => {
+    const list: unknown[] = [];
+    list.length = 3;
+    list[1] = { a: 1 };
+    const view = callArgsOf({ list });
+    const snapshot = view?.arguments["list"] as readonly unknown[];
+    expect(snapshot).toHaveLength(3);
+    expect(0 in snapshot).toBe(false);
+    expect(1 in snapshot).toBe(true);
+    expect(2 in snapshot).toBe(false);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+  });
+
+  it("不可结构化克隆的参数按空对象处理，不把异常抛进证据链", () => {
+    expect(callArgsOf({ fn: () => 1 })).toStrictEqual({ arguments: {}, badArguments: false });
+  });
+
+  it("数组循环保留环并冻结，不递归爆栈", () => {
+    const list: unknown[] = [];
+    list.push(list);
+    const view = callArgsOf({ list });
+    const snapshot = view?.arguments["list"];
+    expect(Array.isArray(snapshot)).toBe(true);
+    expect((snapshot as readonly unknown[])[0]).toBe(snapshot);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+  });
+
+  it("循环参数不会递归爆栈，深快照保留环并冻结", () => {
+    const raw: Record<string, unknown> = {};
+    raw["self"] = raw;
+    const view = callArgsOf(raw);
+    expect(view?.arguments["self"]).toBe(view?.arguments);
+    expect(Object.isFrozen(view?.arguments)).toBe(true);
+  });
+
+  it("PTC 的 arguments 是已归一化值：对象深快照，字符串不二次解析、也不标语法错", () => {
+    const raw = { nested: { a: 1 } };
+    const view = ptcArgsOf(raw);
+    expect(view).toStrictEqual({ arguments: { nested: { a: 1 } }, badArguments: false });
+    expect(view?.arguments).not.toBe(raw);
+    expect(view?.arguments["nested"]).not.toBe(raw.nested);
+    expect(Object.isFrozen(view?.arguments["nested"])).toBe(true);
+    // 同一个 JS 字符串在 tool/call 是 JSON 文本、在 PTC 是合法字符串值：不能再 parse。
+    expect(ptcArgsOf('{"file_path":"a.ts"}')).toStrictEqual({
+      arguments: {},
+      badArguments: false,
+    });
+    expect(ptcArgsOf("hello")).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(ptcArgsOf(null)).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(ptcArgsOf([1, 2])).toStrictEqual({ arguments: {}, badArguments: false });
+    expect(ptcArgsOf(7)).toStrictEqual({ arguments: {}, badArguments: false });
   });
 });
 
@@ -105,6 +234,17 @@ describe("scanToolEvents", () => {
     const { calls, results } = scanToolEvents(events);
     expect(calls).toHaveLength(0);
     expect(results).toHaveLength(0);
+  });
+
+  it("扫描切片时 seq 是窗口内下标，不是会话序号（跨窗口归因需自行加偏移）", () => {
+    resetSeq();
+    const events = [result("w0"), call("w1", "read", '{"file_path":"/w.ts"}')];
+    const full = scanToolEvents(events);
+    const sliced = scanToolEvents(events.slice(1));
+    expect(full.calls[0]?.seq).toBe(1);
+    expect(sliced.calls[0]?.seq).toBe(0);
+    // 单条入口的 index 由调用方给：折叠侧传 event.seq，扫描侧传窗口下标，两者不保证同值。
+    expect(toolEventRowsOf(events[1], 0).call?.seq).toBe(0);
   });
 
   it("无 callId 的 tool/call 保留 undefined（调用方造 nc: 键）", () => {
@@ -171,13 +311,16 @@ describe("scanToolEvents", () => {
     expect(results).toHaveLength(0);
   });
 
-  it("PTC dispatch 缺 isError 按成功计（与 tool/result 无内容按成功同方向）", () => {
+  it("PTC dispatch 缺/非布尔 isError 视为坏结算跳过（官方必选，不能按成功）", () => {
     resetSeq();
     const { results } = scanToolEvents([
       badEvent({ type: PTC_DISPATCH_TYPE, data: { subCallId: "rc1:ptc:1", name: "read" } }),
+      badEvent({
+        type: PTC_DISPATCH_TYPE,
+        data: { subCallId: "rc1:ptc:2", name: "read", isError: "false" },
+      }),
     ]);
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ callId: "rc1:ptc:1", isError: false });
+    expect(results).toHaveLength(0);
   });
 });
 
@@ -219,6 +362,30 @@ describe("失败身份读取（data.error）", () => {
       0,
     ).result;
     expect(rows?.error).toStrictEqual({ name: "AbortError", code: "ABORTED" });
+  });
+
+  it("成功结算即使带 data.error 也不保留失败身份（不产出 isError:false + error）", () => {
+    resetSeq();
+    const native = toolEventRowsOf(
+      badEvent({
+        type: RESULT_TYPE,
+        data: {
+          message: { source: { callId: "ok-native" }, isError: false },
+          error: { name: "WeirdError", code: "WEIRD" },
+        },
+      }),
+      0,
+    ).result;
+    expect(native?.isError).toBe(false);
+    expect(native?.error).toBeUndefined();
+
+    resetSeq();
+    const ptc = toolEventRowsOf(
+      ptcSettle("rc1:ptc:ok", "edit", false, { name: "WeirdError", code: "WEIRD" }),
+      0,
+    ).result;
+    expect(ptc?.isError).toBe(false);
+    expect(ptc?.error).toBeUndefined();
   });
 
   it("缺失或半截身份一律 undefined（分类不能建立在不完整证据上）", () => {
@@ -288,7 +455,37 @@ describe("成败位读取（经 toolEventRowsOf 这条公开接口）", () => {
     resetSeq();
     expect(isErrorOf(result("r1", true))).toBe(true);
     expect(isErrorOf(result("r2", false))).toBe(false);
-    expect(isErrorOf(badEvent({ type: RESULT_TYPE, data: { message: {} } }))).toBe(false);
+    // 官方 isError 可选：合法 message 缺位 = 成功；但 message 本身不可用不是同一件事。
+    expect(
+      isErrorOf(
+        badEvent({
+          type: RESULT_TYPE,
+          data: { message: { source: { callId: "r3" } } },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("tool/result 缺 message / source / callId 不出结算行（无配对键不能冒充已结算）", () => {
+    resetSeq();
+    const { results } = scanToolEvents([
+      badEvent({ type: RESULT_TYPE, data: {} }),
+      badEvent({ type: RESULT_TYPE, data: { message: {} } }),
+      badEvent({ type: RESULT_TYPE, data: { message: { source: { callId: "c" } } } }),
+    ]);
+    expect(results.map((row) => row.callId)).toStrictEqual(["c"]);
+    expect(results[0]?.isError).toBe(false);
+  });
+
+  it("tool/result 的 isError 非布尔是坏形状，不产出结算行（未知不能当成功）", () => {
+    resetSeq();
+    const { results } = scanToolEvents([
+      badEvent({
+        type: RESULT_TYPE,
+        data: { message: { source: { callId: "bad" }, isError: "false" } },
+      }),
+    ]);
+    expect(results).toHaveLength(0);
   });
 
   it("非 tool/result 事件不产出结算行（PTC 的成败位在 data 顶层，由它自己的分支读）", () => {
@@ -305,7 +502,7 @@ describe("成败位读取（经 toolEventRowsOf 这条公开接口）", () => {
     // fail-open 的显式特征：isError:true 也判成功。改回回退会让本断言失败。
     const retired = badEvent({
       type: RESULT_TYPE,
-      data: { message: { content: [{ isError: true }] } },
+      data: { message: { source: { callId: "retired" }, content: [{ isError: true }] } },
     });
     expect(isErrorOf(retired)).toBe(false);
   });
@@ -503,18 +700,12 @@ describe("scanToolEvents 坏事件容忍", () => {
     expect(calls[0]?.seq).toBe(1);
   });
 
-  it("tool/result 缺 message / source / callId 非字符串 → callId undefined（不串联，按未结算）", () => {
-    resetSeq();
-    const { results } = scanToolEvents([
-      badEvent({ type: RESULT_TYPE, data: {} }),
-      badEvent({ type: RESULT_TYPE, data: { message: {} } }),
-      badEvent({ type: RESULT_TYPE, data: { message: { source: { callId: "c" } } } }),
-    ]);
-    expect(results.map((row) => row.callId)).toStrictEqual([undefined, undefined, "c"]);
-    expect(results.every((row) => !row.isError)).toBe(true);
+  it("直接调用 toolEventRowsOf(null/undefined) 也不抛（公共入口自己守边界）", () => {
+    expect(toolEventRowsOf(null, 0)).toStrictEqual({ call: undefined, result: undefined });
+    expect(toolEventRowsOf(undefined, 0)).toStrictEqual({ call: undefined, result: undefined });
   });
 
-  it("callId 非字符串（坏契约）→ 归 undefined，不冒充真实串联键", () => {
+  it("callId 非字符串（坏契约）→ 调用行归 undefined；结算行整条丢弃", () => {
     resetSeq();
     const { calls, results } = scanToolEvents([
       badEvent({ type: RESULT_TYPE, data: { message: { source: { callId: 7 } } } }),
@@ -524,7 +715,7 @@ describe("scanToolEvents 坏事件容忍", () => {
       }),
     ]);
     expect(calls[0]?.callId).toBeUndefined();
-    expect(results[0]?.callId).toBeUndefined();
+    expect(results).toStrictEqual([]);
   });
 });
 

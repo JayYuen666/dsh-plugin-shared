@@ -334,8 +334,8 @@ export function FieldLabel(props: {
   );
 }
 
-/** 字段的基础布局：标签行在上、控件在下；说明与错误都只在帮助浮层里。
- *  `hint` 仍保留为控件的 `aria-describedby` 目标（`.dsu-srOnly`），视觉上不占第三行。 */
+/** 字段的基础布局：标签行在上、控件在下；说明只进帮助浮层，错误另在标签行显示截断徽标。
+ *  两者还各有一份 `.dsu-srOnly` 文本供读屏，视觉上都不占第三行。 */
 export function Field(props: FieldBase & { children?: ReactNode }): ReactElement {
   const hintId = props.controlId === undefined ? undefined : `${props.controlId}-hint`;
   const errorId = props.controlId === undefined ? undefined : `${props.controlId}-err`;

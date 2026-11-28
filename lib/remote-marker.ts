@@ -3,8 +3,8 @@
 //
 // 为什么值得单点定义：`markRemote` 此前在五个仓各有一份逐字或近逐字副本（剥注释后 md5 相同）。
 // dsh-lesson-loop / dsh-scrapling / dsh-dir-prep-organize / dsh-session-rescue / dsh-ocr-review
-// 都改从这里取用；dsh-zvec-grep 改走真装饰器语法（build-host 的 decorator-lowering 流水线）。
-// 五份形状解释只剩这里一份。
+// 都改从这里取用，dsh-quality-gate 现在也走这一份；dsh-danger-guard / dsh-rtk / dsh-zvec-grep
+// 走真装饰器语法（build-host 的 decorator-lowering 流水线）。五份历史副本只剩这里一份。
 //
 // 为什么是程序化调用而不是装饰器语法：`@Remote` 的全部作用就是往类原型写一枚描述符，而标准
 // 装饰器语法需要一条 tsc 降级流水线（每个文件一次 tsc 子进程）。走程序化调用的消费方不需要
@@ -16,8 +16,8 @@
 // 走 peer。产物里保持**裸说明符**（shared 的 build-host.mjs 按 dependencies ∪ peerDependencies
 // 外部化），由消费方自己声明的那一份满足。
 //
-// ⚠ 只在 `./lib/remote-marker` 子路径上取用，**不进根 barrel**：根 barrel 的消费方里还有不装
-// typert 的插件（dsh-quality-gate），把 typert 塞进 barrel 等于逼它们解析一枚用不到的包。
+// ⚠ 只经 `./tool` 取用，**不进根 barrel**：根 barrel 的消费方不都需要 typert，把 typert 塞进
+// barrel 等于逼只取根入口的宿主解析一枚用不到的包。
 
 import { Remote } from "@deepseek-ai/dsh-typert-protocol";
 

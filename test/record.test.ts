@@ -5,10 +5,34 @@
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
-import { fieldOf, hasMethods, isRecord } from "../lib/record.ts";
+import {
+  arrayOf,
+  fieldOf,
+  hasMethods,
+  hasOptionalMethods,
+  isArrayValue,
+  isRecord,
+} from "../lib/record.ts";
 
 /** 可调用样本：不用 `() => undefined`，基线的 unicorn(no-useless-undefined) 会判违规那个字面量。 */
 const callable = (): string => "ok";
+
+describe("isArrayValue（unknown → 数组的窄化判据）", () => {
+  it("数组为真，记录与原始值为假；撤销后的 Proxy 不抛穿", () => {
+    const value: unknown = [1, 2];
+    assert.equal(isArrayValue(value), true);
+    if (isArrayValue(value)) {
+      assert.equal(value.length, 2);
+    }
+    assert.equal(isArrayValue({ a: 1 }), false);
+    assert.equal(isArrayValue(null), false);
+    assert.equal(isArrayValue("x"), false);
+
+    const { proxy, revoke } = Proxy.revocable([], {});
+    revoke();
+    assert.equal(isArrayValue(proxy), false);
+  });
+});
 
 describe("isRecord（unknown → Record 的窄化判据）", () => {
   it("普通对象为真，且能把 unknown 收成 Record<string, unknown>", () => {
@@ -25,6 +49,25 @@ describe("isRecord（unknown → Record 的窄化判据）", () => {
     for (const notObject of ["s", 7, undefined, true, Symbol("x")]) {
       assert.equal(isRecord(notObject), false, "第 1 子句：typeof 非 object");
     }
+  });
+
+  it("撤销后的 Proxy 不再从 isRecord 抛穿", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    // typeof proxy 仍是 object，异常发生在 Array.isArray；这是能力检查的异常边界。
+    assert.equal(isRecord(proxy), false);
+    assert.equal(fieldOf(proxy, "x"), undefined);
+    assert.equal(hasMethods(proxy, ["x"]), false);
+  });
+
+  it("宽口径：Date / Map / 类实例通过，函数不通过", () => {
+    class Service {
+      public readonly marker = true;
+    }
+    assert.equal(isRecord(new Date()), true);
+    assert.equal(isRecord(new Map()), true);
+    assert.equal(isRecord(new Service()), true);
+    assert.equal(isRecord(callable), false);
   });
 });
 
@@ -97,8 +140,10 @@ describe("hasMethods（服务接口校验）", () => {
     assert.equal(hasMethods({ kill: callable, read: callable }, ["kill", "read"]), true);
   });
 
-  it("空清单只验「是个对象」——调用方据此把「没有方法要验」与「服务不在」分开", () => {
-    assert.equal(hasMethods({}, []), true);
+  it("空清单不证明任何能力：只判对象请用 isRecord", () => {
+    assert.equal(hasMethods({}, []), false);
+    assert.equal(hasMethods(new Date(), []), false);
+    assert.equal(isRecord({}), true);
   });
 
   it("原型链的默认成员（Object.prototype 一类）不算服务实现：普通对象冒充不了服务接口", () => {
@@ -126,5 +171,67 @@ describe("hasMethods（服务接口校验）", () => {
     );
     assert.equal(fieldOf(hostile, "boom"), undefined);
     assert.equal(hasMethods(hostile, ["boom"]), false);
+  });
+
+  it("普通 getter 抛错也按「取不到」处理，不把异常漏给调用点", () => {
+    const hostile = {
+      get method(): never {
+        throw new Error("getter 探测期间抛错");
+      },
+    };
+    assert.equal(fieldOf(hostile, "method"), undefined);
+    assert.equal(hasMethods(hostile, ["method"]), false);
+  });
+});
+
+describe("arrayOf（unknown → 数组，非数组给空表）", () => {
+  it("数组原样返回；记录、原始值与撤销 Proxy 给空表", () => {
+    const value: unknown = [1, 2];
+    assert.deepEqual(arrayOf(value), [1, 2]);
+    assert.deepEqual(arrayOf({ a: 1 }), []);
+    assert.deepEqual(arrayOf(null), []);
+    assert.deepEqual(arrayOf("x"), []);
+    const { proxy, revoke } = Proxy.revocable([], {});
+    revoke();
+    assert.deepEqual(arrayOf(proxy), []);
+  });
+});
+
+describe("hasOptionalMethods（允许缺席、出现则必须是函数）", () => {
+  it("空对象通过：缺席是合法的", () => {
+    assert.equal(hasOptionalMethods({}, ["get"]), true);
+    assert.equal(hasOptionalMethods({ get: undefined }, ["get"]), true);
+  });
+
+  it("出现时必须是函数；非函数判否", () => {
+    assert.equal(hasOptionalMethods({ get: callable }, ["get"]), true);
+    assert.equal(hasOptionalMethods({ get: 1 }, ["get"]), false);
+    assert.equal(hasOptionalMethods({ get: "x" }, ["get"]), false);
+  });
+
+  it("非记录、空清单、撤销 Proxy 一律判否", () => {
+    assert.equal(hasOptionalMethods(null, ["get"]), false);
+    assert.equal(hasOptionalMethods("x", ["get"]), false);
+    assert.equal(hasOptionalMethods({}, []), false);
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    assert.equal(hasOptionalMethods(proxy, ["get"]), false);
+  });
+
+  it("object.prototype 的默认成员不算可选能力", () => {
+    assert.equal(hasOptionalMethods({}, ["toString"]), false);
+    assert.equal(hasOptionalMethods({}, ["constructor"]), false);
+  });
+
+  it("原型上的真实实现可识别；抛错 getter 按缺席处理", () => {
+    const proto = { get: callable };
+    assert.equal(hasOptionalMethods(Object.create(proto), ["get"]), true);
+    const hostile = {
+      get get(): never {
+        throw new Error("探测期间抛错");
+      },
+    };
+    // 可选能力的语义：读不到就当缺席，不让探测本身把流程打断。
+    assert.equal(hasOptionalMethods(hostile, ["get"]), true);
   });
 });

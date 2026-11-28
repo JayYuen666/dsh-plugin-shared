@@ -1,7 +1,7 @@
 // test/fixtures/events.ts —— 官方 `SessionEvent` 测试数据构造器。
 //
 // 生产代码（lib/tool-events.ts）绑官方判别联合后，测试数据必须满足本地投影曾一笔带过的三条
-// 真约束（都是这一轮由编译器逼出来的，写在这里备忘）：
+// 真约束（都是收编到官方类型时由编译器逼出来的，写在这里备忘）：
 //   1. 事件必填位齐全：`seq`（且它是 `SessionSeq = BrandedNumber<'SessionSeq'>`，不是
 //      number）、`time`，以及 `data.turn` / `data.step`；
 //   2. `callId` / `subCallId` 是官方标识类型 `ToolCallId`，`tool/result.message.id` 是

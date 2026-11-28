@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   BASE_RULES,
@@ -12,6 +13,7 @@ import {
   SCRIPTS_OVERRIDES,
   TEST_FILE_OVERRIDES,
   TEST_OVERRIDES,
+  UNTYPED_SCRIPT_OVERRIDES,
   VITEST_ALL_RULES,
   VITEST_ASSERTION_DEFAULTS,
   ZOD_RULES,
@@ -19,6 +21,7 @@ import {
   makeTestFileOverrides,
   resolveBundledJsPlugins,
   resolveJsPlugins,
+  resolveModuleEntry,
 } from "../config/oxlint.base.ts";
 import type { OffReason, RuleTable } from "../config/oxlint.base.ts";
 import type { ExternalPluginEntry } from "oxlint";
@@ -59,15 +62,29 @@ const KINDS: OffReason[] = [
   "零命中作废",
 ];
 
-/** 注入 stub 用的三条入口路径与「解析不到」的文案：提为模块级常量（用例里重复出现同一字面量会被
+/** 注入 stub 用的四条入口路径与「解析不到」的文案：提为模块级常量（用例里重复出现同一字面量会被
  *  no-duplicate-string 记一次），解析器替身也提到模块级（consistent-function-scoping）。 */
-const BUNDLED_ENTRY = "/bundled.js";
-/** 调用方自备的 sonarjs 入口：这条退路只认路径里指向 sonarjs 的那一个。 */
-const OWN_SONARJS_ENTRY = "/own/eslint-plugin-sonarjs.js";
+const BUNDLED_ENTRY = "/bundled/node_modules/eslint-plugin-sonarjs/plugin.js";
+const REGEXP_ENTRY = "/bundled/node_modules/eslint-plugin-regexp/index.js";
+const ZOD_ENTRY = "/bundled/node_modules/eslint-plugin-zod/index.js";
+const E18E_ENTRY = "/bundled/node_modules/@e18e/eslint-plugin/index.js";
+/** 调用方自备的 sonarjs 入口：对象形态显式给出 `sonarjs` 命名空间，路径可以是任意自备副本。 */
+const OWN_SONARJS_ENTRY: ExternalPluginEntry = {
+  name: "sonarjs",
+  specifier: "/own/sonar-copy.js",
+};
 /** 与 sonarjs 无关的调用方入口：它无法弥补 SONARJS_RULES 的缺包。 */
 const OWN_LOCAL_ENTRY = "/own/local-rules.js";
-/** 调用方自备的 regexp 入口：挂载后不得再把本包解析到的那一份挂第二遍。 */
-const OWN_REGEXP_ENTRY = "/own/eslint-plugin-regexp.js";
+/** 调用方自备的 regexp 入口：对象形态的 name 必须等于 regexp，挂载后不得再把本包那份挂第二遍。 */
+const OWN_REGEXP_ENTRY: ExternalPluginEntry = { name: "regexp", specifier: "/own/regexp-copy.js" };
+
+/** 四个插件的 stub 解析器：用于把「调用方入口是否真的拦住本包解析」测到，而不依赖本仓安装。 */
+const BUNDLED_RESOLVERS: Record<string, () => string> = {
+  sonarjs: () => BUNDLED_ENTRY,
+  regexp: () => REGEXP_ENTRY,
+  zod: () => ZOD_ENTRY,
+  e18e: () => E18E_ENTRY,
+};
 const SONARJS_MISSING = "解析不到 sonarjs";
 const SONARJS_MISSING_PATTERN = /解析不到 sonarjs/u;
 const REGEXP_MISSING_PATTERN = /eslint-plugin-regexp/u;
@@ -80,6 +97,11 @@ function boomRegexp(): string {
 /** 「本仓解析不到 sonarjs」的 stub 解析器。生产路径永远成功，那两个分支只能靠 stub 走到。 */
 function boomSonarjs(): string {
   throw new Error(SONARJS_MISSING);
+}
+
+/** 造一个带 Node 解析错误码的 Error，让 resolveModuleEntry 的只吞已知错误码分支可测。 */
+function resolutionError(code: string): Error & { code: string } {
+  return Object.assign(new Error(code), { code });
 }
 
 /** 读一条 JS plugin 的模块导出：有的包把 plugin 挂在 default 上，两形都认。 */
@@ -139,7 +161,7 @@ describe("definePluginConfig：关规则必须留依据", () => {
     );
     expect(
       resolveBundledJsPlugins([OWN_REGEXP_ENTRY], { regexp: boomRegexp }).some((entry) =>
-        entryText(entry).includes(REGEXP_PLUGIN_ID),
+        entryText(entry).includes("regexp"),
       ),
     ).toBe(true);
   });
@@ -168,6 +190,79 @@ describe("definePluginConfig：关规则必须留依据", () => {
     expect(() => resolveJsPlugins([OWN_LOCAL_ENTRY], boomSonarjs)).toThrow(SONARJS_MISSING_PATTERN);
   });
 
+  it("jsPlugins：对象入口的 name 就是命名空间，别名的 regexp-ext 不能顶掉 regexp 本尊", () => {
+    const aliasRegexp: ExternalPluginEntry = {
+      name: "regexp-ext",
+      specifier: "/own/node_modules/eslint-plugin-regexp/index.js",
+    };
+    const cfg = resolveBundledJsPlugins([aliasRegexp], BUNDLED_RESOLVERS);
+    expect(cfg).toContain(REGEXP_ENTRY);
+    expect(cfg).toContain(aliasRegexp);
+    expect(cfg).toHaveLength(5);
+  });
+
+  it("jsPlugins：同名前缀的 fork 路径不算本包，缺 regexp 时仍要解析本包", () => {
+    const fork = "/own/eslint-plugin-regexp-fork.js";
+    const cfg = resolveBundledJsPlugins([fork], BUNDLED_RESOLVERS);
+    expect(cfg).toContain(REGEXP_ENTRY);
+    expect(cfg).toContain(fork);
+    expect(cfg).toHaveLength(5);
+  });
+
+  it("jsPlugins：同一插件给了两条入口直接抛，不把重复注册留给 oxlint", () => {
+    const first: ExternalPluginEntry = { name: "regexp", specifier: "/a/regexp.js" };
+    const second: ExternalPluginEntry = { name: "regexp", specifier: "/b/regexp.js" };
+    expect(() => resolveBundledJsPlugins([first, second], BUNDLED_RESOLVERS)).toThrow(
+      /只允许一条/u,
+    );
+    const sonarA: ExternalPluginEntry = { name: "sonarjs", specifier: "/a/sonar.js" };
+    const sonarB: ExternalPluginEntry = { name: "sonarjs", specifier: "/b/sonar.js" };
+    expect(() => resolveJsPlugins([sonarA, sonarB], () => BUNDLED_ENTRY)).toThrow(/只允许一条/u);
+  });
+
+  it("jsPlugins：resolvers 按 label 注入，sonarjs 也一样生效", () => {
+    const cfg = resolveBundledJsPlugins(undefined, BUNDLED_RESOLVERS);
+    expect(cfg).toStrictEqual([BUNDLED_ENTRY, REGEXP_ENTRY, ZOD_ENTRY, E18E_ENTRY]);
+  });
+
+  it("resolveModuleEntry：require 条件缺 ESM-only 时回退 import.meta.resolve 并转成路径", () => {
+    // 入参 URL 必须由真实平台的绝对路径生成。win32 的 fileURLToPath 只认带盘符的
+    // 绝对路径，手写的 file:///tmp/...（无盘符）在 win32 按标准转换就抛
+    // ERR_INVALID_FILE_URL_PATH——那是转换器在拒收别的平台的路径形态，不是被测函数
+    // 的缺陷，也永远不是 import.meta.resolve 会给本机的东西（它给的是带盘符的
+    // file:///D:/...）。pathToFileURL 的往返保证让这条用例两个平台都成立，契约不变：
+    // import 条件给出的 file URL 必须转成路径，不能原样返回。
+    const url = pathToFileURL(path.resolve("esm-only-pkg", "index.mjs"));
+    const entry = resolveModuleEntry("esm-only-pkg", {
+      requireResolve: () => {
+        throw resolutionError("ERR_PACKAGE_PATH_NOT_EXPORTED");
+      },
+      importResolve: () => url.href,
+    });
+    expect(entry).toBe(fileURLToPath(url));
+  });
+
+  it("resolveModuleEntry：两条路都解析不到才返回 null，未知错误原样抛", () => {
+    expect(
+      resolveModuleEntry("missing-pkg", {
+        requireResolve: () => {
+          throw resolutionError("MODULE_NOT_FOUND");
+        },
+        importResolve: () => {
+          throw resolutionError("ERR_MODULE_NOT_FOUND");
+        },
+      }),
+    ).toBeNull();
+    expect(() =>
+      resolveModuleEntry("bad-pkg", {
+        requireResolve: () => {
+          throw new Error("boom");
+        },
+        importResolve: () => "/should-not-run.js",
+      }),
+    ).toThrow(/boom/u);
+  });
+
   it("出厂基线本身装载得动（每条 off 都在 OFF_JUSTIFICATIONS 里查到）", () => {
     expect(() => definePluginConfig()).not.toThrow();
   });
@@ -184,7 +279,7 @@ describe("definePluginConfig：关规则必须留依据", () => {
         extraRules: { "unicorn/no-array-for-each": "off" },
         offReasons: {
           "unicorn/no-array-for-each": {
-            kind: "仅限特定文件",
+            kind: "零命中作废",
             measured: 12,
             note: "只在测试数据生成器里有意义",
           },
@@ -207,7 +302,7 @@ describe("definePluginConfig：关规则必须留依据", () => {
       definePluginConfig({
         extraOverrides: [{ files: ["**/*.test.ts"], rules: { "eslint/no-console": "off" } }],
       }),
-    ).toThrow(/overrides\[4\]/u);
+    ).toThrow(/overrides\[5\]/u);
   });
 
   it('数组形态的关闭（["off"]）也走同一道检查，不被当成没关', () => {
@@ -216,12 +311,27 @@ describe("definePluginConfig：关规则必须留依据", () => {
     ).toThrow(/unicorn\/no-array-for-each/u);
   });
 
-  it("插件级通配键兜住整族：vitest 的 73 条不需要逐条登记", () => {
+  it("基线的插件级通配键只兜基线，调用方的同一族 off 要自带依据", () => {
     const cfg = definePluginConfig();
     const vitestOff = offKeys(cfg.rules).filter((rule) => rule.startsWith("vitest/"));
     expect(vitestOff.length).toBeGreaterThan(60);
+    // OFF_JUSTIFICATIONS 里 vitest/* 的"仅限特定文件"理由不能替调用方的全局 off 背书：
+    // 没有 offReasons 时抛，而且不能借基线 wildcard 过关。
+    expect(() => definePluginConfig({ extraRules: { "vitest/some-future-rule": "off" } })).toThrow(
+      /vitest\/some-future-rule/u,
+    );
+    // 调用方自己补一条适用于全局的理由后才放行（这里刻意不用"仅限特定文件"）。
     expect(() =>
-      definePluginConfig({ extraRules: { "vitest/some-future-rule": "off" } }),
+      definePluginConfig({
+        extraRules: { "vitest/some-future-rule": "off" },
+        offReasons: {
+          "vitest/some-future-rule": {
+            kind: "零命中作废",
+            measured: 0,
+            note: "该规则进入本包规则表时另行评估",
+          },
+        },
+      }),
     ).not.toThrow();
   });
 });
@@ -231,7 +341,7 @@ describe("syncIoScopes：写侧豁免按文件生效", () => {
     const cfg = definePluginConfig({
       syncIoScopes: [{ files: [LOCK_FILE], apis: [WRITE_API] }],
     });
-    const scope = cfg.overrides?.[4];
+    const scope = cfg.overrides?.[5];
     expect(scope?.files).toStrictEqual([LOCK_FILE]);
     const setting = scope?.rules?.["node/no-sync"];
     expect(Array.isArray(setting) ? setting[0] : setting).toBe("error");
@@ -264,8 +374,8 @@ describe("syncIoScopes：写侧豁免按文件生效", () => {
         },
       },
     });
-    expect(ignoresOf(cfg.overrides?.[4]?.rules?.["node/no-sync"])).toContain("rmSync");
-    expect(offKeys(cfg.overrides?.[5]?.rules)).toStrictEqual(["eslint/no-console"]);
+    expect(ignoresOf(cfg.overrides?.[5]?.rules?.["node/no-sync"])).toContain("rmSync");
+    expect(offKeys(cfg.overrides?.[6]?.rules)).toStrictEqual(["eslint/no-console"]);
   });
 
   it("files 或 apis 为空的 scope 当场抛，不留一条永不命中或不起作用的 override", () => {
@@ -281,7 +391,7 @@ describe("syncIoScopes：写侧豁免按文件生效", () => {
     const cfg = definePluginConfig({
       syncIoScopes: [{ files: ["lib/fs-io.ts"], apis: ["readFileSync", WRITE_API] }],
     });
-    const ignores = ignoresOf(cfg.overrides?.[4]?.rules?.["node/no-sync"]) ?? [];
+    const ignores = ignoresOf(cfg.overrides?.[5]?.rules?.["node/no-sync"]) ?? [];
     expect(ignores.filter((name) => name === "readFileSync")).toStrictEqual(["readFileSync"]);
   });
 });
@@ -307,6 +417,7 @@ describe("关规则依据表要自洽（OFF_JUSTIFICATIONS）", () => {
       ...offKeys(TEST_OVERRIDES.rules),
       ...offKeys(TEST_FILE_OVERRIDES.rules),
       ...offKeys(SCRIPTS_OVERRIDES.rules),
+      ...offKeys(UNTYPED_SCRIPT_OVERRIDES.rules),
     ]);
     // 表上登记了依据、但没有任何地方真的关着它 = 愿望清单，不是登记表
     const stale = Object.keys(OFF_JUSTIFICATIONS).filter(
@@ -369,12 +480,13 @@ describe("关规则依据表要自洽（OFF_JUSTIFICATIONS）", () => {
     expect(() => definePluginConfig({ assertionHelpers: ["*"] })).toThrow(/只收裸标识符/u);
   });
 
-  it("已取消的豁免（RETIRED_OFFS）不许在任何一层重新关起来", () => {
+  it("已退役的 off 豁免（RETIRED_OFFS）不许在任何一层重新关起来", () => {
     const stillOff = new Set([
       ...offKeys(BASE_RULES),
       ...offKeys(TEST_OVERRIDES.rules),
       ...offKeys(TEST_FILE_OVERRIDES.rules),
       ...offKeys(SCRIPTS_OVERRIDES.rules),
+      ...offKeys(UNTYPED_SCRIPT_OVERRIDES.rules),
     ]);
     expect(RETIRED_OFFS.filter((rule) => stillOff.has(rule))).toStrictEqual([]);
     expect(RETIRED_OFFS.length).toBeGreaterThan(0);
@@ -407,6 +519,70 @@ describe("关规则依据表要自洽（OFF_JUSTIFICATIONS）", () => {
     expect(() => definePluginConfig({ extraRules: { "node/no-unpublished-bin": "off" } })).toThrow(
       /node\/no-unpublished-bin/u,
     );
+  });
+
+  it("调用方的 extraRules 不能借基线的“仅限特定文件”理由：没有 caller 依据就抛", () => {
+    expect(() =>
+      definePluginConfig({ extraRules: { "typescript/no-explicit-any": "off" } }),
+    ).toThrow(/typescript\/no-explicit-any/u);
+    expect(() =>
+      definePluginConfig({
+        extraRules: { "typescript/no-explicit-any": "off" },
+        offReasons: {
+          "typescript/no-explicit-any": {
+            kind: "仅限特定文件",
+            measured: 1,
+            note: "只在某个 override 里该关",
+          },
+        },
+      }),
+    ).toThrow(/仅限特定文件/u);
+  });
+
+  it("调用方的 extraOverrides 只认 caller 依据，不能借基线理由", () => {
+    expect(() =>
+      definePluginConfig({
+        extraOverrides: [{ files: ["lib/x.ts"], rules: { "typescript/no-explicit-any": "off" } }],
+      }),
+    ).toThrow(/typescript\/no-explicit-any/u);
+    expect(() =>
+      definePluginConfig({
+        extraOverrides: [
+          { files: ["lib/x.ts"], rules: { "typescript/no-non-null-assertion": "off" } },
+        ],
+        offReasons: {
+          "typescript/no-non-null-assertion": {
+            kind: "仅限特定文件",
+            measured: 1,
+            note: "该文件的装配期断言由调用方保证",
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("retired offs 在工厂出口处校验：extraRules 与 extraOverrides 都不能重新关", () => {
+    const [retired] = RETIRED_OFFS;
+    if (retired === undefined) {
+      throw new Error("RETIRED_OFFS 不能为空");
+    }
+    const reason = {
+      kind: "上游不推荐" as const,
+      measured: 0,
+      note: "退役规则不该再被关",
+    };
+    expect(() =>
+      definePluginConfig({
+        extraRules: { [retired]: "off" },
+        offReasons: { [retired]: reason },
+      }),
+    ).toThrow(/已退役|RETIRED_OFFS/u);
+    expect(() =>
+      definePluginConfig({
+        extraOverrides: [{ files: ["lib/x.ts"], rules: { [retired]: "off" } }],
+        offReasons: { [retired]: reason },
+      }),
+    ).toThrow(/已退役|RETIRED_OFFS/u);
   });
 });
 
@@ -492,9 +668,27 @@ describe("js plugin 规则表与插件实际规则集一致（上游改名/删�
     }
   });
 
-  it("prefer-static-regex 只在生产 override 里开启", () => {
+  it("scripts overrides 只留文体规则，同步与类型规则不再整族外溢", () => {
+    expect(SCRIPTS_OVERRIDES.rules?.["node/no-sync"]).toBeUndefined();
+    expect(SCRIPTS_OVERRIDES.rules?.["typescript/no-unsafe-call"]).toBeUndefined();
+    expect(SCRIPTS_OVERRIDES.rules?.["typescript/no-non-null-assertion"]).toBeUndefined();
+    expect(SCRIPTS_OVERRIDES.rules?.["node/no-top-level-await"]).toBe("off");
+    expect(UNTYPED_SCRIPT_OVERRIDES.files).toStrictEqual(["**/*.mjs"]);
+    expect(UNTYPED_SCRIPT_OVERRIDES.rules?.["typescript/no-unsafe-call"]).toBe("off");
+    expect(UNTYPED_SCRIPT_OVERRIDES.rules?.["typescript/no-non-null-assertion"]).toBe("off");
+  });
+
+  it("prefer-static-regex 只在生产 override 里开启，且用例文件被排除在外", () => {
     expect(severity(BASE_RULES["e18e/prefer-static-regex"])).toBe("off");
     expect(PROD_OVERRIDES.rules?.["e18e/prefer-static-regex"]).toBe("error");
     expect(PROD_OVERRIDES.files).toStrictEqual(["lib/**", "src/**", "host.ts", "cli-main.ts"]);
+    // `src/foo.test.ts` 同时命中 PROD.files 与 TEST_OVERRIDES；没有 excludeFiles 时
+    // 后者的 error 会把 BASE_RULES 里关掉的这条重新打开（实测四种组合，只有加 exclude 有效）。
+    expect(PROD_OVERRIDES.excludeFiles).toStrictEqual([
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/__tests__/**/*.spec.ts",
+      "**/test/**/*.spec.ts",
+    ]);
   });
 });

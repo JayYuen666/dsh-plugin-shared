@@ -4,7 +4,7 @@
 import vm from "node:vm";
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { errorText, isSettingsConflict } from "../lib/errors.ts";
+import { errorText, isEnoent, isErrnoCode, isSettingsConflict } from "../lib/errors.ts";
 
 /** 恶意对象/toString 拿不到值时的统一占位文本。 */
 const UNRENDERABLE = "<unrenderable value>";
@@ -206,6 +206,45 @@ describe("isSettingsConflict（设置冲突那一类失败）", () => {
         },
       }),
       OBJECT_STRING,
+    );
+  });
+});
+
+describe("isErrnoCode / isEnoent（errno 判定）", () => {
+  it("code 精确匹配；不同码、缺失码都判否", () => {
+    assert.equal(isErrnoCode({ code: "ENOENT" }, "ENOENT"), true);
+    assert.equal(isErrnoCode({ code: "EACCES" }, "ENOENT"), false);
+    assert.equal(isErrnoCode({}, "ENOENT"), false);
+    assert.equal(isErrnoCode(null, "ENOENT"), false);
+    assert.equal(isEnoent({ code: "ENOENT" }), true);
+    assert.equal(isEnoent({ code: "EACCES" }), false);
+  });
+
+  it("恶意 getter 与 Proxy 陷阱不外抛，判否", () => {
+    assert.equal(
+      isErrnoCode(
+        {
+          get code(): string {
+            throw new Error("取不到");
+          },
+        },
+        "ENOENT",
+      ),
+      false,
+    );
+    assert.equal(
+      isErrnoCode(
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("陷阱");
+            },
+          },
+        ),
+        "ENOENT",
+      ),
+      false,
     );
   });
 });

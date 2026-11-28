@@ -18,10 +18,10 @@ permissions:
   # --provenance 是另一件事：它另取一枚 sigstore audience 的 id-token 去签来源证明，与发布凭据
   # 那枚交换互相独立；少了它，产物只剩 npm 自己的签名，没有可查的来源链。
   id-token: write
-# 与 ci.yml 同一枚取值：门禁 certify 的那棵树与发布装的树要由同一个 pnpm 解出。GitHub Actions 没有
+# 与 ci.yml 同一枚取值：ci.yml 的 gate 跑的那棵树与发布装的树要由同一个 pnpm 解出。GitHub Actions 没有
 # 跨文件的 env，抬版本时与 ci.yml 那份一起动。
 env:
-  PNPM_VERSION: 12.11.2
+  PNPM_VERSION: 12.23.0
 jobs:
   publish:
     runs-on: ubuntu-latest

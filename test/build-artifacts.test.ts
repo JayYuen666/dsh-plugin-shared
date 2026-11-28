@@ -5,7 +5,7 @@
 // 分工，以及 bundle 释放不让清理日志盖掉错因。
 import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -100,6 +100,24 @@ function resetPlan(): void {
   writePlan.rmFails = false;
 }
 
+/**
+ * 在用例体执行期间把 `process.platform` 换成指定值：rename 的退避判据按平台分档
+ * （Windows 才重试占用码），而用例要能分别验两档。
+ * @param platform - 目标平台
+ * @param body - 用例体
+ */
+async function withPlatform(platform: NodeJS.Platform, body: () => Promise<void>): Promise<void> {
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  try {
+    await body();
+  } finally {
+    if (original !== undefined) {
+      Object.defineProperty(process, "platform", original);
+    }
+  }
+}
+
 /** 造一个临时目录当包根。 */
 async function freshDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "build-artifacts-"));
@@ -136,6 +154,42 @@ describe("maskNonCode", () => {
   it("未闭合字符串吃到文件尾", () => {
     assert.equal(maskNonCode('"@x'), '"  ');
     assert.equal(maskNonCode("'@x"), "'  ");
+  });
+
+  it("行终止符包含 CR 与 CRLF：行注释不再吃掉其后的代码", () => {
+    assert.equal(maskNonCode("// note\r@dec\rclass C {}"), `${" ".repeat(7)}\r@dec\rclass C {}`);
+    assert.equal(maskNonCode("a // x\r\nb"), `a${" ".repeat(5)}\r\nb`);
+  });
+
+  it("模板字面量按表达式递归：内层反引号不结束外层模板", () => {
+    // `${` 在普通字符串里会被 lint 判成模板占位符，拼出来才是那段源码文本。
+    const source = ["const t = `", "$", "{`@fake`}`;\n@dec\nclass C {}"].join("");
+    // 内层 `@fake` 属于模板正文；它之后的 `@dec` 仍在程序正文里。
+    assert.equal(maskNonCode(source).includes("@dec\nclass C {}"), true);
+    assert.equal(maskNonCode(source).length, source.length);
+  });
+
+  it("模板的转义、未闭合模板与表达式里的嵌套花括号都按原长处理", () => {
+    // `${` 在普通字符串里会被 lint 判成模板占位符，两段分开写才是字面量。
+    // oxlint-disable-next-line no-useless-concat -- 见上：合并成一个字符串会变成模板占位符。
+    const dollarBrace = "$" + "{";
+    const samples = [
+      "`a\\nb`",
+      "`abc",
+      ["`", dollarBrace, "{a: 1}}`"].join(""),
+      ["`", dollarBrace, "`", dollarBrace, "a}`}`"].join(""),
+      ["`", dollarBrace, "a"].join(""),
+    ];
+    for (const sample of samples) {
+      assert.equal(maskNonCode(sample).length, sample.length, JSON.stringify(sample));
+    }
+  });
+
+  it("逐字符等长：末尾孤立的反斜杠不会多出一个字符", () => {
+    const samples = ['"abc\\', "// x\r\n@dec", '"a\\\n@x"', "// 注释未换行"];
+    for (const sample of samples) {
+      assert.equal(maskNonCode(sample).length, sample.length, JSON.stringify(sample));
+    }
   });
 });
 
@@ -206,6 +260,41 @@ describe("单文件产物的输出守卫", () => {
     assert.throws(() => singleEntryChunk([chunk({ code: " \n\t " })], "entry.ts"), /带正文/u);
   });
 
+  it("拒绝只有注释、指令序言或空语句的正文（加载成功但什么都不做）", () => {
+    const blankBodies = [
+      "// only comment",
+      "/* only comment */",
+      "/* unclosed",
+      '"use strict";',
+      "'use strict'\n// tail",
+      ";;;",
+      "`plain template`;",
+      "// tail with whitespace\n   ",
+      String.raw`"a\"b";`,
+    ];
+    for (const code of blankBodies) {
+      assert.throws(() => singleEntryChunk([chunk({ code })], "entry.ts"), /没有可执行语句/u, code);
+    }
+  });
+
+  it("注释与指令序言之后的真实语句照常放行", () => {
+    const code = '// note\n"use strict";\nexport {};';
+    assert.equal(singleEntryChunk([chunk({ code })], "entry.ts").code, code);
+    // 正则里带引号不能让判据把后面的正文误当成字符串：空形态只列举文件头允许的几类。
+    const withRegex = String.raw`const re = /"/; export { re };`;
+    assert.equal(singleEntryChunk([chunk({ code: withRegex })], "entry.ts").code, withRegex);
+  });
+
+  it("读不懂的字符串/模板形态按有正文放行（判空只拒绝可判定的空形态）", () => {
+    // 这三种形态都不是可执行的产物，但判空只负责拒绝「确定为空」的正文；
+    // 读不懂时放行，避免把合法产物误判为空。
+    // 第一项对判空器是一段带插值的模板字面量。
+    const bodies = [`\`\${x}\`;`, '"use strict\n', '"use strict'];
+    for (const code of bodies) {
+      assert.equal(singleEntryChunk([chunk({ code })], "entry.ts").code, code);
+    }
+  });
+
   it("接受唯一的 entry chunk 并交回正文", () => {
     assert.equal(singleEntryChunk([chunk()], "entry.ts").code, "export {};");
   });
@@ -241,14 +330,48 @@ describe("writeArtifact", () => {
     }
   });
 
+  it("目录准备失败也带产物路径：不是裸 EEXIST", async () => {
+    resetPlan();
+    const dir = await freshDir();
+    try {
+      // `.tmp` 被占成普通文件：mkdir(recursive) 会以 EEXIST 失败。修前这一步在 try 之外，
+      // 抛出的错误里没有目标产物路径，读者只看得到 `.tmp` 这个目录名。
+      await writeFile(path.join(dir, ".tmp"), "occupied", "utf8");
+      await assert.rejects(
+        writeArtifact(path.join(dir, "host.js"), "x"),
+        /写产物失败：.*host\.js.*EEXIST/su,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("Windows 占用码退避后重试成功", async () => {
     resetPlan();
     writePlan.renameFailures.push({ code: "EPERM" }, { code: "EBUSY" });
     const dir = await freshDir();
     try {
-      const target = path.join(dir, "client.js");
-      await writeArtifact(target, "payload");
-      assert.equal(await readFileOf(target), "payload");
+      await withPlatform("win32", async () => {
+        const target = path.join(dir, "client.js");
+        await writeArtifact(target, "payload");
+        assert.equal(await readFileOf(target), "payload");
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POSIX 上占用码不进退避：EACCES 只调一次 rename 就抛", async () => {
+    resetPlan();
+    writePlan.renameFailures.push({ code: "EACCES" });
+    const dir = await freshDir();
+    try {
+      const target = path.join(dir, "host.js");
+      const before = vi.mocked(rename).mock.calls.length;
+      await withPlatform("darwin", async () => {
+        await assert.rejects(writeArtifact(target, "x"), /EACCES/u);
+      });
+      assert.equal(vi.mocked(rename).mock.calls.length - before, 1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -265,9 +388,11 @@ describe("writeArtifact", () => {
     );
     const dir = await freshDir();
     try {
-      const target = path.join(dir, "host.js");
-      await assert.rejects(writeArtifact(target, "x"), /写产物失败：.*EACCES/su);
-      assert.deepEqual(await readdir(path.join(dir, ".tmp")), []);
+      await withPlatform("win32", async () => {
+        const target = path.join(dir, "host.js");
+        await assert.rejects(writeArtifact(target, "x"), /写产物失败：.*EACCES/su);
+        assert.deepEqual(await readdir(path.join(dir, ".tmp")), []);
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -360,11 +485,32 @@ describe("invokedDirectly", () => {
     });
   });
 
-  it("基名不同：非直跑（不走 realpath）", async () => {
+  it("argv[1] 是另一个存在的脚本：非直跑", async () => {
     resetPlan();
-    await withArgv1(path.join(tmpdir(), "build-client.mjs"), () => {
-      assert.equal(invokedDirectly(import.meta.filename), false);
-    });
+    const dir = await freshDir();
+    try {
+      const other = path.join(dir, "build-client.mjs");
+      await writeFile(other, "", "utf8");
+      await withArgv1(other, () => {
+        assert.equal(invokedDirectly(import.meta.filename), false);
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("argv[1] 是异名软链、指向本文件：直跑（不按基名预筛）", async () => {
+    resetPlan();
+    const dir = await freshDir();
+    try {
+      const link = path.join(dir, "build-plugin.mjs");
+      await symlink(import.meta.filename, link);
+      await withArgv1(link, () => {
+        assert.equal(invokedDirectly(import.meta.filename), true);
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("argv[1] 即本文件：直跑", async () => {
@@ -374,11 +520,30 @@ describe("invokedDirectly", () => {
     });
   });
 
-  it("基名相同但 argv[1] 解不出 realpath：抛「构建未发生」", async () => {
+  it("argv[1] 解不出 realpath：抛「构建未发生」", async () => {
     resetPlan();
-    const broken = path.join(tmpdir(), path.basename(import.meta.filename));
-    await withArgv1(broken, () => {
-      assert.throws(() => invokedDirectly(import.meta.filename), /构建未发生/u);
-    });
+    const dir = await freshDir();
+    try {
+      const gone = path.join(dir, "gone.mjs");
+      await withArgv1(gone, () => {
+        assert.throws(() => invokedDirectly(import.meta.filename), /构建未发生/u);
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("moduleFile 解不出 realpath：同样抛，不静默返回 false", async () => {
+    resetPlan();
+    const dir = await freshDir();
+    try {
+      const other = path.join(dir, "other.mjs");
+      await writeFile(other, "", "utf8");
+      await withArgv1(other, () => {
+        assert.throws(() => invokedDirectly(path.join(dir, "missing.mjs")), /构建未发生/u);
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

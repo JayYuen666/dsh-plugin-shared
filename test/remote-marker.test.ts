@@ -7,8 +7,8 @@
 //
 // 为什么这里不写 `@Remote(...)` 装饰器语法作对照：本仓的测试流水线没有挂装饰器降级插件
 // （shared 不能消费自己尚未发布的 `./lib/decorator-lowering`），带装饰器语法的文件在 vitest
-// 里会直接 `SyntaxError` 连加载都失败。等价性由别处兜：三个消费仓（zvec-grep / lesson-loop /
-// scrapling）迁移到本助手后各自的 remote 测试都断言「标记集合深等于写死的方法名集合」，
+// 里会直接 `SyntaxError` 连加载都失败。等价性由别处兜：多个消费仓（zvec-grep / lesson-loop /
+// scrapling 等）迁移到本助手后各自的 remote 测试都断言「标记集合深等于写死的方法名集合」，
 // 而 dsh-rtk 走装饰器语法的那条路有自己的同名断言 —— 两条路的产出一致由那两个面共同钉住。
 //
 // 夹具用对象字面量而不是 class：`markRemote` 要的只是一枚**会当原型用**的对象，

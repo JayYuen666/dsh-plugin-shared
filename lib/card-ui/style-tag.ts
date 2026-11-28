@@ -13,8 +13,9 @@ export const CARD_UI_CSS_VERSION = 3.1;
 /** 版本写在 style 元素上，跨 bundle 共享；同一个 style 元素只保留最高版本的正文。 */
 export const CARD_UI_VERSION_KEY = Symbol.for("@jayyuen66/dsh-plugin-shared/card-ui-css/version");
 
-/** 引用计数写在 style 元素自己身上。各插件的 client bundle 都内联了一份 shared，
- *  模块级变量不跨 bundle 共享；DOM 元素是唯一共享的判定面。 */
+/** 引用计数写在 style 元素自己身上。消费方的 `client.js` 把 `@jayyuen66/dsh-plugin-shared/client`
+ *  外置成宿主供应行，正常只有一份模块实例；但内联了自己那份 shared 的旧产物、或两代版本
+ *  同时在场的页面，模块级变量并不共享——DOM 元素是唯一可靠的共享判定面。 */
 export const CARD_UI_REFS_KEY = Symbol.for("@jayyuen66/dsh-plugin-shared/card-ui-css/refs");
 
 /** 本模块注入样式所需的 document 面。 */
@@ -116,8 +117,9 @@ function retain(tag: CardUiStyleTag): () => void {
 /**
  * 向文档注入统一的设置卡样式，重复调用只保留一个 style 元素。
  *
- * 为什么计数不在模块里：每个插件的 client bundle 都内联了一份 shared，模块级变量
- * 不跨 bundle 共享；style 元素本身才是所有副本都能看到的判定面。
+ * 为什么计数不在模块里：正常情况下消费方把 shared 外部化、由宿主模块表共用一份；但旧产物
+ * 或特殊打包形态可能各自内联一份，模块级变量不跨 bundle 共享。style 元素本身才是所有副本
+ * 都能看到的判定面。
  *
  * 旧版插件可能先占住固定 id `#dsh-card-ui-css`，而那一代 CSS 里还有不透明底色。
  * 所以已有同 id 元素时不能只看 id：版本低于当前就说明它是旧一代，当前版本要另注入一份

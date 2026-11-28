@@ -19,7 +19,7 @@ const handle: ProjectionHandle = {
 describe("discriminateProjection", () => {
   it("handle（对象）与 handle（可调用的合成值，可调用性不是排除条件）都判 handle", () => {
     expect(discriminateProjection(handle)).toBe("handle");
-    // 可调用 + 带 stateOf/dispose 的合成值：判序把它送进新读口，而不是旧协议的双参 stateOf。
+    // 可调用 + 带 stateOf/dispose 的合成值：判序把它判进新协议那一支，而不是旧协议的双参 stateOf。
     const callable = Object.assign(() => null, handle);
     expect(discriminateProjection(callable)).toBe("handle");
   });

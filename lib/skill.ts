@@ -1,4 +1,4 @@
-// lib/skill.ts —— 把一份算好的正文注册成一枚**虚拟 skill**（rc.2 的 `ctx.skills.register()`）。
+// lib/skill.ts —— 把一份算好的正文注册成一枚**虚拟 skill**（宿主的 `ctx.skills.register()`）。
 //
 // 为什么值得单点定义：三个带常驻提示词的插件各自写了一遍同一段代码——`SkillsFace` 接口、
 // `isSkillsFace` 的窄化判定、以及「取服务 → 判形状 → register → 回 true」的正文，去掉注释后

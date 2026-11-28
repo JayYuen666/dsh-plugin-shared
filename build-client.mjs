@@ -15,9 +15,12 @@ const entry = "lib/client-entry.ts";
 /** 生成客户端行的 UMD 文本。 */
 export async function buildClient() {
   const { rolldown } = await import("rolldown");
+  const { parseAst } = await import("rolldown/parseAst");
   return buildClientBundle({
     root,
     rolldown,
+    // 产物里的 require 调用判据读 AST：解析器由调用方注入，shared 不声明 rolldown 依赖。
+    parseAst: (code, id) => parseAst(code, { lang: "js" }, id),
     entry,
     externals: REACT_RUNTIME_MODULES,
     minify: true,
@@ -33,7 +36,7 @@ async function main() {
   console.info("client built:", Buffer.byteLength(out, "utf8"), "bytes -> dist/client.js");
 }
 
-if (isMainModule(import.meta.filename)) {
+if (isMainModule(import.meta)) {
   try {
     await main();
   } catch (error) {

@@ -2,7 +2,7 @@ import { createElement } from "react";
 import type { ReactElement, ReactNode } from "react";
 
 /** 空态统一用的「空托盘」线性图标：20px、1.5 描边、currentColor（画板 D 的空状态规范）。
- *  九仓共用一个图形，不各画各的；空态不是错误，所以图形不取语义色。 */
+ *  各仓共用一个图形，不各画各的；空态不是错误，所以图形不取语义色。 */
 function EmptyTrayIcon(): ReactElement {
   return createElement(
     "span",

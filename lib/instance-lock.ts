@@ -25,7 +25,7 @@
 // 当场误判成「已有一份在册」而把整份插件关掉。缺注册口的判定归 `claimInstance` 自己做
 // （按 `typeof provide !== "function"` 放行）。
 //
-// 只走 `./lib/instance-lock` 子路径、不进根 barrel：进 barrel 会让每个消费方都为这把锁多一次
+// 只经 `./tool` barrel 取用（构建期解析为 `./internal/tool/instance-lock`），不进根 barrel：进 barrel 会让每个消费方都为这把锁多一次
 // 导入，而它只有宿主侧 `apply` 用得到（`BARREL_EXEMPT` 与 build-host.mjs 的 entries 各登记一份）。
 
 /** 抢锁需要的最小上下文面：读服务的 `get` + 注册服务的 `reflect.provide`。 */

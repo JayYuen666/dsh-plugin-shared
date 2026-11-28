@@ -8,7 +8,7 @@
 // detail。
 //
 // 为什么不能直接用它：**不可达，不是不存在**。它是 `export function processOutcome`、带完整
-// JSDoc（packages/shell/tool-bash/src/background.ts:44），但那个包的 exports 只开根入口、files
+// JSDoc（`packages/shell/tool-bash/src/background.ts` 的 `processOutcome`），但那个包的 exports 只开根入口、files
 // 只带 lib/index.js：`./background` 子路径没进 export map，src/ 也不随包发布，所以插件侧
 // import 不到，走根入口也取不到这个符号。
 //

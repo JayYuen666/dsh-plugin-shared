@@ -18,7 +18,8 @@ import path from "node:path";
 
 const pkgDir = path.resolve(import.meta.dirname, "..");
 
-/** 运行期产物预算（在实测值上加一档取整）。消费方按子路径 external 取用，这些字节是真实装载成本。
+/** 运行期产物预算（在实测值上加一档取整）。消费方按 `./tool` / `./client` 两条入口 external 取用，
+ *  这些字节是真实装载成本。
  *  card-ui 是客户端组件子路径（含统一样式表），按消费方 external 取用。0.2.9 实测 36775 B：
  *  ① 两条样式规则（`.dsu-form` 的 border-box 让 `width:100%` 的输入框不再撑出容器；小节直系子节点
  *  之间补 10px 纵向节奏）；② `useInvalidFields()` / `withInvalidField` 收上来，七仓各删一份越界
@@ -46,10 +47,10 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
  *  只传 `get` 的老调用点照旧编译）；同步面：`CHANGELOG.md` 当期版本段，
  *  以及三个消费仓的 `lib/skill.ts` 薄壳（它们只转发 `ctx`，无需改）。
  *  再一轮 37624 → 52534 B（+14910）：card-ui v2——样式表重写（悬停起底字段行、3px 业务色焦点环、
- *  业务色开关与主按钮、保存条面板化）并新增九个展示组件（Badge/StatusDot/Callout/KPI/
+ *  业务色开关与主按钮、保存条面板化）并新增九组展示组件（Badge/StatusDot/Callout/KPI/
  *  DataTable/Meter/LogPanel/Segmented/EmptyState/ToolRow），九仓各自手搓的私加 CSS 由这套
  *  组件收回 shared（各仓净删的样式字节大于这里的增量）。`CARD_UI_CSS_VERSION` 同步升到 2。
- *  受影响的公共面：`./lib/card-ui` 的导出面（新增九组组件与类型，纯加法）；同步面：
+ *  受影响的公共面：`./client` 的 card-ui 导出面（新增九组组件与类型，纯加法）；同步面：
  *  各消费仓删除私有样式改用共享组件。
  *  再一轮 52534 → 54391 B（+1857）：DataTable 补 sticky 首列修饰（rtk 明细表换用 shared 的
  *  前提——冻结列/斑马纹/列宽技巧下沉）与保存条脏态状态字的独立类（session-rescue 的
@@ -79,8 +80,23 @@ const pkgDir = path.resolve(import.meta.dirname, "..");
  *  运行期导出面同步长大）。
  *  再一轮 67179 → 69921 B（+2742）：card-ui v3 收尾（新增表单件、展示层可选位与样式、
  *  `nextDomId` 与数字框 inputMode）；实测 69921 B，预算 70000 B，余量 79 B，
- *  下一次增字节必须同步抬预算并在本轮账上记账。 */
-const RUNTIME_BUDGET_BYTES = 70_000;
+ *  下一次增字节必须同步抬预算并在本轮账上记账。
+ *  再一轮 70000 → 71000 B（+1000）：`card-apply` 的占位槽从普通下标读写改为
+ *  descriptor-only（访问器/非占位值明确拒绝、claim 前缺席时精确删键），
+ *  实测 70692 B。
+ *  再一轮 71000 → 76000 B（+5000）：`path-scope`/`value`/`card-form`/`session-cwd`/`number`/
+ *  `cli-safety` 六个跨仓纯函数模块落地（各替掉 2–15 份逐字副本），以及 `useCardDraft`
+ *  接管七张设置卡的草稿层。实测 75374 B；这一档按实测 + 约 600 B 取整，不重套 +25%。
+ *  再一轮 76000 → 78000 B（+2001）：`assertAbsoluteRoot` / `normalizeAbsolutePath` 的
+ *  严格实现收进 `path-scope`（OCR 与 zvec 各删一份；`..` 越过文件系统根改为归一阶段拒绝，
+ *  不再先折叠再判根），实测 76789 B。
+ *  再一轮 78000 → 82500 B（+4000）：工具侧改为单一 `./tool` 入口（`dist/tool.js` 的
+ *  re-export 清单与 20 个模块的 import 边），另加 `./tool` 的浏览器条件
+ *  `dist/tool-browser.js`（双用源在 client 构建里只取纯件，避免把 Node 内置模块拖进
+ *  浏览器 bundle；抬档时实测 81151 B，当前实测 79758 B）。模块产物本身不重复，增量就是
+ *  这两条 barrel 的字节。
+ */
+const RUNTIME_BUDGET_BYTES = 82_500;
 /** 客户端行预算：dist/client.js 由浏览器加载，不计入宿主运行期预算。
  *  压缩前历史读数 54,765 → 54,878 → 54,925 → 57,139 B，涨幅来自 card-ui 样式与注入兜底；
  *  这些改动的说明仍在 `lib/card-ui/styles.ts` 与 CHANGELOG。shared 自己的 build-client.mjs
@@ -99,18 +115,38 @@ const RUNTIME_BUDGET_BYTES = 70_000;
  *  Select、InfoTip 双态与容器查询全部打进这条 UMD）。
  *  再一轮 57543 → 59881 B（+2338）：card-ui v3 收尾与运行期同因；实测 59881 B，
  *  预算 60000 B，余量 119 B。
+ *  再一轮 60000 → 61500 B（+1500）：同一轮 `card-apply` descriptor-only 加固进入
+ *  shared/client；实测 61163 B。
+ *  再一轮 63500 → 64000 B（+500）：客户端侧统一从 `./client` 取远程读取骨架
+ *  （`remoteMounterOf` / `parseOrThrow`）、超时与夹位件，不再按 `./tool/*` 深引；
+ *  shared 的 UMD 因此承载这几份公共实现，实测 63569 B。宿主运行期件未进入这条行。
  *  宿主侧子路径（`skill` / `placeholder`）不进这条 bundle。
  *  受影响的公共面：无（常量只在本用例内）；同步面：README 的 "What ships"。 */
-const CLIENT_BUDGET_BYTES = 60_000;
+const CLIENT_BUDGET_BYTES = 64_000;
 /** 宿主运行期不装载客户端 bundle：UMD 由模块图在浏览器侧按行提供，ESM 只是 Node 测试与类型声明的入口。 */
 const HOST_RUNTIME_EXCLUDE = new Set(["client.js", "client-entry.js"]);
 /** 配置产物预算（在实测值上加一档取整）。构建期才加载，但整个 dist 都在 files 白名单里，一并计入 tarball。
- *  客户端行的测试别名（shared/client → 发布产物 client-node）与 react 族别名、shared 内联规则
- *  把配置产物推到 30617 B（旧别名的读数是 30064 B），按同一 +25% 规则抬到 31000 B。 */
-const CONFIG_BUDGET_BYTES = 31_000;
+ *  客户端行的测试别名（shared/client → 发布产物 client-entry.js）与 react 族别名、shared 内联规则
+ *  把配置产物推到 30617 B（旧别名的读数是 30064 B），按同一 +25% 规则抬到 31000 B。
+ *  再一轮 30617 → 32949 B（+2332）：jsPlugins 入口策略（对象 name 精确匹配命名空间、同一插件
+ *  多条入口拒绝、ESM-only 的 import.meta.resolve 回退）、PROD/TEST 的 excludeFiles、
+ *  SCRIPTS/UNTYPED 拆分与分层 off 依据校验。按本次实测增量抬到 33500 B（留约 550 B 余量，
+ *  不重新套用 +25%）。
+ *  再一轮 33500 → 34000 B（+500）：客户端测试别名改走包内 `dist/client-entry.js`（绝对路径
+ *  比裸子路径长约 70 B），实测 33567 B；当前实测 33584 B。 */
+const CONFIG_BUDGET_BYTES = 34_000;
 /** 构建编排产物预算（dist/build/，各包 build-*.mjs 构建期取用）。与配置产物同一记录理由：
- *  不占插件运行期装载成本，但整目录随 tarball 发布。 */
-const BUILD_BUDGET_BYTES = 22_000;
+ *  不占插件运行期装载成本，但整目录随 tarball 发布。
+ *  新增 `require-calls` 切面（产物 require 调用的 AST 判据，1299 B）后实测 22918 B；
+ *  新增 `build-tool-imports` 切面（官方 transform 的 guard/tool-map 编排，3083 B）后实测
+ *  26472 B；同一切面补齐「删除声明留空语句」「tool-map 自有条目快照 + 可路由名校验」
+ *  「本地再导出拒绝」「import attributes 拒绝」「默认导出穿透 TS 包装」后实测 29160 B，
+ *  按同一取整规则抬到 30000 B。
+ *  再一轮 30000 → 36000 B（+6000）：`decorator-lowering` 的根因修复——源映射先解码到绝对坐标再
+ *  重新编码（VLQ 编解码）、map 字段与单源约束校验、按 AST 识别 tsc 注入的 metadata/`__esDecorate`
+ *  样板、tsc 的 stdout/stderr/status/signal 捕获，以及把 `code` 写进同后缀临时文件再编译。
+ *  实测 35217 B；这一档是修复坐标漂移与语义丢失的承重件，不重套 +25%。 */
+const BUILD_BUDGET_BYTES = 36_000;
 
 /**
  * 某目录下所有 .js 的字节合计（**不递归**）。
@@ -155,7 +191,8 @@ describe("dist 体积上限", () => {
     const bytes = jsBytesUnder("dist/build");
     assert.ok(
       bytes <= BUILD_BUDGET_BYTES,
-      `构建编排切面 ${bytes} B 超预算 ${BUILD_BUDGET_BYTES} B。`,
+      `构建编排切面 ${bytes} B 超预算 ${BUILD_BUDGET_BYTES} B。` +
+        "若数字主要来自陌生 chunk，先 node build-clean.mjs 清掉旧 dist/build 残留；确实是当期产物变大再改预算。",
     );
   });
 });

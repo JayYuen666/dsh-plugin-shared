@@ -42,12 +42,24 @@ function winPath(...segments: string[]): string {
   return segments.join(path.win32.sep);
 }
 
+/** `\\?\` 扩展长度前缀 + 其余段；用片段拼，避免测试里满屏反斜杠。 */
+function extendedWinPath(...segments: string[]): string {
+  return `${path.win32.sep.repeat(2)}?${path.win32.sep}${winPath(...segments)}`;
+}
+
+/** `\\.\` 设备前缀 + 其余段。 */
+function deviceWinPath(...segments: string[]): string {
+  return `${path.win32.sep.repeat(2)}.${path.win32.sep}${winPath(...segments)}`;
+}
+
 /** Windows 上的整条分支：恒等 realpath + win32 字形与解析。 */
 const winKey = { ...noFs, sep: path.win32.sep };
 
 /** 字面量断言里重复出现的两个入参路径（同一条键的多次求值，不是两个不同用例）。 */
 const DEV_PROJ_PATH = "/Users/dev/proj";
 const TMP_SYMLINKED_PATH = "/tmp/x/proj";
+/** 卷 GUID 用例的同一段名字，避免三处字面量漂移。 */
+const VOLUME_GUID = "Volume{abc}";
 
 /**
  * 任何 runner 上都不存在的目录：原生 `realpathSync` 必抛，正好用来判定「文件系统状态不参与键
@@ -119,6 +131,14 @@ describe("deriveProjectKey", () => {
     expect(deriveProjectKey("/a/b", hostile)).toBe(deriveProjectKey("/a/b", posixKey));
   });
 
+  it("realpath 返回非字符串：不抛错，退回 resolve 结果", () => {
+    const missing = {
+      realpath: (): string => undefined as unknown as string,
+      sep: path.posix.sep,
+    };
+    expect(deriveProjectKey("/a/b", missing)).toBe("b-662b7b62");
+  });
+
   it("同一 cwd 幂等（重复调用同键）", () => {
     expect(deriveProjectKey(ABSENT_PATH, noFs)).toBe(deriveProjectKey(ABSENT_PATH, noFs));
   });
@@ -145,6 +165,28 @@ describe("deriveProjectKey", () => {
     expect(deriveProjectKey(root, rootOnly)).toBe("default");
   });
 
+  it("Windows 扩展盘符/设备前缀：根归 default，一级子目录不再落 default", () => {
+    // 0.1.7 的通用前缀剥离把 `\\?\C:\repo` 折成 `C:\repo` 再按两段判成 UNC 根；
+    // 这里同时锁住根与一级子目录，避免回归到共享的 default 桶。
+    expect(deriveProjectKey(extendedWinPath("C:", ""), winKey)).toBe("default");
+    expect(deriveProjectKey(extendedWinPath("C:"), winKey)).toBe("default");
+    expect(deriveProjectKey(deviceWinPath("C:", ""), winKey)).toBe("default");
+    expect(deriveProjectKey(deviceWinPath("C:"), winKey)).toBe("default");
+    // 非根路径保留扩展拼写做哈希（不顺手改写成普通盘符形），所以键回到 0.1.6 的
+    // 字面值；它与 `C:\repo` 的键不同，这是刻意的“先修根、不改键格式”边界。
+    expect(deriveProjectKey(extendedWinPath("C:", "repo"), winKey)).toBe("repo-e8b99b5c");
+    expect(deriveProjectKey("//?/C:/repo", winKey)).toBe("repo-e8b99b5c");
+    expect(deriveProjectKey("//?/C:/", winKey)).toBe("default");
+    expect(deriveProjectKey(deviceWinPath("C:", "repo"), winKey)).toBe("repo-1d160d39");
+    expect(deriveProjectKey(extendedWinPath("C:", "repo", "sub"), winKey)).toBe("sub-6e63e924");
+  });
+
+  it("Windows 卷 GUID：根本身归 default，子目录出真实键", () => {
+    expect(deriveProjectKey(extendedWinPath(VOLUME_GUID), winKey)).toBe("default");
+    expect(deriveProjectKey(extendedWinPath(VOLUME_GUID, ""), winKey)).toBe("default");
+    expect(deriveProjectKey(extendedWinPath(VOLUME_GUID, "repo"), winKey)).toBe("repo-f86812d6");
+  });
+
   it("Windows UNC 共享根 → default（折完与 POSIX 两段目录同形，只能在折之前判）", () => {
     // 回归固定的是判断的**位置**：UNC 根合并后是 `/server/share`，与合法的 `/a/b` 无法区分，
     // 所以判断必须作用于合并分隔符之前的串。原先漏判时它生成了 `share-<hash>`。
@@ -164,12 +206,14 @@ describe("deriveProjectKey", () => {
     expect(deriveProjectKey(longShareRoot, winKey)).toBe("default");
     // 共享根下的真目录仍按末段出键，判断不该把整条长路径一刀切。
     const under = `${longShareRoot}${path.win32.sep}proj`;
-    expect(deriveProjectKey(under, winKey)).toMatch(/^proj-[0-9a-f]{8}$/u);
+    expect(deriveProjectKey(under, winKey)).toBe("proj-9b80c12f");
   });
 
   it("POSIX 上反斜杠是合法文件名字符：不得当分隔符拆段", () => {
     const literalBackslashName = `/a/my${path.win32.sep}proj`;
-    expect(deriveProjectKey(literalBackslashName, posixKey)).toMatch(/^my\\proj-[0-9a-f]{8}$/u);
+    expect(deriveProjectKey(literalBackslashName, posixKey)).toBe(
+      `my${path.win32.sep}proj-dc490cb2`,
+    );
     expect(deriveProjectKey(literalBackslashName, posixKey)).not.toBe(
       deriveProjectKey("/a/my", posixKey),
     );

@@ -17,6 +17,9 @@ import type { CommentsOptions, InputOptions } from "rolldown";
 // 认定语义同余）。这里保留转发导出——build-host.ts 与本文件自己的 asRecord 都用它——
 // 本地绑定换名（isRecordOf）以满足「导出用 export-from 形态」的 lint 契约。
 import { isRecord as isRecordOf } from "./record.ts";
+import { escapeRegExp } from "./value.ts";
+
+export { escapeRegExp } from "./value.ts";
 
 export { isRecord } from "./record.ts";
 
@@ -67,15 +70,6 @@ export function packageNameOf(id: string): string {
 }
 
 /**
- * 字面串里会被正则语法误读的字符转义。
- * @param literal - 字面串
- * @returns 正则源码片段
- */
-export function escapeRegExp(literal: string): string {
-  return literal.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
-}
-
-/**
  * 包名 → 锚定的外置正则（`^pkg(/|$)`）。
  *
  * 为什么不再用函数形态：rolldown 官方 `external` 文档的 warning 段写明，函数形态每个模块都要
@@ -109,8 +103,10 @@ export function externalPatternOf(specifier: string): RegExp {
 
 /**
  * rolldown 输出项的最小投影：单文件产物只关心这几项。
- * `moduleIds` 之类不进投影——本类型只判形状，多一层声明就多一处与 rolldown 版本耦合的地方，
- * 而调用方拿到的仍是原始输出项，不缺字段。
+ *
+ * `moduleIds` 进投影是因为 host 链要核对 entry chunk 里确实只有入口模块（见 build-host 的
+ * 模块清单判据）；其余字段（`imports` / `exports` / `dynamicImports` …）仍不进——
+ * 多一层声明就多一处与 rolldown 版本耦合的地方，而调用方拿到的仍是原始输出项，不缺字段。
  */
 export interface OutputItem {
   readonly type: string;
@@ -118,6 +114,104 @@ export interface OutputItem {
   readonly code?: string | undefined;
   readonly isEntry?: boolean | undefined;
   readonly moduleIds?: readonly string[] | undefined;
+}
+
+/**
+ * 只认「空白 + 注释 + 指令序言字符串」的正文形态。
+ *
+ * 逐段剥而不是「先遮蔽再判」：遮蔽器不识别正则字面量，`const re = /"/;` 里的引号会被
+ * 当成字符串起点，把它后面的正文一起遮掉——一份合法产物会被误判为空。这里反过来只
+ * 列举文件头允许出现的空形态，遇到任何别的 token 就返回 false（保持放行面）。
+ *
+ * 指令序言可以没有分号（ASI），所以字符串段的 `;` 是可选的；注释按 JS 的两种行形态
+ * 处理，块注释到第一个闭合标记为止。
+ */
+/** JS 的四类行终止符：LF / CR / LS（U+2028）/ PS（U+2029）。 */
+function isLineTerminator(ch: string): boolean {
+  return ch === "\n" || ch === "\r" || ch === "\u2028" || ch === "\u2029";
+}
+
+/**
+ * 行注释正文的终点（不含行终止符本身）。`maskNonCode` 与 `isBlankModuleBody` 共用这一份：
+ * 行注释只可能止于四类 JS 行终止符，新增语义时只改这里。
+ * @param code - 完整正文
+ * @param from - 行注释正文起点（`//` 之后）
+ * @returns 行终止符的下标；整行到文件尾时为长度
+ */
+function lineCommentEndAt(code: string, from: number): number {
+  let index = from;
+  while (index < code.length && !isLineTerminator(code.charAt(index))) {
+    index += 1;
+  }
+  return index;
+}
+
+/**
+ * 从字符串/模板字面量开头读到闭合引号之后。
+ *
+ * 不把 `${` 的模板算作空形态：插值里可能有副作用，那已经是可执行代码。未闭合、
+ * 跨行或带插值的模板一律返回 undefined，由调用方按「有正文」放行。
+ * @param code - 以引号开头的正文
+ * @returns 闭合引号之后的下标；不是字符串或不是可判定的空形态时为 undefined
+ */
+function stringEndAt(code: string): number {
+  const quote = code.charAt(0);
+  if (quote !== '"' && quote !== "'" && quote !== "`") {
+    return -1;
+  }
+  let index = 1;
+  while (index < code.length) {
+    const ch = code.charAt(index);
+    if (ch === "\\") {
+      index += 2;
+    } else if (ch === quote) {
+      return index + 1;
+    } else if (quote === "`" && ch === "$" && code.charAt(index + 1) === "{") {
+      return -1;
+    } else if (isLineTerminator(ch)) {
+      return -1;
+    } else {
+      index += 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 这份正文是否只剩注释、指令序言或空语句。
+ *
+ * 只从文件头依次剥「空白 / 注释 / 字符串指令 / 分号」；遇到任何别的字符就判为有正文。
+ * 不用遮蔽器：它不识别正则字面量，`/"/` 里的引号会被当成字符串起点，把后面的真实
+ * 代码一并遮掉——一份合法产物会被误判为空。这里只认文件头允许的空形态，正则字面量
+ * 以 `/` 开头，第一眼就不在空形态里，不会触发误判。
+ * @param code - 产物正文
+ * @returns 没有任何可执行语句时为真
+ */
+function isBlankModuleBody(code: string): boolean {
+  let rest = code;
+  let blank = true;
+  while (blank && rest !== "") {
+    rest = rest.trimStart();
+    if (rest === "") {
+      blank = true;
+      break;
+    }
+    if (rest.startsWith("//")) {
+      rest = rest.slice(lineCommentEndAt(rest, 0));
+    } else if (rest.startsWith("/*")) {
+      const close = rest.indexOf("*/");
+      rest = close === -1 ? "" : rest.slice(close + 2);
+    } else if (rest.startsWith(";")) {
+      rest = rest.slice(1);
+    } else {
+      const end = stringEndAt(rest);
+      blank = end > 0;
+      if (end > 0) {
+        rest = rest.slice(end);
+      }
+    }
+  }
+  return blank;
 }
 
 /**
@@ -142,6 +236,11 @@ function isEntryChunk(
 /**
  * 单文件产物只允许一个 entry chunk：多余 chunk / asset 不写入磁盘，产物要到运行时才因缺模块而报错。
  * 这是「静默不渲染」同一类难查故障，所以在构建期就失败。
+ *
+ * 形状之外还要求正文里有**可执行语句**：只剩注释、只有 `"use strict";`、或只有若干空语句的
+ * 产物同样是一份「加载成功、什么都不做」的模块，宿主那条路不渲染、也不报错。导出面与依赖
+ * 供应归各仓 host / client 自己的测试——那是产物语义，塞进共享层只会得到一条与 rolldown
+ * 版本耦合的近似判断；这里只关掉「文本上完全为空」这一种确定的失效。
  * @param output - rolldown 的 generate 输出清单
  * @param source - 入口源码名（供错误信息指出出处）
  * @returns 唯一的那个 entry chunk
@@ -160,10 +259,17 @@ export function singleEntryChunk(
   if (!isEntryChunk(chunk)) {
     throw new Error(`rolldown 为 ${source} 产出的不是单个带正文的 entry chunk`);
   }
+  if (isBlankModuleBody(chunk.code)) {
+    throw new Error(
+      `rolldown 为 ${source} 产出的 entry chunk 里只有注释、指令序言或空语句，没有可执行语句：` +
+        "这份产物加载成功但什么都不做，宿主不会渲染也不会报错。检查入口是否被 tree-shaking 整段删除。",
+    );
+  }
   return chunk;
 }
 
-/** Windows 上目标文件被占用时的错误码：EPERM 来自只读/映射文件，EBUSY 来自被打开的文件。 */
+/** Windows 上目标文件被占用时的错误码：EPERM 来自只读/映射文件，EBUSY 来自被打开的文件，
+ *  EACCES 来自权限或占用方暂时拒绝写入。 */
 const RENAME_RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
 /** 重试的等待序列（毫秒）。总等待控制在半秒内：占用者通常是杀毒/索引服务，退避即可。 */
 const RENAME_RETRY_DELAYS_MS = [50, 100, 200];
@@ -171,15 +277,16 @@ const RENAME_RETRY_DELAYS_MS = [50, 100, 200];
 /**
  * rename 的 Windows 退避重试。
  *
- * POSIX 上 rename 换目录项是原子的，失败即真失败；Windows 上目标文件被其它进程持有
- * （Electron / dev server 正 require 产物、杀毒或索引服务短暂占用）时会给 EPERM/EBUSY，
- * 而占用通常在几十毫秒内释放。不重试的话这条失败是**间歇性**的：同一份安装里连着构建两次，
- * 一次失败一次成功。其余错误码照旧立即抛出——真的没权限时重试只是拖慢失败。
+ * POSIX 上 rename 换目录项是原子的，失败即真失败——`EACCES` 在那一边也不会自己消失，
+ * 重试只是把一条确定的失败拖后半秒。Windows 上目标文件被其它进程持有（Electron /
+ * dev server 正 require 产物、杀毒或索引服务短暂占用）时会给 EPERM/EBUSY/EACCES，
+ * 而占用通常在几十毫秒内释放；不重试的话这条失败是**间歇性**的：同一份安装里连着
+ * 构建两次，一次失败一次成功。其余错误码照旧立即抛出。
  * @param from - 草稿文件
  * @param to - 目标文件
- * @param attempt - 已重试次数
+ * @param attempt - 已重试次数（内部状态，不进公开签名，避免外部参数绕过退避预算）
  */
-export async function renameWithRetry(from: string, to: string, attempt = 0): Promise<void> {
+async function renameAttempt(from: string, to: string, attempt: number): Promise<void> {
   try {
     await rename(from, to);
   } catch (error) {
@@ -188,7 +295,7 @@ export async function renameWithRetry(from: string, to: string, attempt = 0): Pr
       typeof error === "object" && error !== null && "code" in error
         ? (error as { code?: unknown }).code
         : undefined;
-    if (typeof code !== "string" || !RENAME_RETRY_CODES.has(code)) {
+    if (typeof code !== "string" || process.platform !== "win32" || !RENAME_RETRY_CODES.has(code)) {
       throw error;
     }
     const delay = RENAME_RETRY_DELAYS_MS.at(attempt);
@@ -198,8 +305,17 @@ export async function renameWithRetry(from: string, to: string, attempt = 0): Pr
     // 退避后重试同一对路径。写成递归而不是 for 里 await：这里每一步都**必须**等上一步结束，
     // 没有可并行的空间，而 for + await 会让「顺序」看起来像可以改成 Promise.all 的并行。
     await sleep(delay);
-    await renameWithRetry(from, to, attempt + 1);
+    await renameAttempt(from, to, attempt + 1);
   }
+}
+
+/**
+ * rename，Windows 上按占用码退避重试（理由见 {@link renameAttempt}）。
+ * @param from - 草稿文件
+ * @param to - 目标文件
+ */
+export async function renameWithRetry(from: string, to: string): Promise<void> {
+  await renameAttempt(from, to, 0);
 }
 
 /**
@@ -214,23 +330,24 @@ export async function renameWithRetry(from: string, to: string, attempt = 0): Pr
  *     统一忽略的目录，不需要为构建残留单独扩忽略规则。
  *
  * 失败信息带上两个路径并保留 cause：只有 `ENOENT … open '…/<uuid>.tmp'` 把注意力引到草稿名上，
- * 读者还得自己从中找出真正的产物路径。
+ * 读者还得自己从中找出真正的产物路径。目录准备也在这条包装之内——`.tmp` 被占成普通文件时，
+ * 裸 `EEXIST` 同样指不出是哪个产物的写入失败了。
+ *
+ * 草稿名只用 UUID、不拼产物名：产物名很长时「产物名 + 后缀」会触发 `ENAMETOOLONG`，
+ * 而草稿名对读者没有意义（错误信息里两个路径都写了）。
  * @param target - 目标文件绝对路径
  * @param text - 产物正文
  */
 export async function writeArtifact(target: string, text: string): Promise<void> {
   const scratchDir = path.join(path.dirname(target), ".tmp");
-  await mkdir(scratchDir, { recursive: true });
-  const scratch = path.join(
-    scratchDir,
-    `${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`,
-  );
+  const scratch = path.join(scratchDir, `${randomUUID()}.tmp`);
   try {
+    await mkdir(scratchDir, { recursive: true });
     await writeFile(scratch, text, "utf8");
     await renameWithRetry(scratch, target);
   } catch (error) {
     // 清草稿本身可能失败（Windows 上 EBUSY/EPERM，`force` 只忽略 ENOENT），那一下抛出去会把
-    // 真正的写入错因盖掉。随机后缀保证残留草稿不会与下一次构建撞名。
+    // 真正的写入错因盖掉。随机名保证残留草稿不会与下一次构建撞名。
     try {
       await rm(scratch, { force: true });
     } catch {
@@ -240,68 +357,162 @@ export async function writeArtifact(target: string, text: string): Promise<void>
   }
 }
 
-/** 把一段字符串/模板字面量按等长方式写进 out，返回结束引号之后的位置。 */
-function maskString(code: string, at: number, out: string[]): number {
-  const quote = code.charAt(at);
-  out.push(quote);
-  let index = at + 1;
-  while (index < code.length) {
-    const current = code.charAt(index);
-    if (current === "\\") {
-      // 转义对整体遮蔽；反斜杠后的换行是行延续，换行位置必须保留。
-      out.push(code.charAt(index + 1) === "\n" ? " \n" : "  ");
-      index += 2;
-    } else if (current === quote) {
-      out.push(current);
-      return index + 1;
-    } else {
-      out.push(current === "\n" ? "\n" : " ");
-      index += 1;
-    }
-  }
-  return index;
-}
-
 /**
- * 把注释与字符串内容替换成空格，保留长度与换行；引号/反引号本身保留。
+ * 把注释与字符串/模板字面量的**内容**替换成空格，逐字符等长、行终止符原样保留。
  *
- * 用途是给**形状判断**（装饰器语法、声明里的模块说明符）提供一份与原文逐字符对齐的
- * “只看程序正文”文本：调用方拿同一套下标回到原文取值，既不误伤注释里的示例，也不会
- * 把字面量类型里的 `from "./x.ts"` 当成真实说明符。
+ * 用途只有一个：给**声明文本**（tsc 生成的 `.d.ts` / `.d.mts` / `.d.cts`）提供一份与原文
+ * 逐字符对齐的「只看程序正文」文本，让调用方拿同一套下标回原文取值——声明里的
+ * `from "./x.ts"` 可能出现在注释或字面量类型的示例里，改写与残余校验都必须跳过那些位置。
  *
- * 字符串里的转义对整体遮蔽；模板字面量的 `${}` 不做二次解析（本包不需要在表达式里
- * 找装饰器或说明符）。正则字面量不做词法识别，里面的 `@` 可能造成一次多余的 tsc 调用
- * ——方向是安全的（只多跑一次编译，不产出错字节）。
- * @param code - 源文本
- * @returns 与入参等长、换行位置不变的遮蔽文本
+ * 契约边界（这里也是唯一的记法处）：
+ *  - **只承诺声明文本**。声明里没有正则字面量；正则里的引号会被当成字符串起点，从而把
+ *    其后的正文一起遮掉。因此**不要**拿本函数的阴性结果判断「这份源码没有某段语法」——
+ *    那个判断必须交给真正的解析器（装饰器门槛已改用 AST，不再经过本函数）。
+ *  - 模板字面量按语法递归 `${}`：表达式里的字符串、注释与嵌套模板各自成段，外层模板在
+ *    正确的反引号处结束，不会因为内层的裸反引号提前收尾。
+ *  - 转义对整体遮蔽；反斜杠后的行延续保留原来的行终止符（`\n`、`\r` 与 CRLF 都算）。
+ *    末尾孤立的反斜杠只遮蔽它自己，长度不变。
+ *  - 未闭合的字符串 / 模板 / 块注释一律吃到文件尾；行注释止于任一 JS 行终止符，
+ *    不再只认 `\n`。
+ * @param code - 声明文本
+ * @returns 与入参逐字符等长的遮蔽文本
  */
 export function maskNonCode(code: string): string {
   const out: string[] = [];
-  let cursor = 0;
-  const blank = (from: number, to: number): void => {
+
+  /** 一个输入字符的遮蔽字符：行终止符保留，其余变空格。 */
+  const blank = (ch: string): void => {
+    out.push(isLineTerminator(ch) ? ch : " ");
+  };
+
+  /** 把 [from, to) 逐字符遮蔽（行终止符由 blank 保留）。 */
+  const blankRange = (from: number, to: number): void => {
     for (let index = from; index < to; index += 1) {
-      out.push(code.charAt(index) === "\n" ? "\n" : " ");
+      blank(code.charAt(index));
     }
   };
-  while (cursor < code.length) {
-    const ch = code.charAt(cursor);
-    if (ch === '"' || ch === "'" || ch === "`") {
-      cursor = maskString(code, cursor, out);
-    } else if (code.startsWith("//", cursor)) {
-      const newline = code.indexOf("\n", cursor);
-      const end = newline === -1 ? code.length : newline;
-      blank(cursor, end);
-      cursor = end;
-    } else if (code.startsWith("/*", cursor)) {
-      const close = code.indexOf("*/", cursor + 2);
-      const end = close === -1 ? code.length : close + 2;
-      blank(cursor, end);
-      cursor = end;
-    } else {
-      out.push(ch);
-      cursor += 1;
+
+  /** 块注释的终点：闭合标记之后，未闭合时为文件尾。 */
+  const blockCommentEnd = (from: number): number => {
+    const close = code.indexOf("*/", from);
+    return close === -1 ? code.length : close + 2;
+  };
+
+  /** 字符串或模板里的转义对（反斜杠 + 下一个字符，或末尾孤立的反斜杠）。 */
+  const scanEscape = (at: number): number => {
+    blank("\\");
+    const next = code.charAt(at + 1);
+    if (next === "") {
+      return at + 1;
     }
+    // 行延续：换行本身是位置信息，保留原字符（CRLF 的 `\n` 留给外层逐字符处理）。
+    out.push(isLineTerminator(next) ? next : " ");
+    return at + 2;
+  };
+
+  /** 单/双引号字符串；未闭合时吃到文件尾。 */
+  const scanString = (at: number): number => {
+    const quote = code.charAt(at);
+    out.push(quote);
+    let index = at + 1;
+    while (index < code.length) {
+      const ch = code.charAt(index);
+      if (ch === "\\") {
+        index = scanEscape(index);
+      } else if (ch === quote) {
+        out.push(ch);
+        return index + 1;
+      } else {
+        blank(ch);
+        index += 1;
+      }
+    }
+    return index;
+  };
+
+  /** 模板字面量：`${` 之后按代码扫到配对的 `}`，再回到模板正文。 */
+  const scanTemplate = (at: number): number => {
+    out.push("`");
+    let index = at + 1;
+    while (index < code.length) {
+      const ch = code.charAt(index);
+      if (ch === "\\") {
+        index = scanEscape(index);
+      } else if (ch === "`") {
+        out.push(ch);
+        return index + 1;
+      } else if (ch === "$" && code.charAt(index + 1) === "{") {
+        out.push("$", "{");
+        // oxlint-disable-next-line eslint/no-use-before-define -- scanTemplate 与 scanCode 互递归：模板表达式要按代码再扫一遍，这里只能前向引用（函数声明会提升，运行期已初始化）。
+        index = scanCode(index + 2, true);
+        if (index < code.length) {
+          out.push("}");
+          index += 1;
+        }
+      } else {
+        blank(ch);
+        index += 1;
+      }
+    }
+    return index;
+  };
+
+  /** `scanLeaf` 的「不是叶子段」哨兵：返回值保持单一数字类型。 */
+  const NO_LEAF = -1;
+
+  /** 三种「非程序正文」段（字符串、模板、注释）的入口；都不是时返回 {@link NO_LEAF}。 */
+  function scanLeaf(index: number): number {
+    const ch = code.charAt(index);
+    if (ch === '"' || ch === "'") {
+      return scanString(index);
+    }
+    if (ch === "`") {
+      return scanTemplate(index);
+    }
+    if (code.startsWith("//", index)) {
+      const end = lineCommentEndAt(code, index + 2);
+      blankRange(index, end);
+      return end;
+    }
+    if (code.startsWith("/*", index)) {
+      const end = blockCommentEnd(index + 2);
+      blankRange(index, end);
+      return end;
+    }
+    return NO_LEAF;
   }
+
+  /**
+   * 扫程序正文；`stopAtBrace` 时在第一个未配对的 `}` 处停下（模板表达式的边界）。
+   * @param from - 起始下标
+   * @param stopAtBrace - 是否把未配对的 `}` 当终止符
+   * @returns 停下的下标（终止符本身未消费）
+   */
+  function scanCode(from: number, stopAtBrace: boolean): number {
+    let index = from;
+    let depth = 0;
+    while (index < code.length) {
+      const leaf = scanLeaf(index);
+      if (leaf === NO_LEAF) {
+        const ch = code.charAt(index);
+        if (stopAtBrace && ch === "}") {
+          if (depth === 0) {
+            return index;
+          }
+          depth -= 1;
+        } else if (stopAtBrace && ch === "{") {
+          depth += 1;
+        }
+        out.push(ch);
+        index += 1;
+      } else {
+        index = leaf;
+      }
+    }
+    return index;
+  }
+
+  scanCode(0, false);
   return out.join("");
 }
 
@@ -357,14 +568,14 @@ export async function closeQuietly(bundle: CloseableBundle): Promise<void> {
 /**
  * 直跑守卫：本脚本是否被当作入口直接执行（而不是被测试 import）。
  *
- * argv[1] 可能缺席或是软链路径（pnpm 场景、`/tmp` → `/private/tmp`），两边折成 realpath
- * 再比；裸字符串比较会让直跑分支被静默跳过，脚本挂在 prepare / prepack 上时等于发布
- * 过期产物而不报错。
+ * argv[1] 可能缺席，也可能是**异名软链**（`/tmp/build-plugin.mjs` 指向 `/repo/build-host.mjs`），
+ * 或需要折成 realpath 的路径（`/tmp` → `/private/tmp`）。这里一律先折 realpath 再比，
+ * 不按基名预筛：基名不同不代表不是本文件，按基名提前返回 false 会让直跑分支被静默跳过。
  *
- * 两种失败必须分开：argv[1] 不是本文件（被 import、或被别的脚本调用）→ 安静返回 false；
- * 基名就是本文件却解不出 realpath（软链断了、父目录 EACCES、argv[1] 已被删除）→ 直接抛。
- * 后者若也返回 false，脚本会既不构建也不报错、以 0 退出，发布链路认为构建成功而磁盘
- * 产物仍是旧的。
+ * 两种失败必须分开：argv[1] 与 moduleFile 都折得出 realpath 且互不相同（被 import、或被
+ * 别的脚本调用）→ 安静返回 false；任一个解不出 realpath（软链断了、父目录 EACCES、
+ * argv[1] 已被删除）→ 直接抛。后者若也返回 false，脚本会既不构建也不报错、以 0 退出，
+ * 发布链路认为构建成功而磁盘产物仍是旧的——软链异名的情形也落在这里，不能靠基名猜测。
  * @param moduleFile - 调用方的 `import.meta.filename`
  * @returns 是否直接运行
  */
@@ -373,14 +584,13 @@ export function invokedDirectly(moduleFile: string): boolean {
   if (entry === undefined || entry.length === 0) {
     return false;
   }
-  if (path.basename(entry) !== path.basename(moduleFile)) {
-    return false;
-  }
   try {
     return realpathSync(entry) === realpathSync(moduleFile);
   } catch (error) {
-    throw new Error(`无法解析本脚本自身的路径（argv[1]=${entry}）：构建未发生，不要当成成功。`, {
-      cause: error,
-    });
+    throw new Error(
+      `无法解析入口或本脚本的路径（argv[1]=${entry}，本脚本=${moduleFile}）：` +
+        "无法证明这次执行不是本脚本，构建未发生，不要当成成功。",
+      { cause: error },
+    );
   }
 }
